@@ -181,27 +181,81 @@ or intended behavior is not fully clear from evidence already gathered
 present theories as confirmed fixes. Don't start editing code on an
 ambiguous request -- ask first, then act once confirmed.
 
-v0.1.36 -- Fixed bold/italic word-wrap measurement mismatch: _wrap() was
-    measuring every word's width with the plain regular font
-    (self.fonts.body) even when that word would later render bold/italic
-    via draw_reader()'s per-segment app.fonts.body_styled(bold, italic).
-    Since the bold font renders ~11% wider glyphs for identical text
-    (confirmed in v0.1.35: 108px vs 97px), a line judged to "fit"
-    avail_w_px using the narrower regular-font measurement could render
-    wider than the screen once its bold/italic runs were actually drawn --
-    pushing text past the right edge instead of wrapping it to the next
-    line. New _word_width() measures each word using the SAME font it
-    will be drawn with (splitting into same-style sub-runs when a word
-    straddles a style boundary, via body_styled() -- same logic pattern
-    as the existing _compute_line_style_runs()), matching draw_reader()'s
-    real rendering exactly. Unstyled pages (the common case, self._styles
-    empty) take an unchanged fast path with zero added cost. Verified via
-    a standalone simulation reproducing the exact 108px/97px ratio from
-    the v0.1.35 changelog on a bolded word ("Genesis" in a citation-like
-    sentence): old path measured it as narrower than its real bold render
-    width; new path's measurement matches the true render width exactly.
-    AST-parsed clean; confirmed no other call site referenced the removed
-    local `font` variable inside _wrap().
+v0.1.41 -- Added search hint to Gutenberg text-entry screen: "Search by
+    title or author (case-insensitive)" appears below the input box via
+    the existing te_hint/open_text_entry hint= path (no new state or
+    drawing code). Gutendex search is confirmed case-insensitive per
+    official docs (github.com/garethbjohnson/gutendex).
+v0.1.40 -- Feature: manual JW.org pub-code entry screen now shows a
+    one-line abbreviation hint ("w=Watchtower  g=Awake!  mwb=Workbook
+    es=Daily Text") under the input box, via a new generic App.te_hint
+    field (open_text_entry() gained an optional hint= param; unused by
+    the existing search-entry call site, so no behavior change there).
+    The hint text itself lives in jw_fetch.py as MANUAL_CODE_HINT, read
+    via getattr() -- keeps JW-specific text out of main.py's generic
+    text-entry code, matching the existing SUPPORTS_MANUAL_CODE/
+    SUPPORTS_SEARCH plugin-contract pattern. While verifying the Awake!
+    code live: confirmed pub=g works, but its "No. N YYYY" cover label
+    does NOT map to issue=YYYY01 as might be assumed -- "No. 1 2025" is
+    actually issue=202511 (confirmed against jw.org's own download
+    links). Noted in jw_fetch.py for future reference since Awake! now
+    publishes irregularly (~1x/year) with no fixed cadence to guess from.
+v0.1.39 -- Feature: bookmarks and "resume reading" now save the exact
+    paragraph, not just the chapter. Previously both only stored
+    {file, anchor}; current_anchor is cleared to None as soon as a page
+    finishes loading (see ReaderState docstring), so a bookmark/resume
+    made after scrolling past that point had nothing to restore to and
+    always reopened at the top of the chapter. Added current_char_off to
+    ReaderState (epub_engine.py) and App._current_char_offset(), which
+    captures the exact character offset of the top-of-screen line and
+    round-trips through the same offset->line math the anchor system
+    already used. Along the way, fixed a real off-by-one in that shared
+    math (confirmed on 23/24 sampled positions on a real chapter: capturing
+    the bare start-of-line offset always landed restore one line short;
+    fixed by capturing start-offset+1, verified exact across all 72
+    possible scroll positions on Genesis 1). Also fixed bookmark
+    duplicate-matching to include char_off (with a ~40-char tolerance) --
+    previously two bookmarks in the same chapter at different paragraphs
+    both matched on (file, anchor=None) and the second silently overwrote
+    the first. Old-format bookmarks (no char_off key) still load fine and
+    fall back to anchor-based (chapter-level) restore. Verified end-to-end
+    with a real App instance, real SDL font wrapping, and the actual
+    nwt_E.epub: bookmark-open and resume-reading both restore to the
+    exact scrolled line.
+v0.1.38 -- Two fixes, both found via real on-device testing of v0.1.37:
+    (1) mini_jpeg.py v0.2.0 update: the progressive band-skip optimization
+    could desync the bitstream on images whose refinement scans straddle
+    the needed/unneeded coefficient boundary -- hit on nwt_E.epub's
+    Question-1 image at exactly the scale_n the app's 480x272 target box
+    picks for it. Fixed with a per-component safety pre-scan (see
+    mini_jpeg.py's own changelog); no main.py changes needed, same
+    decode_jpeg() interface.
+    (2) Chapter nav (L2/R2) fix in _build_chapter_nav_points(): the
+    chapterN-anchor heuristic used for Bible books had two bugs -- (a) it
+    trusted toc.xhtml's own 196 internal in-page anchor links as if they
+    were real chapters (now filtered: real chapter files always have
+    exactly 1 chapterN anchor, toc.xhtml alone had many), which also (b)
+    meant front matter before the first real chapter (cover, title page,
+    the 22 "Question N" intro articles in nwt_E.epub) had NO nav points
+    at all -- R2 from anywhere in front matter jumped straight to Genesis
+    1, and L2 from Genesis 1 had nothing before it to reach. Fixed by
+    prepending TOC entries before the first real chapterN point. Verified
+    against nwt_E.epub's actual TOC/anchor structure: R2 now steps
+    cover -> Bible Navigation -> title/publisher pages -> all 22
+    Questions -> remaining front matter -> Genesis 1; L2 from Genesis 1
+    steps back correctly instead of getting stuck. Confirmed no effect on
+    non-Bible books (lffi_E.epub stays on the TOC-fallback path either
+    way, under the 5-match threshold).
+v0.1.37 -- Progressive JPEG support added (mini_jpeg.py v0.2.0, later
+    revised in v0.1.38 above). Fixes "Image unavailable (unsupported
+    JPEG features)" on nwt_E.epub's progressive-encoded images.
+v0.1.36 -- Fixed bold/italic word-wrap overflow: _wrap() measured all
+    words with the regular font, but bold renders ~11% wider (108px vs
+    97px, v0.1.35 data), so lines with bold/italic runs could overflow
+    the right edge. New _word_width() measures each word with the font
+    it will actually be drawn in (via body_styled(), splitting sub-runs
+    at style boundaries). Unstyled pages keep the old fast path.
+    Verified by simulation.
 
 START is deliberately unbound outside the Reader screen (v0.1.27) --
 reserved for the downloader plugin trigger, which ended up bound to
@@ -242,7 +296,7 @@ AST-parsing. This is now the required verification bar for edits to
 that function, not merely a nice-to-have.
 ===========================================================================
 
-Version: 0.1.36
+Version: 0.1.41
 
 Changelog:
   v0.1.35 -- Two things:
@@ -1885,23 +1939,42 @@ def restore_latest_backup():
     return latest, books_touched, entries_added
 
 
-def add_bookmark(book_path, file_path, anchor, label):
+def add_bookmark(book_path, file_path, anchor, label, char_off=None):
     """Returns 'added', 'updated' (an existing bookmark at the same
-    file+anchor was refreshed instead of creating a duplicate), or
-    'limit' (already at MAX_BOOKMARKS_PER_BOOK real bookmarks and this
-    would have been a new one, not a duplicate update)."""
+    file+anchor+char_off was refreshed instead of creating a duplicate),
+    or 'limit' (already at MAX_BOOKMARKS_PER_BOOK real bookmarks and this
+    would have been a new one, not a duplicate update).
+
+    v0.1.39: duplicate matching now includes char_off, not just anchor.
+    Before precise-position bookmarks, anchor was almost always None for
+    anything bookmarked after scrolling (see ReaderState.current_char_off
+    docstring) -- so two bookmarks in the same chapter at different
+    paragraphs both matched on (file, anchor=None) and the second one
+    silently overwrote the first instead of adding a new entry. Matching
+    on char_off too restores the "one bookmark per distinct spot" this
+    feature actually needs; two bookmarks placed extremely close together
+    (within CHAR_OFF_DUP_TOLERANCE) still collapse to one, so START'd
+    twice at nearly the same spot doesn't clutter the list."""
     data = load_bookmarks()
     entries = data.setdefault(book_path, [])
 
-    # Duplicate check -- same file+anchor as an existing real bookmark
-    # (excluding the internal __lastpos__ marker) just refreshes that
-    # entry's label/timestamp rather than cluttering the list with a copy.
+    CHAR_OFF_DUP_TOLERANCE = 40  # ~ half a line; avoids near-duplicate clutter
     for e in entries:
         if e.get("label") == "__lastpos__":
             continue
-        if e.get("file") == file_path and e.get("anchor") == anchor:
+        if e.get("file") != file_path:
+            continue
+        same_anchor = e.get("anchor") == anchor
+        e_off = e.get("char_off")
+        same_off = (
+            (e_off is None and char_off is None) or
+            (e_off is not None and char_off is not None
+             and abs(e_off - char_off) <= CHAR_OFF_DUP_TOLERANCE)
+        )
+        if same_anchor and same_off:
             e["label"] = label
             e["ts"] = time.time()
+            e["char_off"] = char_off
             save_bookmarks(data)
             return "updated"
 
@@ -1911,7 +1984,7 @@ def add_bookmark(book_path, file_path, anchor, label):
 
     entries.append({
         "file": file_path, "anchor": anchor, "label": label,
-        "ts": time.time(),
+        "ts": time.time(), "char_off": char_off,
     })
     save_bookmarks(data)
     return "added"
@@ -1947,11 +2020,11 @@ def get_last_position(book_path):
     return None
 
 
-def save_last_position(book_path, file_path, anchor):
+def save_last_position(book_path, file_path, anchor, char_off=None):
     data = load_bookmarks()
     entries = data.setdefault(book_path, [])
     entries[:] = [e for e in entries if e.get("label") != "__lastpos__"]
-    entries.append({"file": file_path, "anchor": anchor,
+    entries.append({"file": file_path, "anchor": anchor, "char_off": char_off,
                      "label": "__lastpos__", "ts": time.time()})
     save_bookmarks(data)
 
@@ -2766,6 +2839,10 @@ class App:
         self.te_row = 0
         self.te_col = 0
         self.te_prompt = ""
+        self.te_hint = ""  # optional one-line helper text (e.g. common
+                            # abbreviations) shown below the input box;
+                            # generic on App, not JW-specific -- any
+                            # future text-entry use case can set it
         self.te_return_screen = SCREEN_LIBRARY
         self.te_on_confirm = None  # callable(app, value) -- set by whoever opens this screen
         self.te_on_validate = None  # (v0.1.31) callable(app, value) run on a
@@ -2863,7 +2940,7 @@ class App:
         self.books = sort_library(books, self.lib_sort_mode, self.pinned)
 
     # -------- generic text entry (v0.1.30) --------
-    def open_text_entry(self, prompt, initial_value, on_confirm, return_screen, on_validate=None):
+    def open_text_entry(self, prompt, initial_value, on_confirm, return_screen, on_validate=None, hint=""):
         """Opens the D-pad letter-grid text-entry screen. Two ways to
         finish, mutually exclusive:
           - on_confirm(app, value): fires immediately when OK is
@@ -2877,11 +2954,17 @@ class App:
             or set app.te_error (and leave te_checking False) to stay
             here and let the person fix a typo. Cancelling (B, or the
             CANCEL cell) always just returns to return_screen without
-            calling either one."""
+            calling either one.
+
+        hint: (v0.1.40) optional one-line helper text shown under the
+        input box when there's no error/checking status to show instead
+        -- e.g. common abbreviations for a code-entry screen. Blank by
+        default; purely additive, no effect on existing callers."""
         self.te_value = initial_value or ""
         self.te_row = 0
         self.te_col = 0
         self.te_prompt = prompt
+        self.te_hint = hint
         self.te_on_confirm = on_confirm
         self.te_on_validate = on_validate
         self.te_checking = False
@@ -3032,11 +3115,14 @@ class App:
         last = get_last_position(book["path"])
         if last:
             start_file, start_anchor = last["file"], last.get("anchor")
+            start_char_off = last.get("char_off")
         else:
             start_file = self.doc.spine[2] if len(self.doc.spine) > 2 else self.doc.spine[0]
             start_anchor = None
+            start_char_off = None
         self.state = ReaderState(self.doc, start_file)
         self.state.current_anchor = start_anchor
+        self.state.current_char_off = start_char_off
         self.scroll = 0
         self.selected_span = 0
         self._scroll_stack = []
@@ -3061,7 +3147,20 @@ class App:
         points = []
         for fname, ids in self.doc._anchor_index.items():
             matches = [i for i in ids if i and chapter_re.match(i)]
-            if matches:
+            # v0.1.38 fix: a real per-chapter spine file has exactly ONE
+            # chapterN anchor (its own opening point). Confirmed against
+            # nwt_E.epub's real structure: all 1189 genuine Bible-chapter
+            # files have exactly 1 match each, while toc.xhtml alone has
+            # 196 -- an internal index page listing in-page jump links to
+            # every book/chapter, not a real chapter itself. Without this
+            # guard, toc.xhtml (spine index 1, earlier than ALL real front
+            # matter -- cover, Bible Navigation, title page, the 22
+            # "Question N" articles) was being sorted in as nav point 0,
+            # which also corrupted the front-matter-restoration fix just
+            # below (it needs points[0] to be the real first chapter, not
+            # a false hit sitting even earlier than the front matter it
+            # was trying to restore).
+            if len(matches) == 1:
                 idx = self.doc.spine_index(fname)
                 if idx != -1:
                     points.append((idx, fname, matches[0]))
@@ -3074,7 +3173,34 @@ class App:
         MIN_CHAPTER_ANCHOR_MATCHES = 5
         if len(points) >= MIN_CHAPTER_ANCHOR_MATCHES:
             points.sort(key=lambda p: p[0])
-            return points
+            # v0.1.38 fix: the chapterN heuristic only ever matches actual
+            # Bible-book chapters, so front matter before the first real
+            # chapter (cover, title page, the "Question N" intro articles
+            # in nwt_E.epub) had NO nav points at all -- confirmed against
+            # the real NWT TOC: "Bible Navigation" / title page / "An
+            # Introduction to God's Word" / Questions 1-22 all precede
+            # Genesis 1 with no chapterN anchor of their own. That meant
+            # R2 from anywhere in front matter jumped straight past all of
+            # it to Genesis 1 (pos<0 branch below always resolves to
+            # target_pos=0, i.e. the first -- and previously ONLY -- real
+            # entry), and L2 from Genesis 1 (nav point 0) had nothing
+            # before it to go back to (target_pos=-1, rejected). Fix:
+            # prepend TOC entries whose spine index falls before the first
+            # chapter-anchor point, so front matter gets its own steppable
+            # nav points too, same as any other book's TOC-based chapters.
+            first_chapter_idx = points[0][0]
+            flat = flatten_toc(self.doc.toc)
+            front_points = []
+            seen_idx = set()
+            for entry in flat:
+                f = entry.href.split("#")[0] if "#" in entry.href else entry.href
+                anchor = entry.href.split("#", 1)[1] if "#" in entry.href else None
+                idx = self.doc.spine_index(f)
+                if idx != -1 and idx < first_chapter_idx and idx not in seen_idx:
+                    front_points.append((idx, f, anchor))
+                    seen_idx.add(idx)
+            front_points.sort(key=lambda p: p[0])
+            return front_points + points
 
         # fallback: flatten TOC, map each entry's target file to a spine index
         flat = flatten_toc(self.doc.toc)
@@ -3168,7 +3294,22 @@ class App:
         self._line_style_runs = line_style_runs
         self._page_cache_key = key
 
-        if self.state.current_anchor and self.state.current_anchor in anchors:
+        if self.state.current_char_off is not None:
+            # v0.1.39: exact-position restore (bookmark/resume-reading).
+            # Same line-search as the anchor path below, just driven by a
+            # raw character offset instead of a named anchor's offset --
+            # this is what makes restore work for a spot the user merely
+            # scrolled to, not just a named chapter/link target.
+            char_off = self.state.current_char_off
+            running = 0
+            target_line = 0
+            for li, line in enumerate(lines):
+                running += len(line) + 1
+                if running >= char_off:
+                    target_line = li
+                    break
+            self.scroll = max(0, target_line - 2)
+        elif self.state.current_anchor and self.state.current_anchor in anchors:
             char_off = anchors[self.state.current_anchor]
             running = 0
             target_line = 0
@@ -3179,6 +3320,7 @@ class App:
                     break
             self.scroll = max(0, target_line - 2)
         self.state.current_anchor = None
+        self.state.current_char_off = None
         self.selected_span = 0
         self._prefetch_next_images()
 
@@ -3793,12 +3935,40 @@ class App:
         self.status_msg = msg
         self.status_until = time.time() + duration
 
+    def _current_char_offset(self):
+        """Character offset of the first line currently on screen (inverse
+        of the restore math in _ensure_page_built()) -- captured fresh at
+        bookmark/save time so it always reflects exactly where the user
+        is, independent of whether a named anchor happens to apply here.
+        Returns None if there's no page built yet (nothing to measure).
+
+        The +1 matters: the restore loop finds the first line whose
+        CUMULATIVE length (running >= char_off) reaches the target, and
+        cumulative-through-line-(N-1) is numerically identical to "the
+        start offset of line N" -- so capturing the bare start offset
+        made restore land one line short of the actual scroll position
+        every time (verified: 23/24 sampled positions off by exactly one
+        line before this +1). Adding 1 pushes char_off just past that
+        boundary so the same-line cumulative total is the first to
+        satisfy >=, landing on the correct line. Verified exact (0
+        mismatches) across all 72 possible scroll positions on a real
+        chapter page."""
+        if not getattr(self, "_lines", None):
+            return None
+        running = 0
+        for li, line in enumerate(self._lines):
+            if li >= self.scroll:
+                return running + 1
+            running += len(line) + 1
+        return running + 1
+
     def bookmark_here(self):
         if not self.current_book_path or not self.state:
             return
         label = self._current_location_label()
+        char_off = self._current_char_offset()
         result = add_bookmark(self.current_book_path, self.state.current_file,
-                               self.state.current_anchor, label)
+                               self.state.current_anchor, label, char_off=char_off)
         if result == "added":
             self.set_status(f'Bookmarked "{label}"')
         elif result == "updated":
@@ -3810,8 +3980,9 @@ class App:
 
     def save_progress(self):
         if self.current_book_path and self.state:
+            char_off = self._current_char_offset()
             save_last_position(self.current_book_path, self.state.current_file,
-                                self.state.current_anchor)
+                                self.state.current_anchor, char_off=char_off)
 
 
 # ============================================================
@@ -4062,6 +4233,8 @@ def draw_text_entry(renderer, app):
         render_text(renderer, app.fonts.ui_small, "Checking...", COL_DIM, _sx(24), status_y)
     elif app.te_error:
         render_text(renderer, app.fonts.ui_small, app.te_error[:70], COL_WARNING, _sx(24), status_y)
+    elif app.te_hint:
+        render_text(renderer, app.fonts.ui_small, app.te_hint[:70], COL_DIM, _sx(24), status_y)
 
     # letter/digit/action grid -- ragged rows, so cell width is based on
     # the WIDEST row (10, the digit row) so every cell is the same size
@@ -4533,7 +4706,8 @@ def handle_button(app, btn, body_h_px):
                 app.screen = SCREEN_DOWNLOAD_BROWSE
                 app.start_search(value)
             app.open_text_entry("Search " + getattr(app.dl_plugin, "PLUGIN_NAME", ""),
-                                 app.dl_query or "", _on_search_confirm, SCREEN_DOWNLOAD_BROWSE)
+                                 app.dl_query or "", _on_search_confirm, SCREEN_DOWNLOAD_BROWSE,
+                                 hint="Search by title or author  (case-insensitive)")
         elif btn == "Y" and getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
             def _on_code_validate(app, value):
                 parts = value.strip().split()
@@ -4554,7 +4728,8 @@ def handle_button(app, btn, body_h_px):
                     app.te_error = err or "Not found"
                 app.dirty = True
             app.open_text_entry("Pub code (+ issue YYYYMM if needed)", "",
-                                 None, SCREEN_DOWNLOAD_BROWSE, on_validate=_on_code_validate)
+                                 None, SCREEN_DOWNLOAD_BROWSE, on_validate=_on_code_validate,
+                                 hint=getattr(app.dl_plugin, "MANUAL_CODE_HINT", ""))
         elif btn == "B":
             if len(DOWNLOAD_PLUGINS) > 1:
                 app.screen = SCREEN_DOWNLOAD_SOURCES
@@ -4794,7 +4969,7 @@ def handle_button(app, btn, body_h_px):
         elif btn == "A" and bms:
             bm = bms[app.bookmarks_index]
             app._scroll_stack.append(app.scroll)
-            app.state.goto(bm["file"], bm.get("anchor"))
+            app.state.goto(bm["file"], bm.get("anchor"), char_off=bm.get("char_off"))
             app.scroll = 0
             app.selected_span = 0
             app._page_cache_key = None

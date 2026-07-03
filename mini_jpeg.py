@@ -9,15 +9,60 @@ low-frequency N x N corner of each 8x8 DCT coefficient block. This trades
 resolution (image comes out at N/8 scale, e.g. N=4 -> half resolution) for
 a large speedup on ARM handheld hardware with no numpy/PIL available.
 
-Not a general-purpose JPEG decoder: no progressive DCT, no arithmetic
-coding, no CMYK. Covers standard baseline sequential JFIF, 4:2:0 or 4:4:4
-chroma subsampling, which is what real-world JPEG encoders (including the
-ones used for JW epub images) produce.
+Not a general-purpose JPEG decoder: no arithmetic coding, no CMYK, no
+12-bit precision. Covers standard baseline sequential JFIF AND progressive
+JFIF (SOF2), 4:2:0 / 4:2:2 / 4:4:4 chroma subsampling and grayscale --
+which covers all real-world JPEG encoder output found in JW epub images
+(the NWT Bible epub mixes ~3/4 baseline with ~1/4 progressive).
+
+Progressive support (added v0.2.0 of this module): progressive JPEGs
+store DCT coefficients across multiple scans (DC first / DC refine /
+AC first per-band / AC refine per-band) instead of one sequential scan,
+so unlike the baseline path -- which streams blocks straight to pixels
+and never holds whole-image coefficient state -- progressive decode MUST
+accumulate a full coefficient buffer until all scans are read, then IDCT
+once at the end. Memory is kept tight for the 1GB-RAM target device by
+storing that buffer as one flat array('h') (2 bytes per coefficient) per
+component rather than Python int lists (which would be ~30x larger):
+a 600x1200 progressive image costs ~2.2 MB of coefficient state, freed
+as soon as rendering finishes. The truncated-IDCT scale_n speedup applies
+to progressive images exactly as it does to baseline ones.
 
 Usage:
     from mini_jpeg import decode_jpeg
     rgb_bytes, width, height = decode_jpeg(jpeg_bytes, scale_n=4)
     # rgb_bytes is width*height*3 raw RGB, ready for SDL_CreateRGBSurfaceFrom
+
+CHANGELOG
+v0.2.0 -- Progressive JPEG (SOF2) support: DC first/refine + AC first/
+    refine band scans, EOB runs, successive approximation, DRI restarts.
+    Coefficients accumulate in flat array('h') stores (int16; ~2.2MB for a
+    600x1200 image, freed per-component right after render) to respect the
+    1GB-RAM device. AC scans whose whole band lies above the truncated-
+    IDCT's needed zigzag range are skipped without entropy decoding when
+    SAFE to do so (see _prescan_skip_safety() -- a per-component pre-scan
+    disables the skip for any component whose scan sequence has a later
+    refinement scan straddling the needed/unneeded boundary, since that
+    desyncs the bitstream; caught on a real nwt_E.epub image where the
+    naive version raised "bad Huffman code" at exactly the scale_n the
+    app's 480x272 target box picks for a 600x1200 image). Where safe, the
+    scale_n=1 thumbnail pass decodes DC scans only (much faster than full
+    decode). peek_jpeg_size() now reads SOF2 headers too.
+    ALSO fixed a latent BASELINE bug: reset_byte_align() assumed the
+    restart marker had already been consumed by the bit reader, but bulk
+    buffer fills can satisfy an interval's last symbols without reading
+    the marker bytes, leaving pos before the 0xFF Dn pair -- markers then
+    got decoded as image data. Real-world hit: a DRI=150 baseline image
+    in nwt_E.epub decoded visibly corrupted (mean err 53.6/255 vs PIL);
+    now exact (0.30). Verified: all 95 nwt_E.epub images (62 plain
+    baseline byte-identical to previous version, 11 DRI baseline correct,
+    22 progressive correct vs PIL ground truth at both the thumbnail
+    scale AND the exact scale_n the app's 480x272 display target picks
+    for each image), plus a synthetic matrix of 4:2:0/4:4:4/grayscale x
+    DRI 0/1/2 progressive encodes across scale_n 1/2/4/8.
+v0.1.x -- Baseline decoder: bulk-fill BitReader, 12-bit LUT Huffman,
+    truncated-IDCT scale_n resolution scaling, DC-only closed-form fast
+    path, DRI restarts, 4:2:0/4:2:2/4:4:4 + grayscale.
 """
 
 import struct
@@ -27,6 +72,7 @@ import functools
 # ---- JPEG marker constants ----
 SOI, EOI = 0xD8, 0xD9
 SOF0 = 0xC0          # baseline DCT
+SOF2 = 0xC2          # progressive DCT
 DHT = 0xC4
 DQT = 0xDB
 SOS = 0xDA
@@ -120,6 +166,23 @@ class BitReader:
         # that second byte still needs to be consumed here.
         if self.marker_hit is not None and 0xD0 <= self.marker_hit <= 0xD7:
             self.pos += 1
+        elif self.marker_hit is None:
+            # The RST marker hasn't been consumed by _fill_to() yet: bulk
+            # filling can leave enough buffered (padding) bits to finish
+            # the interval's last symbol without ever reading the marker
+            # bytes, so pos still sits at (or just before) the 0xFF D0-D7
+            # pair. Happens routinely in progressive scans, whose per-
+            # block symbol counts are tiny. Skip forward past the marker;
+            # a false match on entropy data is impossible because a
+            # literal 0xFF in entropy data is always byte-stuffed as
+            # 0xFF 0x00, never 0xFF 0xD0-0xD7.
+            p = self.pos
+            data = self.data
+            n = self.n
+            while p < n - 1 and not (data[p] == 0xFF and 0xD0 <= data[p + 1] <= 0xD7):
+                p += 1
+            if p < n - 1:
+                self.pos = p + 2
         self.bitbuf = 0
         self.bitcount = 0
         self.marker_hit = None
@@ -284,11 +347,11 @@ def _idct_scaled(coeffs_zigzag_order, qtable, scale_n, basis):
 
 
 def peek_jpeg_size(data: bytes):
-    """Read just the SOF0 marker's width/height -- microseconds, no entropy
-    decode or IDCT at all -- so callers can pick an appropriately small
-    scale_n up front instead of always decoding at one fixed resolution
-    regardless of how big the source image actually is. Returns
-    (width, height) or None if no SOF0 marker is found (e.g. truncated/
+    """Read just the SOF0/SOF2 marker's width/height -- microseconds, no
+    entropy decode or IDCT at all -- so callers can pick an appropriately
+    small scale_n up front instead of always decoding at one fixed
+    resolution regardless of how big the source image actually is. Returns
+    (width, height) or None if no SOF marker is found (e.g. truncated/
     corrupt data) -- callers should fall back to a default scale_n."""
     if len(data) < 4 or data[0] != 0xFF or data[1] != SOI:
         return None
@@ -306,7 +369,7 @@ def peek_jpeg_size(data: bytes):
         if pos + 2 > len(data):
             break
         seg_len = struct.unpack(">H", data[pos:pos + 2])[0]
-        if marker == SOF0:
+        if marker in (SOF0, SOF2):
             if pos + 7 > len(data):
                 return None
             height = struct.unpack(">H", data[pos + 3:pos + 5])[0]
@@ -334,6 +397,7 @@ def decode_jpeg(data: bytes, scale_n: int = 4):
     huff_ac = {}
     frame = None  # dict: width, height, components: [(id,h,v,qtable_id)]
     restart_interval = 0
+    prog = None  # progressive coefficient-accumulation state, built lazily
 
     while pos < len(data):
         if data[pos] != 0xFF:
@@ -385,7 +449,7 @@ def decode_jpeg(data: bytes, scale_n: int = 4):
                 else:
                     huff_ac[th] = table
 
-        elif marker == SOF0:
+        elif marker in (SOF0, SOF2):
             p = seg_start
             precision = data[p]; p += 1
             height = struct.unpack(">H", data[p:p + 2])[0]; p += 2
@@ -399,7 +463,8 @@ def decode_jpeg(data: bytes, scale_n: int = 4):
                 v_samp = hv & 0x0F
                 qid = data[p]; p += 1
                 components.append({"id": cid, "h": h_samp, "v": v_samp, "q": qid})
-            frame = {"width": width, "height": height, "components": components}
+            frame = {"width": width, "height": height, "components": components,
+                     "progressive": marker == SOF2}
 
         elif marker == DRI:
             restart_interval = struct.unpack(">H", data[seg_start:seg_start + 2])[0]
@@ -412,16 +477,69 @@ def decode_jpeg(data: bytes, scale_n: int = 4):
                 cs = data[p]; p += 1
                 td_ta = data[p]; p += 1
                 scan_components.append({"id": cs, "dc": td_ta >> 4, "ac": td_ta & 0x0F})
-            p += 3  # Ss, Se, AhAl (ignored for baseline)
+            Ss = data[p]; p += 1
+            Se = data[p]; p += 1
+            ah_al = data[p]; p += 1
+            Ah = ah_al >> 4
+            Al = ah_al & 0x0F
             entropy_start = p
-            # entropy-coded data runs until next real marker; caller loop
-            # below (image decode) handles walking it via BitReader
-            return _decode_scan(
-                data, entropy_start, frame, scan_components,
-                qtables, huff_dc, huff_ac, restart_interval, scale_n
+
+            if not frame.get("progressive"):
+                # baseline: single scan streams straight to pixels --
+                # unchanged fast path, no whole-image coefficient buffer
+                return _decode_scan(
+                    data, entropy_start, frame, scan_components,
+                    qtables, huff_dc, huff_ac, restart_interval, scale_n
+                )
+
+            # progressive: accumulate this scan's coefficient bits into
+            # the per-component coefficient store, then keep walking
+            # markers -- more scans (and possibly more DHT tables)
+            # follow until EOI
+            if prog is None:
+                prog = _init_progressive_state(frame)
+                # highest zigzag index the truncated IDCT will actually
+                # use for this scale_n -- AC scans whose whole band
+                # (Ss..Se) lies above it contribute nothing to the output
+                # and can, in principle, be skipped without entropy-
+                # decoding them. BUT: this is only safe per-component if
+                # no scan for that component "straddles" needed_max (Ss
+                # at/below it, Se above it) -- a straddling scan is
+                # almost always a later successive-approximation
+                # REFINEMENT pass covering the whole AC range (e.g. an
+                # encoder emits first-pass sub-bands 1-5 then 6-63
+                # separately, then one refinement scan spanning 1-63).
+                # Refinement decoding depends on knowing the current
+                # zero/nonzero state of every coefficient it walks past,
+                # so skipping an earlier scan that established that state
+                # above needed_max desyncs the refinement scan's bitstream
+                # the moment it crosses needed_max -- confirmed on a real
+                # nwt_E.epub image (Question 1's illustration) where
+                # skipping the 6-63 first-pass scan broke the later 1-63
+                # Ah=2 refinement scan with "bad Huffman code". Precompute
+                # per-component skip-safety with one cheap structural
+                # pre-scan of all SOS headers (no entropy decoding, just
+                # marker-boundary walking) so the real decode pass can
+                # trust a simple per-scan Ss check.
+                prog["needed_max"] = max(
+                    i for i in range(64)
+                    if (ZIGZAG[i] // 8) < scale_n and (ZIGZAG[i] % 8) < scale_n
+                )
+                prog["skip_ok"] = _prescan_skip_safety(data, pos, prog["needed_max"])
+            comp_id = scan_components[0]["id"] if len(scan_components) == 1 else None
+            if Ss > prog["needed_max"] and comp_id is not None and prog["skip_ok"].get(comp_id, False):
+                pos = _next_marker_pos(data, entropy_start)
+                continue
+            pos = _decode_progressive_scan(
+                data, entropy_start, frame, prog, scan_components,
+                huff_dc, huff_ac, restart_interval, Ss, Se, Ah, Al
             )
+            continue
 
         pos = seg_end
+
+    if prog is not None:
+        return _render_progressive(frame, prog, qtables, scale_n)
 
     raise ValueError("no SOS/image data found")
 
@@ -488,8 +606,13 @@ def _decode_scan(data, start, frame, scan_components, qtables, huff_dc, huff_ac,
                 for k in dc_pred:
                     dc_pred[k] = 0
 
-    # upsample chroma to luma plane resolution and convert to RGB
-    y_comp = min(components, key=lambda c: 0 if c["id"] == 1 else 1)
+    return _planes_to_rgb(planes, components, width, height, scale_n)
+
+
+def _planes_to_rgb(planes, components, width, height, scale_n):
+    """Upsample chroma to luma plane resolution and convert to RGB.
+    Shared final stage for both the baseline streaming path and the
+    progressive render path -- both produce identical `planes` dicts."""
     # assume standard JFIF component ordering: 1=Y, 2=Cb, 3=Cr
     y_plane = planes[components[0]["id"]]
     out_w = (width * scale_n + 7) // 8
@@ -543,6 +666,369 @@ def _decode_scan(data, start, frame, scan_components, qtables, huff_dc, huff_ac,
             idx += 3
 
     return bytes(rgb), out_w, out_h
+
+
+
+
+# ---------------------------------------------------------------------------
+# Progressive JPEG (SOF2) support
+#
+# A progressive JPEG delivers each block's 64 DCT coefficients spread over
+# multiple scans: a DC-first scan, optional DC-refinement scans, AC-band
+# scans (each covering a zigzag range Ss..Se of one component), and AC-
+# refinement scans that add one bit of precision at a time (successive
+# approximation, the Ah/Al fields). Coefficients must therefore be
+# accumulated across all scans before any IDCT can run.
+#
+# Memory strategy for the 1GB-RAM target: one flat array('h') (int16,
+# 2 bytes/coefficient) per component, sized to the MCU-padded block grid.
+# Blocks live at offset block_index*64, coefficients stored in ZIGZAG
+# order (progressive scans address coefficients by zigzag index, and
+# _idct_scaled already takes zigzag-order input, so no reshuffle is ever
+# needed). int16 is safe: 8-bit-precision JPEG quantized coefficients
+# are <= 11 bits + sign even after successive-approximation shifts.
+# ---------------------------------------------------------------------------
+
+from array import array
+
+
+def _prescan_skip_safety(data, start_pos, needed_max):
+    """Structural-only pre-scan (no entropy decoding) from the first SOS
+    marker to EOI, collecting every AC scan's (component, Ss, Se) and
+    deciding, per component, whether ANY scan straddles needed_max (Ss at
+    or below it, Se above it). If so, that component's AC scans must all
+    be decoded in full -- skipping is unsafe for it (see the long comment
+    at the call site). Cheap: this is a marker-boundary walk over the
+    same bytes the real decode pass will visit, not a second entropy
+    decode -- typically microseconds for JPEG header sizes."""
+    pos = start_pos
+    n = len(data)
+    straddles = set()
+    seen_ac = set()
+    while pos < n - 1:
+        if data[pos] != 0xFF:
+            pos += 1
+            continue
+        marker = data[pos + 1]
+        mpos = pos
+        pos += 2
+        if marker == EOI:
+            break
+        if marker in (0x01,) or 0xD0 <= marker <= 0xD7:
+            continue
+        if pos + 2 > n:
+            break
+        seg_len = struct.unpack(">H", data[pos:pos + 2])[0]
+        if marker == SOS:
+            p = pos + 2
+            ns = data[p]; p += 1
+            comps = []
+            for _ in range(ns):
+                cs = data[p]; p += 1
+                p += 1  # td_ta, unused here
+                comps.append(cs)
+            Ss = data[p]; p += 1
+            Se = data[p]; p += 1
+            p += 1  # AhAl, unused here
+            if Ss > 0 and len(comps) == 1:
+                cid = comps[0]
+                seen_ac.add(cid)
+                if Ss <= needed_max < Se:
+                    straddles.add(cid)
+            pos = _next_marker_pos(data, p)
+            continue
+        pos += seg_len
+    return {cid: (cid not in straddles) for cid in seen_ac}
+
+
+def _init_progressive_state(frame):
+    """Allocate the per-component coefficient stores + block geometry."""
+    components = frame["components"]
+    h_max = max(c["h"] for c in components)
+    v_max = max(c["v"] for c in components)
+    mcus_x = (frame["width"] + 8 * h_max - 1) // (8 * h_max)
+    mcus_y = (frame["height"] + 8 * v_max - 1) // (8 * v_max)
+
+    prog = {
+        "h_max": h_max, "v_max": v_max,
+        "mcus_x": mcus_x, "mcus_y": mcus_y,
+        "comps": {},   # id -> per-component dict
+        "eobrun": 0,   # AC end-of-band run, persists across restart-free MCUs within a scan
+    }
+    for c in components:
+        # full (MCU-padded) block grid -- interleaved DC scans cover
+        # padding blocks, so the store must include them
+        full_bw = mcus_x * c["h"]
+        full_bh = mcus_y * c["v"]
+        # true block counts (non-interleaved AC scans cover only these)
+        comp_w = (frame["width"] * c["h"] + h_max - 1) // h_max
+        comp_h = (frame["height"] * c["v"] + v_max - 1) // v_max
+        used_bw = (comp_w + 7) // 8
+        used_bh = (comp_h + 7) // 8
+        prog["comps"][c["id"]] = {
+            "coeffs": array("h", bytes(2 * 64 * full_bw * full_bh)),
+            "full_bw": full_bw, "full_bh": full_bh,
+            "used_bw": used_bw, "used_bh": used_bh,
+        }
+    return prog
+
+
+def _decode_progressive_scan(data, start, frame, prog, scan_components,
+                             huff_dc, huff_ac, restart_interval,
+                             Ss, Se, Ah, Al):
+    """Decode one progressive scan into the coefficient stores.
+    Returns the byte position just past this scan's entropy data (at the
+    next marker), so the caller's marker loop can continue."""
+    components = frame["components"]
+    comp_by_id = {c["id"]: c for c in components}
+    reader = BitReader(data, start)
+    prog["eobrun"] = 0
+
+    if Ss == 0:
+        # ---- DC scan (may be interleaved across all components) ----
+        dc_pred = {sc["id"]: 0 for sc in scan_components}
+        if len(scan_components) > 1 or len(components) == 1:
+            mcus_x, mcus_y = prog["mcus_x"], prog["mcus_y"]
+            total_mcus = mcus_x * mcus_y
+            mcu_count = 0
+            for my in range(mcus_y):
+                for mx in range(mcus_x):
+                    for sc in scan_components:
+                        c = comp_by_id[sc["id"]]
+                        st = prog["comps"][c["id"]]
+                        coeffs = st["coeffs"]
+                        full_bw = st["full_bw"]
+                        for by in range(c["v"]):
+                            for bx in range(c["h"]):
+                                bidx = (my * c["v"] + by) * full_bw + (mx * c["h"] + bx)
+                                off = bidx * 64
+                                if Ah == 0:
+                                    t = huff_dc[sc["dc"]].decode(reader)
+                                    diff = _extend(reader.get_bits(t), t) if t else 0
+                                    dc_pred[sc["id"]] += diff
+                                    coeffs[off] = dc_pred[sc["id"]] << Al
+                                else:
+                                    if reader.get_bit():
+                                        coeffs[off] |= (1 << Al)
+                    mcu_count += 1
+                    if restart_interval and mcu_count % restart_interval == 0 \
+                            and mcu_count < total_mcus:
+                        reader.reset_byte_align()
+                        for k in dc_pred:
+                            dc_pred[k] = 0
+        else:
+            # single-component non-interleaved DC scan
+            sc = scan_components[0]
+            c = comp_by_id[sc["id"]]
+            st = prog["comps"][c["id"]]
+            coeffs = st["coeffs"]
+            full_bw = st["full_bw"]
+            used_bw, used_bh = st["used_bw"], st["used_bh"]
+            count = 0
+            total = used_bw * used_bh
+            for by in range(used_bh):
+                for bx in range(used_bw):
+                    off = (by * full_bw + bx) * 64
+                    if Ah == 0:
+                        t = huff_dc[sc["dc"]].decode(reader)
+                        diff = _extend(reader.get_bits(t), t) if t else 0
+                        dc_pred[sc["id"]] += diff
+                        coeffs[off] = dc_pred[sc["id"]] << Al
+                    else:
+                        if reader.get_bit():
+                            coeffs[off] |= (1 << Al)
+                    count += 1
+                    if restart_interval and count % restart_interval == 0 \
+                            and count < total:
+                        reader.reset_byte_align()
+                        dc_pred[sc["id"]] = 0
+    else:
+        # ---- AC scan: always exactly one component, non-interleaved ----
+        sc = scan_components[0]
+        c = comp_by_id[sc["id"]]
+        st = prog["comps"][c["id"]]
+        coeffs = st["coeffs"]
+        full_bw = st["full_bw"]
+        used_bw, used_bh = st["used_bw"], st["used_bh"]
+        ac_table = huff_ac[sc["ac"]]
+        count = 0
+        total = used_bw * used_bh
+        for by in range(used_bh):
+            for bx in range(used_bw):
+                off = (by * full_bw + bx) * 64
+                if Ah == 0:
+                    _ac_first(reader, coeffs, off, Ss, Se, Al, ac_table, prog)
+                else:
+                    _ac_refine(reader, coeffs, off, Ss, Se, Al, ac_table, prog)
+                count += 1
+                if restart_interval and count % restart_interval == 0 \
+                        and count < total:
+                    reader.reset_byte_align()
+                    prog["eobrun"] = 0
+
+    # find the next marker after this scan's entropy data. NOTE: when the
+    # BitReader hits the terminating marker it CONSUMES the 0xFF prefix
+    # (reader.pos ends up pointing AT the marker-type byte, not before the
+    # 0xFF) -- so the search must start a couple of bytes BEFORE
+    # reader.pos, or it would skip straight over the marker that ended the
+    # scan (typically the DHT carrying the next scan's Huffman tables,
+    # whose loss then surfaces as a KeyError on huff_ac lookup)
+    pos = reader.pos - 2
+    if pos < start:
+        pos = start
+    return _next_marker_pos(data, pos)
+
+
+def _next_marker_pos(data, pos):
+    """Byte-scan forward to the next real marker (0xFF followed by anything
+    other than 0x00 stuffing or an RST0-7). Safe inside entropy data since
+    literal 0xFF bytes there are always stuffed as 0xFF 0x00."""
+    n = len(data)
+    while pos < n - 1:
+        if data[pos] == 0xFF:
+            nxt = data[pos + 1]
+            if nxt != 0x00 and not (0xD0 <= nxt <= 0xD7):
+                return pos
+        pos += 1
+    return n
+
+
+def _ac_first(reader, coeffs, off, Ss, Se, Al, ac_table, prog):
+    """First pass over an AC band (Ah == 0): decode magnitude-coded
+    coefficients, storing them shifted left by Al (their low Al bits
+    arrive later via refinement scans)."""
+    if prog["eobrun"] > 0:
+        prog["eobrun"] -= 1
+        return
+    k = Ss
+    while k <= Se:
+        rs = ac_table.decode(reader)
+        r = rs >> 4
+        s = rs & 0x0F
+        if s == 0:
+            if r != 15:
+                # EOB run: this block (and the next 2^r - 1 + extra
+                # blocks) have no more nonzero coefficients in this band
+                eobrun = (1 << r) - 1
+                if r:
+                    eobrun += reader.get_bits(r)
+                prog["eobrun"] = eobrun
+                return
+            k += 16  # ZRL: sixteen zero coefficients
+        else:
+            k += r
+            if k > Se:
+                break
+            coeffs[off + k] = _extend(reader.get_bits(s), s) << Al
+            k += 1
+
+
+def _ac_refine(reader, coeffs, off, Ss, Se, Al, ac_table, prog):
+    """Refinement pass over an AC band (Ah > 0): adds one bit of
+    precision to already-nonzero coefficients (correction bits) and
+    introduces newly-nonzero coefficients at +/-(1 << Al). Mirrors
+    libjpeg's decode_mcu_AC_refine control flow, which is the de-facto
+    reference for the (underspecified-in-the-spec) corner cases."""
+    p1 = 1 << Al
+    m1 = -1 << Al
+    k = Ss
+    if prog["eobrun"] == 0:
+        while k <= Se:
+            rs = ac_table.decode(reader)
+            r = rs >> 4
+            s = rs & 0x0F
+            if s == 0:
+                if r != 15:
+                    # NOTE: unlike _ac_first, NO -1 here -- the current
+                    # block's remaining correction bits are consumed by
+                    # the eobrun>0 loop below, which then decrements the
+                    # run for this block. (Pre-subtracting like the first-
+                    # pass code does would make an r=0 EOB compute
+                    # eobrun=0, skip that loop entirely, leave this
+                    # block's correction bits unread, and desync the
+                    # whole bitstream -- exactly the "bad Huffman code"
+                    # failure seen on the real NWT progressive images.)
+                    eobrun = 1 << r
+                    if r:
+                        eobrun += reader.get_bits(r)
+                    prog["eobrun"] = eobrun
+                    break
+                # s == 0, r == 15: ZRL -- skip 16 zero-history coefficients
+            else:
+                # in a refinement scan s is always 1: a newly-nonzero coeff
+                s = p1 if reader.get_bit() else m1
+            # advance over r zero-history coefficients, emitting
+            # correction bits for any nonzero-history ones passed over
+            while k <= Se:
+                coef = coeffs[off + k]
+                if coef != 0:
+                    if reader.get_bit():
+                        if (coef & p1) == 0:
+                            coeffs[off + k] = coef + (p1 if coef >= 0 else m1)
+                else:
+                    if r == 0:
+                        break
+                    r -= 1
+                k += 1
+            if s and k <= Se:
+                coeffs[off + k] = s
+            k += 1
+    if prog["eobrun"] > 0:
+        # inside an EOB run: no new nonzero coefficients, but correction
+        # bits still arrive for existing nonzero ones in the band
+        while k <= Se:
+            coef = coeffs[off + k]
+            if coef != 0:
+                if reader.get_bit():
+                    if (coef & p1) == 0:
+                        coeffs[off + k] = coef + (p1 if coef >= 0 else m1)
+            k += 1
+        prog["eobrun"] -= 1
+
+
+def _render_progressive(frame, prog, qtables, scale_n):
+    """All scans read -- dequantize + truncated IDCT every block from the
+    accumulated coefficient stores into pixel planes, then reuse the
+    exact same plane->RGB conversion as the baseline path."""
+    width, height = frame["width"], frame["height"]
+    components = frame["components"]
+    basis = _build_scaled_idct_matrix(scale_n)
+
+    planes = {}
+    for c in components:
+        st = prog["comps"][c["id"]]
+        pw = st["full_bw"] * scale_n
+        ph = st["full_bh"] * scale_n
+        planes[c["id"]] = {"data": bytearray(pw * ph), "w": pw, "ph": ph,
+                           "h_samp": c["h"], "v_samp": c["v"]}
+
+    for c in components:
+        st = prog["comps"][c["id"]]
+        coeffs = st["coeffs"]
+        full_bw, full_bh = st["full_bw"], st["full_bh"]
+        qtable = qtables[c["q"]]
+        plane = planes[c["id"]]
+        pw = plane["w"]
+        pdata = plane["data"]
+        for by in range(full_bh):
+            for bx in range(full_bw):
+                off = (by * full_bw + bx) * 64
+                block = _idct_scaled(coeffs[off:off + 64], qtable, scale_n, basis)
+                px0 = bx * scale_n
+                py0 = by * scale_n
+                for yy in range(scale_n):
+                    row_off = (py0 + yy) * pw + px0
+                    brow = block[yy]
+                    for xx in range(scale_n):
+                        v = brow[xx] + 128.0
+                        v = 0 if v < 0 else (255 if v > 255 else v)
+                        pdata[row_off + xx] = int(v)
+        # release this component's coefficient store as soon as its
+        # plane is rendered -- keeps peak memory at coefficients+planes
+        # for only one component at a time instead of all three
+        st["coeffs"] = None
+
+    return _planes_to_rgb(planes, components, width, height, scale_n)
 
 
 def save_ppm(rgb_bytes, w, h, path):

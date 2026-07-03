@@ -508,13 +508,25 @@ class ReaderState:
         self.doc = doc
         self.current_file = start_file
         self.current_anchor: str | None = None
+        # v0.1.39: exact character offset into the page's plain text,
+        # used instead of current_anchor when restoring a bookmark or
+        # resume-reading position. current_anchor only ever holds a value
+        # briefly (cleared to None once a page finishes loading -- see
+        # App._ensure_page_built()), so a bookmark saved after scrolling
+        # past that point had nothing to restore to and always reopened
+        # at the top of the chapter. char_off is captured fresh every
+        # time (see App._current_char_offset()), so it survives exactly
+        # where the user actually was, mid-paragraph included.
+        self.current_char_off: int | None = None
         self.back_stack: list[tuple[str, str | None]] = []
 
-    def goto(self, file_path: str, anchor: str | None = None, push_history=True):
+    def goto(self, file_path: str, anchor: str | None = None, push_history=True,
+             char_off: int | None = None):
         if push_history:
             self.back_stack.append((self.current_file, self.current_anchor))
         self.current_file = file_path
         self.current_anchor = anchor
+        self.current_char_off = char_off
 
     def follow_link(self, link: LinkSpan):
         if link.target_file:
