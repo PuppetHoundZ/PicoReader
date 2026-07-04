@@ -92,6 +92,27 @@ class StyleSpan:
     italic: bool
 
 
+@dataclass
+class ParaSpan:
+    """Paragraph-level formatting hint (v0.1.42). Covers an absolute text
+    range (start..end) and carries a 'kind' that the renderer uses to
+    pick font, colour, and indent. Unlike StyleSpan (character-level
+    bold/italic), these are whole-paragraph traits applied once per line
+    during draw_reader().
+
+    Kinds:
+      superscript  -- <sup> inline marker (v0.1.42)
+      caption      -- <figcaption> text below an image (v0.1.42)
+      box_rule     -- synthetic rule line emitted around boxSupplement (v0.1.42)
+    Note: JW paragraph classes sm/sh/si/sb/sj removed in v0.1.47 --
+    they caused unwanted italic, indent, small font and greying.
+    """
+    start: int
+    end: int
+    kind: str
+    extra: str = ""   # reserved (box rule text)
+
+
 class EpubDocument:
     def __init__(self, path: str, anchor_cache_path: str | None = None):
         self.path = path
@@ -320,11 +341,20 @@ class EpubDocument:
         links: list[LinkSpan] = []
         images: list[ImageSpan] = []
         styles: list[StyleSpan] = []
+        para_spans: list[ParaSpan] = []
         anchor_offsets: dict[str, int] = {}
         cursor = [0]
 
         STYLE_TAGS = {"strong": "bold", "b": "bold", "em": "italic", "i": "italic"}
-        BLOCK_TAGS = {"p", "div", "li", "h1", "h2", "h3", "h4", "aside", "br"}
+        # h2/ol added v0.1.42: h2 for be_E subheadings; ol so ordered-list
+        # items get proper newlines (noMarker lists inside boxSupplement).
+        BLOCK_TAGS = {"p", "div", "li", "h1", "h2", "h3", "h4", "aside", "br", "ol"}
+
+        # JW paragraph-style classes (sm/sh/si/sb/sj) are intentionally
+        # not mapped -- they caused italic, indent, small font and grey
+        # colour that conflicted with plain readable body text rendering
+        # (v0.1.47 removal). Bold still comes through naturally from
+        # <strong> tags in the source HTML.
 
         # Collapses runs of whitespace -- including the "\r\n" + indentation
         # that XML pretty-printing leaves between tags like </tr> and <tr> --
@@ -395,8 +425,65 @@ class EpubDocument:
             if tag in ("script", "style"):
                 return
 
+            # <sup> inline superscript (v0.1.42): smaller font, COL_DIM in renderer.
+            if tag == "sup":
+                sup_start = cursor[0]
+                if elem.text:
+                    emit_text(elem.text)
+                for child in elem:
+                    walk(child)
+                    if child.tail:
+                        emit_text(child.tail)
+                if cursor[0] > sup_start:
+                    para_spans.append(ParaSpan(start=sup_start, end=cursor[0],
+                                               kind="superscript"))
+                return
+
+            # <figcaption> caption text below an image (v0.1.42).
+            if tag == "figcaption":
+                maybe_newline()
+                cap_start = cursor[0]
+                if elem.text:
+                    emit_text(elem.text)
+                for child in elem:
+                    walk(child)
+                    if child.tail:
+                        emit_text(child.tail)
+                if cursor[0] > cap_start:
+                    para_spans.append(ParaSpan(start=cap_start, end=cursor[0],
+                                               kind="caption"))
+                maybe_newline()
+                return
+
+            # <span class="pageNum"> print-page markers are silently skipped --
+            # they're invisible in the digital reading context and injecting
+            # them mid-sentence caused surrounding text to render in small/dim
+            # font (v0.1.46 fix).
+            elem_classes = set((elem.get("class") or "").split())
+            if tag == "span" and "pageNum" in elem_classes:
+                return
+
+            # boxSupplement: emit rule lines around the box (v0.1.42).
+            # The box title (boxTtl) gets bold via StyleSpan naturally since
+            # it's usually wrapped in <strong>. We add blank-line + rule
+            # before and after the entire div.
+            is_box = tag == "div" and "boxSupplement" in elem_classes
+            if is_box:
+                maybe_newline()
+                rule_start = cursor[0]
+                emit("─" * 32)
+                para_spans.append(ParaSpan(start=rule_start, end=cursor[0],
+                                           kind="box_rule"))
+                emit("\n")
+
             if tag in BLOCK_TAGS:
                 maybe_newline()
+
+
+
+            # h2 bold: emit StyleSpan for the whole h2 content (v0.1.42).
+            is_h2 = (tag == "h2")
+            h2_start = cursor[0] if is_h2 else None
 
             # A <tr> that reads like a list of distinct records -- one
             # chapter title per row, whether that's ONE cell (a Project
@@ -450,6 +537,11 @@ class EpubDocument:
                     bold=(style_kind == "bold"), italic=(style_kind == "italic"),
                 ))
 
+            # h2 bold: wrap entire h2 text in a bold StyleSpan (v0.1.42).
+            if is_h2 and cursor[0] > h2_start:
+                styles.append(StyleSpan(start=h2_start, end=cursor[0],
+                                        bold=True, italic=False))
+
             if is_link:
                 href = elem.get("href")
                 target_file, target_anchor = self.resolve_href(href, file_path)
@@ -468,6 +560,14 @@ class EpubDocument:
             if tag in BLOCK_TAGS:
                 maybe_newline()
 
+            # boxSupplement closing rule (v0.1.42).
+            if is_box:
+                rule_start = cursor[0]
+                emit("─" * 32)
+                para_spans.append(ParaSpan(start=rule_start, end=cursor[0],
+                                           kind="box_rule"))
+                emit("\n")
+
         node_id = body.get("id")
         if node_id:
             anchor_offsets.setdefault(node_id, cursor[0])
@@ -479,7 +579,7 @@ class EpubDocument:
                 emit_text(child.tail)
 
         text = "".join(text_parts)
-        return text, links, images, anchor_offsets, styles
+        return text, links, images, anchor_offsets, styles, para_spans
 
     def get_image_bytes(self, image_path: str) -> bytes:
         return self.zip.read(image_path)

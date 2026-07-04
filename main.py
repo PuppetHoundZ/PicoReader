@@ -55,6 +55,12 @@ AI NOTES -- read this first if you're a future Claude session picking this
 project back up. Kept deliberately short; the versioned changelog below
 has full detail on any specific fix.
 
+CURRENT STATE (v0.1.55): global Font Size setting scales ALL UI text
+(reading + hint bar + menus + Library/Chapters/Storage), with dynamic
+row heights/wrapping so nothing overflows at max size -- see v0.1.50-55
+below if anything still clips/overlaps at large Font Size, that's the
+most likely place to look first.
+
 Architecture, three files:
   main.py         SDL2/ctypes UI, App class (all mutable reader state),
                    ImageLoader (background decode, priority queue),
@@ -99,27 +105,25 @@ affects which scale_n mini_jpeg decodes at -- NOT the on-screen display
 size (that's SW-40 wide x IMG_BOX_ROWS tall, computed in draw_reader()).
 Shrinking it trades sharpness for decode speed; don't confuse the two.
 
-Bold/italic (v0.1.35): get_page() returns FIVE values now (text, links,
-images, anchor_offsets, styles) -- every call site must unpack all 5, or
-it throws immediately on every page load (this exact regression shipped
-mid-session once already; check any NEW get_page() call site the same
-way). Pipeline: epub_engine's walk() emits StyleSpan (absolute text
-offsets) for <strong>/<b>/<em>/<i> -> App._wrap() converts those into
-per-line runs via _compute_line_style_runs() (NOT named
-_line_style_runs -- that name collides with the instance attribute
-storing its output and silently breaks) -> draw_reader() merges style
-runs with link/image ranges via _line_segments() into fine-grained
-(start, end, sidx, bold, italic) segments, one render_text_cached() call
-per segment with app.fonts.body_styled(bold, italic) choosing the font.
-Font files: assets/font-bold.ttf, font-italic.ttf, font-bolditalic.ttf,
-same Liberation Sans 2.1.5 family as the bundled Regular (byte-verified
-via checksum against the system fonts-liberation package). This
-sandbox's dummy SDL video driver can't actually create textures
-(SDL_CreateTextureFromSurface returns NULL, a known pre-existing
-limitation, not a bug) -- so pixel-level rendering can't be visually
-verified here; verify logic-level (font handle identity differs per
-style, FreeType surface WIDTH differs between regular/bold for identical
-text) plus zero-exception real-SDL walks instead, as this fix did.
+get_page() returns SIX values (v0.1.42, was five): text, links, images,
+anchor_offsets, styles, para_spans. Every call site must unpack all 6
+or it throws on every page load. Para_spans are ParaSpan dataclasses
+(epub_engine.py) -- active kinds: superscript, caption, box_rule only.
+pagenum removed v0.1.46 (JW print-page markers silently skipped).
+JW paragraph classes sm/sh/si/sb/sj removed v0.1.47 (caused italic,
+indent, small font, grey on Bible text). draw_reader() resolves active
+ParaSpan per line via _line_abs_offsets[] (precomputed once in
+_ensure_page_built, v0.1.46). Only box_rule gets special rendering;
+all other kinds render as plain body text, uniform size and colour.
+_page_text_cache (v0.1.48): RAM-only LRU, 4 entries, eliminates XML
+parse lag on L2/R2 chapter jumps. Cleared on open_book().
+
+Bold/italic (v0.1.35): StyleSpans from walk() -> _compute_line_style_runs()
+-> _line_segments() -> per-segment render with body_styled(bold, italic).
+Font files: assets/font-bold.ttf, font-italic.ttf, font-bolditalic.ttf
+(Liberation Sans 2.1.5, SIL OFL -- third-party open-source fonts).
+Dummy SDL video driver can't create textures (known sandbox limitation);
+verify logic-level + zero-exception real-SDL walks rather than visual.
 
 epub_engine.py's walk() treats <tr> specially (v0.1.34): a row is forced
 onto its own line ONLY if its cells' average text length exceeds ~10
@@ -181,81 +185,163 @@ or intended behavior is not fully clear from evidence already gathered
 present theories as confirmed fixes. Don't start editing code on an
 ambiguous request -- ask first, then act once confirmed.
 
-v0.1.41 -- Added search hint to Gutenberg text-entry screen: "Search by
-    title or author (case-insensitive)" appears below the input box via
-    the existing te_hint/open_text_entry hint= path (no new state or
-    drawing code). Gutendex search is confirmed case-insensitive per
-    official docs (github.com/garethbjohnson/gutendex).
-v0.1.40 -- Feature: manual JW.org pub-code entry screen now shows a
-    one-line abbreviation hint ("w=Watchtower  g=Awake!  mwb=Workbook
-    es=Daily Text") under the input box, via a new generic App.te_hint
-    field (open_text_entry() gained an optional hint= param; unused by
-    the existing search-entry call site, so no behavior change there).
-    The hint text itself lives in jw_fetch.py as MANUAL_CODE_HINT, read
-    via getattr() -- keeps JW-specific text out of main.py's generic
-    text-entry code, matching the existing SUPPORTS_MANUAL_CODE/
-    SUPPORTS_SEARCH plugin-contract pattern. While verifying the Awake!
-    code live: confirmed pub=g works, but its "No. N YYYY" cover label
-    does NOT map to issue=YYYY01 as might be assumed -- "No. 1 2025" is
-    actually issue=202511 (confirmed against jw.org's own download
-    links). Noted in jw_fetch.py for future reference since Awake! now
-    publishes irregularly (~1x/year) with no fixed cadence to guess from.
-v0.1.39 -- Feature: bookmarks and "resume reading" now save the exact
-    paragraph, not just the chapter. Previously both only stored
-    {file, anchor}; current_anchor is cleared to None as soon as a page
-    finishes loading (see ReaderState docstring), so a bookmark/resume
-    made after scrolling past that point had nothing to restore to and
-    always reopened at the top of the chapter. Added current_char_off to
-    ReaderState (epub_engine.py) and App._current_char_offset(), which
-    captures the exact character offset of the top-of-screen line and
-    round-trips through the same offset->line math the anchor system
-    already used. Along the way, fixed a real off-by-one in that shared
-    math (confirmed on 23/24 sampled positions on a real chapter: capturing
-    the bare start-of-line offset always landed restore one line short;
-    fixed by capturing start-offset+1, verified exact across all 72
-    possible scroll positions on Genesis 1). Also fixed bookmark
-    duplicate-matching to include char_off (with a ~40-char tolerance) --
-    previously two bookmarks in the same chapter at different paragraphs
-    both matched on (file, anchor=None) and the second silently overwrote
-    the first. Old-format bookmarks (no char_off key) still load fine and
-    fall back to anchor-based (chapter-level) restore. Verified end-to-end
-    with a real App instance, real SDL font wrapping, and the actual
-    nwt_E.epub: bookmark-open and resume-reading both restore to the
-    exact scrolled line.
-v0.1.38 -- Two fixes, both found via real on-device testing of v0.1.37:
-    (1) mini_jpeg.py v0.2.0 update: the progressive band-skip optimization
-    could desync the bitstream on images whose refinement scans straddle
-    the needed/unneeded coefficient boundary -- hit on nwt_E.epub's
-    Question-1 image at exactly the scale_n the app's 480x272 target box
-    picks for it. Fixed with a per-component safety pre-scan (see
-    mini_jpeg.py's own changelog); no main.py changes needed, same
-    decode_jpeg() interface.
-    (2) Chapter nav (L2/R2) fix in _build_chapter_nav_points(): the
-    chapterN-anchor heuristic used for Bible books had two bugs -- (a) it
-    trusted toc.xhtml's own 196 internal in-page anchor links as if they
-    were real chapters (now filtered: real chapter files always have
-    exactly 1 chapterN anchor, toc.xhtml alone had many), which also (b)
-    meant front matter before the first real chapter (cover, title page,
-    the 22 "Question N" intro articles in nwt_E.epub) had NO nav points
-    at all -- R2 from anywhere in front matter jumped straight to Genesis
-    1, and L2 from Genesis 1 had nothing before it to reach. Fixed by
-    prepending TOC entries before the first real chapterN point. Verified
-    against nwt_E.epub's actual TOC/anchor structure: R2 now steps
-    cover -> Bible Navigation -> title/publisher pages -> all 22
-    Questions -> remaining front matter -> Genesis 1; L2 from Genesis 1
-    steps back correctly instead of getting stuck. Confirmed no effect on
-    non-Bible books (lffi_E.epub stays on the TOC-fallback path either
-    way, under the 5-match threshold).
-v0.1.37 -- Progressive JPEG support added (mini_jpeg.py v0.2.0, later
-    revised in v0.1.38 above). Fixes "Image unavailable (unsupported
-    JPEG features)" on nwt_E.epub's progressive-encoded images.
-v0.1.36 -- Fixed bold/italic word-wrap overflow: _wrap() measured all
-    words with the regular font, but bold renders ~11% wider (108px vs
-    97px, v0.1.35 data), so lines with bold/italic runs could overflow
-    the right edge. New _word_width() measures each word with the font
-    it will actually be drawn in (via body_styled(), splitting sub-runs
-    at style boundaries). Unstyled pages keep the old fast path.
-    Verified by simulation.
+v0.1.61 -- Verified a batch of historical/edge-case pub codes live against
+  the real GETPUBMEDIALINKS API (Kaleb's request, not just guessed):
+  w/mwb confirmed to work for issue=YYYYMM back to January 2016, and
+  confirmed to 404 for 2015 and earlier -- EPUB doesn't appear to exist
+  before 2016 for either. g/wp issue dates can't be reliably guessed
+  (irregular real publish months); use manual code entry with a known
+  issue instead. Walked back "mwbr" from v0.1.60 -- tried 8+ plausible
+  issue codes live and none resolved, so it's commented out until
+  actually confirmed rather than left looking verified when it wasn't.
+
+v0.1.60 -- Scanned jw.org's Magazines and Meeting Workbooks library pages
+  per Kaleb's request. Finding: both pages only surface recent issues
+  (Study Watchtower to Jan 2026, Workbook to May 2025, public
+  Watchtower/Awake! to ~2022) -- not a deep historical archive. A true
+  historical scan (the year filter goes back to 1981) would need
+  fetching each year separately; deferred pending Kaleb's confirmation
+  it's still worth doing, since any past issue is already reachable via
+  the existing manual pub-code entry (Y Enter Code, e.g. "w 202001").
+  Did find one genuinely new, useful pub code: "mwbr" (References for
+  Life and Ministry Meeting Workbook, a companion to mwb) -- added to
+  the Meeting Workbooks category.
+
+v0.1.59 -- Fixed reading-percentage indicator overlapping the last line
+  of body text (confirmed via Kaleb's photo: "loyal," and "26%" drawn on
+  top of each other). Root cause: the percentage label was positioned at
+  a fixed offset above the hint bar, with no relationship to body_rows
+  -- whenever body_h didn't divide evenly by the current line_h (which
+  varies with Font Size), the leftover remainder could be smaller than
+  the label, so the last text row and the percentage shared the same
+  vertical space. Fixed by reserving dedicated footer_h space BELOW the
+  text area up front (subtracted from body_h before body_rows is
+  computed), so text can never lay out into where the percentage is
+  drawn. Verified by simulation across 15 font-size/hint-height
+  combinations: the old logic overlapped in 12 of them, the new one in
+  none.
+
+v0.1.58 -- Feature: JW.org plugin now has categories (Kaleb's request):
+  Bibles, Books & Brochures, Tracts, Watchtower (Public & Study), Awake!,
+  Meeting Workbooks. Selecting the plugin now opens a category picker
+  first; selecting a category opens the browse list scoped to just that
+  category, with search (Y) still available and scoped to the same
+  category. New generic plugin capability (SUPPORTS_CATEGORIES +
+  CATEGORIES list + list_items(category=...)) -- gutenberg_fetch.py is
+  unaffected, it simply doesn't declare it. Along the way: added the
+  "wp" (public Watchtower) and "g" (Awake!) periodical codes, which
+  weren't in the catalog before at all -- both confirmed live on
+  jw.org's own magazines page. Verified end-to-end with the real
+  jw_fetch.py code (not simulated): all 6 categories return the
+  expected items, and search-within-category filters correctly.
+
+v0.1.57 -- More font-scaling overflow fixes at max Font Size, found by
+  Kaleb: (1) Library header ("LIBRARY"/"Sort:"/first row) used fixed Y
+  offsets, causing the sort label to overlap the first row's selection
+  highlight. (2) Download-from selector and Gutenberg/JW download
+  browse lists used fixed row heights/gaps, causing title/author lines
+  to overlap. (3) Text-entry keyboard (search, pub-code entry) used a
+  fixed cell height (SPACE/DEL/OK/CANCEL spilled outside their boxes)
+  and didn't wrap the heading/hint text (got clipped instead). All now
+  scale/wrap with font size, same pattern as v0.1.50-56.
+  jw_fetch.py: added be/cf/jd/ia/jr/bt/mbs/yb11-17/tracts (t-ftr, t-fam,
+  t-god, t-pry, t-jss, t-kng, t-sfr, t-dth, t-rlg) per Kaleb's request,
+  titles verified against wol.jw.org's official Abbreviations page and
+  jw.org's Tracts library page (not guessed).
+
+v0.1.55 -- Feature: L/R on the Library screen are now a Font Size -/+
+  hotkey (Kaleb's request -- L/R were unmapped there). Same logic and
+  status message as the existing "Font Size -/+" menu items, so it's
+  reachable without opening the Library menu. Hint bar updated to
+  advertise it.
+
+v0.1.54 -- Two more font-scaling bugs at max Font Size, found by Kaleb:
+  (1) Transient status-message bar (e.g. "Font size: 32pt (largest)")
+      used a fixed-height panel sized for the old fixed-size UI font --
+      at max size the text no longer fit and visually overlapped the
+      hint bar directly below it. New _status_bar_h() scales it like
+      _row_h() does. Fixed in draw_library, draw_reader,
+      draw_download_browse (all 3 places this panel is drawn).
+  (2) MENU popup, Library MENU popup, and the Storage action list drew
+      every item unconditionally with no bounds check -- fine at the
+      old fixed font size where everything always fit, but at max Font
+      Size (taller rows) items ran past the bottom of the screen with
+      no way to reach them (e.g. "Pre-render Book Images" and "Back"
+      on Storage). All three now use the same windowed-scroll pattern
+      Library/Chapters already used, centered on the selected item.
+
+v0.1.53 -- Two more font-scaling overflow bugs, found by Kaleb at max
+  Font Size after v0.1.52:
+  (1) Storage screen info lines (cache size, disk cache state, etc.)
+      used a fixed 22px line-height increment that didn't grow with
+      ui_small -- at max size lines started overlapping. Now uses
+      _row_h(fonts.ui_small) like the action rows below it.
+  (2) Reader's fast-scroll "%  [FAST]" indicator used a fixed guessed
+      x-offset from the right edge, sized for the old fixed-size UI
+      font -- at max Font Size the wider label ran off-screen. Now
+      right-aligned using the label's actual measured width.
+
+v0.1.52 -- Fixed hint bar text overlap at large Font Size (confirmed via
+  Kaleb's on-device screenshots: popup MENU's hint bar visibly overlapped
+  with leftover reader hint text above it). Root cause: hint_height()
+  cached whatever text last called draw_hint() in the same frame --
+  draw_menu() draws draw_reader() first (long hint, wraps to 2 lines),
+  THEN its own short hint (1 line). The menu's overlay panel was sized
+  using the reader's stale 2-line height, but the final draw_hint() call
+  only cleared/redrew a 1-line area, leaving part of the reader's old
+  hint text uncleared underneath. Fix: hint_height(fonts) is now a pure
+  function of font size only (always reserves the HINT_H_MAX_LINES
+  worst case), so every screen's layout math and its own hint draw
+  always agree, regardless of what any other screen drew first. All
+  hint_height() call sites now take app.fonts.
+
+v0.1.51 -- Cache size increases (confirmed by Kaleb, 32GB SD card):
+  MAX_CACHE_BYTES: 200MB → 500MB (on-disk image cache cap)
+  MAX_INMEMORY_IMAGES: 60 → 80 (decoded images held in RAM)
+  Storage screen "cap" label updated to match.
+
+v0.1.50 -- Two fixes:
+  (1) Global text size: "Font Size +/-" now scales ALL UI text (hint bar,
+      popup menus, Library, Chapters, Bookmarks, Storage, text entry),
+      not just reading text -- previously these were pinned to a fixed
+      18pt (UI_STEP) specifically to avoid overflow at large sizes. That
+      protection is now handled at each draw site instead of by capping
+      the font: hint bar wraps to up to 2 lines and grows vertically
+      (hint_height()/draw_hint()); list rows use dynamic height
+      (_row_h(), via TTF_FontHeight) instead of fixed pixel constants;
+      popup menu/list text truncates with an ellipsis if it would run
+      past its container (_fit_text()) instead of clipping/overflowing.
+      Touches: FontManager.ui_body/ui_small/ui_heading, draw_hint,
+      draw_menu, draw_library_menu, draw_storage, draw_library, draw_toc.
+  (2) Bible chapter-navigation cursor bug: selecting a chapter (e.g.
+      Genesis 1) from the in-book "CHAPTERS:" grid scrolled to roughly
+      the right spot but left the highlighted link on an unrelated
+      chapter number, confirmed via real on-device screenshots. Root
+      cause: _ensure_page_built() always reset selected_span to 0
+      (first span in document order) after ANY page rebuild, including
+      same-file anchor jumps -- so for a huge single-page Bible nav file
+      the cursor landed nowhere near the actual target, and the
+      renderer's "snap to first visible span" fallback then grabbed
+      whatever was nearest on screen instead. Fixed: selected_span is
+      now set to the span at/after the anchor's/resume's char offset.
+      Verified against the real bi12_E.epub structure (BIBLE_01.xhtml)
+      -- link targets themselves were always correct; this was purely
+      an app-side cursor bug, not a bad EPUB link.
+
+Earlier versions (condensed -- see AI NOTES above for anything still
+architecturally relevant):
+v0.1.42  ParaSpan formatting support added (superscript/caption/box_rule/
+         JW paragraph classes); JW classes later removed v0.1.47.
+v0.1.41  Search hint added to Gutenberg text-entry screen.
+v0.1.40  JW pub-code entry hint added; noted Awake! issue-number mapping
+         quirk (jw_fetch.py).
+v0.1.39  Bookmarks/resume-reading now save exact paragraph (char offset),
+         not just chapter.
+v0.1.38  Fixed progressive-JPEG band-skip desync on one real image;
+         fixed L2/R2 chapter nav skipping all front matter on Bible books.
+v0.1.37  Progressive JPEG decoding added (mini_jpeg.py v0.2.0).
+v0.1.36  Fixed bold/italic word-wrap overflow (bold text ~11% wider than
+         regular wasn't accounted for).
 
 START is deliberately unbound outside the Reader screen (v0.1.27) --
 reserved for the downloader plugin trigger, which ended up bound to
@@ -296,9 +382,79 @@ AST-parsing. This is now the required verification bar for edits to
 that function, not merely a nice-to-have.
 ===========================================================================
 
-Version: 0.1.41
+Version: 0.1.49
 
 Changelog:
+  v0.1.49 -- Single-lock image status check (main.py only). Added
+    ImageLoader.get_status_snapshot(key) -- returns result/is_full/
+    is_upgrading/seconds in ONE lock acquisition, replacing the old
+    pattern of calling get(), is_upgrading(), get_with_full_flag(),
+    and seconds_loading() separately (each took its own lock).
+    has_pending_image_updates() and get_image_texture() both switched
+    to the single snapshot call -- was up to 3 lock acquisitions per
+    image per frame while any image on the page was still decoding
+    (has_pending_image_updates() polls every loop iteration by design).
+    Verified behaviorally equivalent across all 8 possible entry states
+    (None/empty/loading/upgrading/full-landed/error) before switching --
+    identical results to the old separate calls. Check frequency is
+    UNCHANGED (still every frame) so images cannot get stuck waiting for
+    a button press; this only reduces redundant lock overhead per check,
+    not how often the check runs. Root cause: person reported 3-8s lag
+    resuming a book to an exact paragraph -- images on that page still
+    decoding meant has_pending_image_updates()+draw_reader() were doing
+    3 lock acquisitions per image per frame competing with real
+    rendering work on the ARM device's more limited CPU.
+  v0.1.48 -- Background chapter pre-parse (main.py only). Added
+    _page_text_cache (RAM-only LRU dict, 4 entries, ~112KB) and
+    _page_text_cache_put() LRU helper. _prefetch_adjacent_chapters()
+    fires a daemon thread after every page build -- pre-parses the
+    prev and next chapter nav-point files into cache so L2/R2 jumps
+    find the XML already parsed. _ensure_page_built() checks cache
+    before calling doc.get_page(), stores result on cold miss.
+    Cache cleared on open_book(). Eliminates main-thread XML parse
+    lag (~0.7s+ on ARM) for chapter navigation.
+  v0.1.47 -- Removed all JW paragraph class rendering (sm/sh/si/sb/sj).
+    epub_engine.py: JW_PARA_CLASSES dict and detection/emit block
+    removed from walk(). These caused italic, indent, small font and
+    grey colour on Bible verse text (sb class on every NWT verse),
+    outline labels, copyright lines etc. Bold still comes through
+    naturally from <strong> in source HTML. main.py: draw_reader
+    simplified -- all para kinds now render as plain body text, same
+    size and colour. superscript/caption also no longer get small font
+    or COL_DIM (uniform rendering throughout). box_rule unchanged.
+  v0.1.46 -- Two fixes (epub_engine.py + main.py):
+    (1) Removed pagenum ([p.N]) tokens entirely. JW print-page markers
+        (<span class="pageNum">) are now silently skipped in walk().
+        Previously they were emitted as "[p.N]" text tokens with a
+        pagenum ParaSpan, which caused the whole wrapped line containing
+        the marker to render in small/dim font (the para_span overlap
+        check painted the entire line, not just the token). All pagenum
+        references removed from ParaSpan docstring, draw_reader
+        use_small check, and segment color logic.
+    (2) Fixed O(n^2) line_abs_start in draw_reader. Previously computed
+        as sum(len(_lines[i])+1 for i in range(li)) on every line every
+        frame -- ~32M iterations/frame on large NWT chapters (8000+
+        lines). Now precomputed once in _ensure_page_built() into
+        _line_abs_offsets[] list; draw_reader does a single index lookup.
+  v0.1.45 -- Pre-render counter fix: previously showed 0/0 during the
+    entire spine-walk phase (up to 3941 files for NWT) because
+    _prerender_total was only set after the walk completed. Added
+    _prerender_scanning flag; _prerender_keys and _prerender_total now
+    update live per spine file so the Storage screen shows
+    "Scanning book... (N images found so far)" during the walk, then
+    switches to "done/total images decoded" once decoding begins.
+    Button label also updates live. prerender_progress() now returns
+    (done, total, scanning) -- all three callers updated.
+  v0.1.44 -- Two image rendering bug fixes:
+    (1) Race in get_image_texture(): get() + is_full_res() were separate
+        lock acquisitions; worker could land full decode between them,
+        tagging a blurry thumb texture as full-res permanently ("improving..."
+        stuck, pixelated image). Fixed with new atomic get_with_full_flag().
+    (2) Duplicate scale= in draw_reader(): zero-guard line silently
+        overwritten by second line without guard (div-by-zero if iw/ih=0).
+        Collapsed to: min(box_w/iw, box_h/ih) if iw and ih else 1.0
+
+
   v0.1.35 -- Two things:
     (1) Fixed the Library pin icon: it used a star (U+2605), which is
         NOT present in Liberation Sans -- confirmed via both fontTools
@@ -1523,6 +1679,8 @@ TTF.TTF_SizeUTF8.argtypes = [ctypes.c_void_p, ctypes.c_char_p,
                               ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
 TTF.TTF_SizeUTF8.restype = ctypes.c_int
 TTF.TTF_CloseFont.argtypes = [ctypes.c_void_p]
+TTF.TTF_FontHeight.restype = ctypes.c_int
+TTF.TTF_FontHeight.argtypes = [ctypes.c_void_p]
 SDL.SDL_CreateRGBSurfaceFrom.restype = ctypes.c_void_p
 SDL.SDL_CreateRGBSurfaceFrom.argtypes = [
     ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -1679,17 +1837,20 @@ JOY_R2 = _sdl_map.get("righttrigger", 14)
 # ============================================================
 class FontManager:
     SIZE_STEPS = [14, 16, 18, 21, 24, 28, 32]
-    # Fixed reference size for UI chrome -- menus, hint bar, library/TOC/
-    # bookmarks/storage screens, headings. These must NEVER scale with the
-    # person's chosen reading-text size: "Font Size +/-" is meant to
-    # control the actual book text only. Previously all UI text shared
-    # the same size-index-driven properties as reader body text, so
-    # increasing reading size also blew up the hint bar and menu popup
-    # until they overflowed off the right edge of the screen. UI_STEP is
-    # deliberately just the SIZE_STEPS default (18pt) -- same visual
-    # size as before at the default reading size, so nothing looks
-    # different unless the person has actually changed Font Size.
-    UI_STEP = 18
+    # v0.1.50: UI chrome (menus, hint bar, library/TOC/bookmarks/storage
+    # screens, headings) now scales with the SAME "Font Size +/-" setting
+    # as reading text -- Kaleb wants one global text-size control, not a
+    # separate reading-only one. This REVERSES the earlier UI_STEP=18pt-
+    # fixed approach (which existed specifically to stop the hint bar and
+    # popup menu overflowing at large reading sizes). Overflow is now
+    # handled at the draw site instead of by capping the font:
+    #   - hint bar (draw_hint/hint_height()) wraps to up to 2 lines and
+    #     grows vertically to fit, rather than clipping off-screen.
+    #   - popup MENU/CHAPTERS/etc. lists were already width-safe at 32pt
+    #     (largest SIZE_STEPS entry) in testing; revisit if a longer
+    #     label is ever added.
+    UI_STEP = 18  # no longer used for ui_* fonts; kept as fallback constant
+                  # for any future fixed-size need
 
     def __init__(self):
         self._cache = {}
@@ -1769,18 +1930,21 @@ class FontManager:
     def heading(self):
         return self._get(self.SIZE_STEPS[self.size_index] + 6)
 
-    # -------- fixed-size UI chrome fonts (do not scale with reading size) --------
+    # -------- UI chrome fonts (v0.1.50: now scale with global size_index,
+    # same as body/small/heading above -- kept as separate properties
+    # rather than aliasing body/small/heading so call sites and any
+    # future re-split stay simple) --------
     @property
     def ui_body(self):
-        return self._get(self.UI_STEP)
+        return self.body
 
     @property
     def ui_small(self):
-        return self._get(max(11, self.UI_STEP - 4))
+        return self.small
 
     @property
     def ui_heading(self):
-        return self._get(self.UI_STEP + 6)
+        return self.heading
 
     def bigger(self):
         self.size_index = min(len(self.SIZE_STEPS) - 1, self.size_index + 1)
@@ -2135,12 +2299,12 @@ class ImageLoader:
     FULL_N = 4    # fallback full-res scale when the header can't be peeked
                   # (corrupt/truncated data) -- otherwise _pick_scale_n()
                   # below chooses per-image based on its actual dimensions.
-    MAX_CACHE_BYTES = 200 * 1024 * 1024  # 200MB cap on the on-disk image cache
-    MAX_INMEMORY_IMAGES = 60  # ~60 decoded images kept in RAM at once (at
+    MAX_CACHE_BYTES = 500 * 1024 * 1024  # 500MB cap on the on-disk image cache
+                                          # (raised from 200MB v0.1.51 -- 32GB SD)
+    MAX_INMEMORY_IMAGES = 80  # ~80 decoded images kept in RAM at once (at
                                # typical real sizes from _pick_scale_n, that's
-                               # roughly 15-25MB) -- unbounded before this,
-                               # _results grew for the entire life of the app
-                               # across every image in every book visited.
+                               # roughly 20-32MB) -- raised from 60 v0.1.51.
+                               # Unbounded before v0.1.48.
 
     # Target size used only to PICK a decode resolution -- deliberately
     # smaller than the actual on-screen image box (SW-40 wide, up to
@@ -2256,6 +2420,30 @@ class ImageLoader:
             return "loading"
         return "error"
 
+    def get_with_full_flag(self, key):
+        """Atomic version of get() + is_full_res() under one lock.
+        Returns (result, is_full) where result matches get() and is_full
+        is True only when the full-res decode has actually landed.
+        Prevents the race in get_image_texture() where two separate lock
+        acquisitions (get() then is_full_res()) let the worker land the
+        full result in between -- causing get() to return the thumb while
+        is_full_res() returns True, permanently tagging a blurry thumb
+        texture as full-res and showing "improving..." forever."""
+        with self._lock:
+            entry = self._results.get(key)
+            if entry is not None:
+                self._results.move_to_end(key)
+        if not entry:
+            return None, False
+        full_ready = isinstance(entry.get("full"), tuple)
+        if full_ready:
+            return entry["full"], True
+        if isinstance(entry.get("thumb"), tuple):
+            return entry["thumb"], False
+        if entry.get("full") == "loading" or entry.get("thumb") == "loading":
+            return "loading", False
+        return "error", False
+
     def is_upgrading(self, key):
         """True if a thumb is showing but the full-res version is still
         decoding in the background -- lets the UI show a subtle indicator."""
@@ -2285,6 +2473,51 @@ class ImageLoader:
         if not entry or "requested_at" not in entry:
             return None
         return time.time() - entry["requested_at"]
+
+    def get_status_snapshot(self, key):
+        """Everything a caller needs about one image in a SINGLE lock
+        acquisition (v0.1.49). Replaces the old pattern of calling get(),
+        is_upgrading(), get_with_full_flag(), and seconds_loading()
+        separately -- each took its own lock. On the reader screen this
+        combo ran every frame for every image on the page while any of
+        them were still decoding (has_pending_image_updates() polls
+        every loop iteration by design, so images can't get stuck until
+        a button press), so 3 separate lock acquisitions per image per
+        frame was pure redundant overhead on top of already-cheap work.
+        Same check frequency as before -- this only makes each check
+        cheaper, not less frequent, so nothing about "does it notice
+        completion" changes.
+        Returns a dict: {result, is_full, is_upgrading, seconds}
+          result       -- matches get(): rgb tuple, 'loading', 'error', or None
+          is_full      -- True only when the full-res decode has landed
+          is_upgrading -- True if showing a thumb while full-res still decodes
+          seconds      -- elapsed since first requested, or None if never requested
+        """
+        with self._lock:
+            entry = self._results.get(key)
+            if entry is not None:
+                self._results.move_to_end(key)
+        if not entry:
+            return {"result": None, "is_full": False, "is_upgrading": False, "seconds": None}
+        full_val = entry.get("full")
+        thumb_val = entry.get("thumb")
+        full_ready = isinstance(full_val, tuple)
+        thumb_ready = isinstance(thumb_val, tuple)
+        if full_ready:
+            result = full_val
+        elif thumb_ready:
+            result = thumb_val
+        elif full_val == "loading" or thumb_val == "loading":
+            result = "loading"
+        else:
+            result = "error"
+        seconds = (time.time() - entry["requested_at"]) if "requested_at" in entry else None
+        return {
+            "result": result,
+            "is_full": full_ready,
+            "is_upgrading": thumb_ready and full_val == "loading",
+            "seconds": seconds,
+        }
 
     def has_full_disk_cache(self, key):
         """True if the full-res decode for this key is already sitting on
@@ -2568,6 +2801,35 @@ def render_text_cached(app, renderer, font, text, color, x, y):
     return w
 
 
+def _row_h(font, pad=16):
+    """Row height in real pixels: current font's rendered height plus
+    padding (scaled). v0.1.50 -- list/menu rows used to be fixed _sy(NN)
+    constants tuned for the old fixed 18pt UI font; now that UI text
+    scales with Font Size +/-, rows need to grow with it or text clips/
+    overlaps between rows at larger sizes."""
+    if not font:
+        return _sy(44)
+    return TTF.TTF_FontHeight(font) + _sy(pad)
+
+
+def _fit_text(font, text, max_w):
+    """Truncate text with a trailing ellipsis if it's wider than max_w --
+    v0.1.50 safety net for popup menus/overlays with a fixed pixel width
+    (e.g. the MENU panel), now that UI text can be scaled up via Font
+    Size +/- and could otherwise run past the panel edge."""
+    if not font or not text or text_width(font, text) <= max_w:
+        return text
+    ell = "..."
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if text_width(font, text[:mid] + ell) <= max_w:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo] + ell if lo > 0 else ell
+
+
 def text_width(font, text):
     if not font or not text:
         return 0
@@ -2748,6 +3010,8 @@ SCREEN_BOOKMARKS = "bookmarks"
 SCREEN_STORAGE = "storage"
 SCREEN_DOWNLOAD_SOURCES = "download_sources"  # pick a plugin (only shown
                                                # if more than one is loaded)
+SCREEN_DOWNLOAD_CATEGORIES = "download_categories"  # pick a category, for
+                                               # plugins with SUPPORTS_CATEGORIES
 SCREEN_DOWNLOAD_BROWSE = "download_browse"    # browse/download from the
                                                # selected plugin
 SCREEN_LIBRARY_MENU = "library_menu"          # START on Library -- sort
@@ -2857,6 +3121,9 @@ class App:
 
         # Downloader plugin UI state.
         self.dl_source_index = 0     # selection on SCREEN_DOWNLOAD_SOURCES
+        self.dl_cat_index = 0        # selection on SCREEN_DOWNLOAD_CATEGORIES
+        self.dl_category = None      # active category (plugin-defined string),
+                                      # or None = no category scoping
         self.dl_plugin = None        # the module currently being browsed
         self.dl_items = []
         self.dl_index = 0
@@ -2888,6 +3155,7 @@ class App:
         # _prerender_book_id guards against a stale progress bar surviving
         # a book switch -- checked before every progress update.
         self._prerender_active = False
+        self._prerender_scanning = False   # True while spine walk is in progress
         self._prerender_cancel = False
         self._prerender_total = 0
         self._prerender_keys = []
@@ -2896,6 +3164,7 @@ class App:
 
         self._page_cache_key = None
         self._lines = []
+        self._line_abs_offsets = []   # cumulative abs char offsets per line (v0.1.46)
         self._line_span_map = []
         self._line_style_runs = []
         self._combined_spans = []
@@ -2903,8 +3172,17 @@ class App:
         self._images = []
         self._anchors = {}
         self._styles = []
+        self._para_spans = []
         self._chapter_nav_points = []
         self._text_texture_cache = {}
+        # RAM-only LRU cache of raw get_page() results (v0.1.48).
+        # Keyed by href; capped at _PAGE_TEXT_CACHE_MAX entries.
+        # Cleared on book open/close. ~28KB per entry x 4 = ~112KB RAM.
+        # Background thread pre-parses adjacent chapter files so
+        # _ensure_page_built() skips the cold XML parse on L2/R2 jumps.
+        self._page_text_cache = {}         # href -> get_page() result tuple
+        self._page_text_cache_order = []   # insertion order for LRU eviction
+        self._PAGE_TEXT_CACHE_MAX = 4
         self.dirty = True
 
     # -------- library --------
@@ -2974,12 +3252,31 @@ class App:
 
 
     def open_downloader(self, plugin):
-        """Switches to the browse screen for one plugin and kicks off its
-        (network-bound) list_items() call on a background thread so the
-        UI never blocks/freezes while waiting on a slow or absent
-        connection -- same reasoning as every other network/decode call
-        in this app."""
+        """Switches to the browse screen for one plugin (or, if the plugin
+        declares SUPPORTS_CATEGORIES, to a category picker first -- see
+        open_category()) and kicks off its (network-bound) list_items()
+        call on a background thread so the UI never blocks/freezes while
+        waiting on a slow or absent connection -- same reasoning as every
+        other network/decode call in this app."""
         self.dl_plugin = plugin
+        self.dl_category = None
+        if getattr(plugin, "SUPPORTS_CATEGORIES", False) and getattr(plugin, "CATEGORIES", None):
+            self.dl_cat_index = 0
+            self.screen = SCREEN_DOWNLOAD_CATEGORIES
+            return
+        self.dl_items = []
+        self.dl_index = 0
+        self.dl_page = 1
+        self.dl_query = None
+        self.dl_has_next = False
+        self.dl_load_error = None
+        self.screen = SCREEN_DOWNLOAD_BROWSE
+        self._load_dl_page()
+
+    def open_category(self, category):
+        """Opens the browse screen scoped to one category (see
+        jw_fetch.CATEGORIES) -- same loading pattern as open_downloader()."""
+        self.dl_category = category
         self.dl_items = []
         self.dl_index = 0
         self.dl_page = 1
@@ -3007,18 +3304,24 @@ class App:
         plugin = self.dl_plugin
         page = self.dl_page
         query = self.dl_query
+        category = self.dl_category
         self.dl_loading = True
         self.dl_load_error = None
 
         def _do_load():
             try:
-                items, has_next, err = plugin.list_items(query=query, page=page)
+                if category is not None:
+                    items, has_next, err = plugin.list_items(query=query, page=page, category=category)
+                else:
+                    items, has_next, err = plugin.list_items(query=query, page=page)
             except Exception as e:
                 items, has_next, err = [], False, str(e)
             # Guard against a stale response landing after the person
-            # already backed out, switched plugins/pages, or started a
-            # different search while this one was still in flight.
-            if self.dl_plugin is plugin and self.dl_page == page and self.dl_query == query:
+            # already backed out, switched plugins/pages/categories, or
+            # started a different search while this one was still in
+            # flight.
+            if (self.dl_plugin is plugin and self.dl_page == page
+                    and self.dl_query == query and self.dl_category == category):
                 self.dl_items = items
                 self.dl_has_next = has_next
                 self.dl_load_error = err
@@ -3128,6 +3431,8 @@ class App:
         self._scroll_stack = []
         self.screen = SCREEN_READER
         self._page_cache_key = None
+        self._page_text_cache.clear()        # v0.1.48: stale on new book
+        self._page_text_cache_order.clear()
         self._chapter_nav_points = self._build_chapter_nav_points()
 
     def _build_chapter_nav_points(self):
@@ -3236,7 +3541,7 @@ class App:
             daily_points = []
             for idx, fname in enumerate(self.doc.spine):
                 try:
-                    text, _links, _images, _anchors, _styles = self.doc.get_page(fname)
+                    text, _links, _images, _anchors, _styles, _pspans = self.doc.get_page(fname)
                 except Exception:
                     continue
                 # search (not match) within a slightly wider window than
@@ -3263,23 +3568,34 @@ class App:
         if key == self._page_cache_key and self.state.current_anchor is None:
             return
         self._clear_text_texture_cache()
-        try:
-            text, links, images, anchors, styles = self.doc.get_page(self.state.current_file)
-        except (KeyError, ValueError) as e:
-            # stale bookmark/link pointing at a file no longer in this epub
-            # (e.g. the file on disk was replaced with a different edition)
-            _boot_log(f"could not load page {self.state.current_file}: {e}\n")
-            fallback = self.doc.spine[0] if self.doc.spine else None
-            if fallback and fallback != self.state.current_file:
-                self.state.current_file = fallback
-                self.state.current_anchor = None
-                text, links, images, anchors, styles = self.doc.get_page(fallback)
-            else:
-                text, links, images, anchors, styles = "(could not load this page)", [], [], {}, []
+        # Check RAM cache first (v0.1.48) -- background prefetch may have
+        # already parsed this file, saving the main-thread XML parse cost.
+        _cached = self._page_text_cache.get(self.state.current_file)
+        if _cached is not None:
+            text, links, images, anchors, styles, para_spans = _cached
+        else:
+            try:
+                text, links, images, anchors, styles, para_spans = self.doc.get_page(self.state.current_file)
+                self._page_text_cache_put(self.state.current_file,
+                                          (text, links, images, anchors, styles, para_spans))
+            except (KeyError, ValueError) as e:
+                # stale bookmark/link pointing at a file no longer in this epub
+                # (e.g. the file on disk was replaced with a different edition)
+                _boot_log(f"could not load page {self.state.current_file}: {e}\n")
+                fallback = self.doc.spine[0] if self.doc.spine else None
+                if fallback and fallback != self.state.current_file:
+                    self.state.current_file = fallback
+                    self.state.current_anchor = None
+                    text, links, images, anchors, styles, para_spans = self.doc.get_page(fallback)
+                    self._page_text_cache_put(fallback,
+                                              (text, links, images, anchors, styles, para_spans))
+                else:
+                    text, links, images, anchors, styles, para_spans = "(could not load this page)", [], [], {}, [], []
         self._links = links
         self._images = images
         self._anchors = anchors
         self._styles = styles
+        self._para_spans = para_spans
         self._visible_image_keys = {self._img_key(im.src) for im in images}
 
         combined = [("link", i, l.start, l.end) for i, l in enumerate(links)]
@@ -3292,8 +3608,18 @@ class App:
         self._lines = lines
         self._line_span_map = line_span_map
         self._line_style_runs = line_style_runs
+        # Precompute cumulative absolute character offsets once (v0.1.46).
+        # draw_reader used to recompute abs offset per line via sum(...range(li)),
+        # which is O(n^2) -- severe lag on large pages (NWT chapters: 8000+ lines).
+        offs = []
+        running = 0
+        for ln in lines:
+            offs.append(running)
+            running += len(ln) + 1   # +1 for the implicit newline separator
+        self._line_abs_offsets = offs
         self._page_cache_key = key
 
+        target_char_off = None
         if self.state.current_char_off is not None:
             # v0.1.39: exact-position restore (bookmark/resume-reading).
             # Same line-search as the anchor path below, just driven by a
@@ -3301,6 +3627,7 @@ class App:
             # this is what makes restore work for a spot the user merely
             # scrolled to, not just a named chapter/link target.
             char_off = self.state.current_char_off
+            target_char_off = char_off
             running = 0
             target_line = 0
             for li, line in enumerate(lines):
@@ -3311,6 +3638,7 @@ class App:
             self.scroll = max(0, target_line - 2)
         elif self.state.current_anchor and self.state.current_anchor in anchors:
             char_off = anchors[self.state.current_anchor]
+            target_char_off = char_off
             running = 0
             target_line = 0
             for li, line in enumerate(lines):
@@ -3321,8 +3649,31 @@ class App:
             self.scroll = max(0, target_line - 2)
         self.state.current_anchor = None
         self.state.current_char_off = None
+        # v0.1.50: selected_span used to always reset to 0 (document-order
+        # first span) here, regardless of where we actually navigated to.
+        # For a same-file anchor jump (e.g. the Bible "CHAPTERS:" grid
+        # linking to "#link0" right before "Chapter 1"), that meant the
+        # cursor stayed on span 0 -- typically a link far above the new
+        # scroll position -- and draw_reader's "snap selection to first
+        # VISIBLE span" fallback would then grab whatever link happened to
+        # be first on screen at the new scroll offset instead of the thing
+        # actually navigated to. Confirmed via real on-device screenshots:
+        # selecting Genesis chapter 1 scrolled to roughly the right place
+        # but left the highlighted cursor on "45" (a leftover chapter-grid
+        # number still visible above "Chapter 1"), nowhere near verse 1.
+        # Fix: pick the span whose start is at-or-after the anchor/resume
+        # char offset we just scrolled to, so the cursor lands on the
+        # actual target link (or the next link after it).
         self.selected_span = 0
+        if target_char_off is not None and self._combined_spans:
+            best_idx, best_start = None, None
+            for si, (kind, i, s, e) in enumerate(self._combined_spans):
+                if s >= target_char_off and (best_start is None or s < best_start):
+                    best_idx, best_start = si, s
+            if best_idx is not None:
+                self.selected_span = best_idx
         self._prefetch_next_images()
+        self._prefetch_adjacent_chapters()  # v0.1.48: pre-parse prev/next chapter text
 
     def _clear_text_texture_cache(self, renderer=None):
         for tex, w, h in self._text_texture_cache.values():
@@ -3331,14 +3682,18 @@ class App:
 
     def has_pending_image_updates(self):
         """True if any image on the current page is still decoding, so the
-        idle render loop knows to keep polling instead of going fully quiet."""
+        idle render loop knows to keep polling instead of going fully quiet.
+        Uses get_status_snapshot() (v0.1.49) -- ONE lock acquisition per
+        image instead of two (get() + is_upgrading() separately). Runs
+        every frame by design (unchanged) so images never get stuck
+        waiting for a button press; this only makes the check cheaper."""
         if not self.images_enabled or not self._images:
             return False
         for im in self._images:
-            result = self.image_loader.get(self._img_key(im.src))
-            if result is None or result == "loading":
+            snap = self.image_loader.get_status_snapshot(self._img_key(im.src))
+            if snap["result"] is None or snap["result"] == "loading":
                 return True
-            if self.image_loader.is_upgrading(self._img_key(im.src)):
+            if snap["is_upgrading"]:
                 return True
         return False
 
@@ -3354,7 +3709,7 @@ class App:
 
         def _do_prefetch():
             try:
-                _text, _links, images, _anchors, _styles = self.doc.get_page(nxt)
+                _text, _links, images, _anchors, _styles, _pspans = self.doc.get_page(nxt)
                 for im in images:
                     key = self._img_key(im.src)
                     if self.image_loader.get(key) is None:
@@ -3367,6 +3722,52 @@ class App:
                                                        priority=ImageLoader.PRIORITY_PREFETCH)
             except Exception as e:
                 _boot_log(f"prefetch failed for {nxt}: {e}\n")
+
+        threading.Thread(target=_do_prefetch, daemon=True).start()
+
+    def _page_text_cache_put(self, href, result):
+        """LRU insert into _page_text_cache, evicting oldest when full (v0.1.48)."""
+        if href in self._page_text_cache:
+            self._page_text_cache_order.remove(href)
+        elif len(self._page_text_cache) >= self._PAGE_TEXT_CACHE_MAX:
+            oldest = self._page_text_cache_order.pop(0)
+            self._page_text_cache.pop(oldest, None)
+        self._page_text_cache[href] = result
+        self._page_text_cache_order.append(href)
+
+    def _prefetch_adjacent_chapters(self):
+        """Background-parse the prev and next chapter files into
+        _page_text_cache so L2/R2 jumps skip the main-thread XML cost
+        (v0.1.48). Mirrors _prefetch_next_images() pattern. Only fires
+        when chapter nav points exist (all books that have chapters).
+        Thread-safe: each thread only writes its own href slot; LRU
+        eviction uses a simple list (no concurrent writers since prefetch
+        threads are daemon and we only fire one at a time per direction)."""
+        if not self._chapter_nav_points or not self.doc:
+            return
+        current_idx = self.doc.spine_index(self.state.current_file)
+        spine_indices = [p[0] for p in self._chapter_nav_points]
+        import bisect
+        pos = bisect.bisect_right(spine_indices, current_idx) - 1
+        candidates = []
+        for delta in (-1, +1):
+            tp = pos + delta
+            if 0 <= tp < len(self._chapter_nav_points):
+                _, fname, _ = self._chapter_nav_points[tp]
+                if fname not in self._page_text_cache:
+                    candidates.append(fname)
+        if not candidates:
+            return
+
+        doc_ref = self.doc  # capture for thread closure
+
+        def _do_prefetch():
+            for fname in candidates:
+                try:
+                    result = doc_ref.get_page(fname)
+                    self._page_text_cache_put(fname, result)
+                except Exception as e:
+                    _boot_log(f"chapter prefetch failed for {fname}: {e}\n")
 
         threading.Thread(target=_do_prefetch, daemon=True).start()
 
@@ -3385,6 +3786,7 @@ class App:
             return
         book_id_value = self._book_id
         self._prerender_active = True
+        self._prerender_scanning = True
         self._prerender_cancel = False
         self._prerender_total = 0
         self._prerender_done = 0
@@ -3394,22 +3796,25 @@ class App:
         def _walk_and_enqueue():
             try:
                 seen_srcs = set()
-                pending_srcs = []
+                # Phase 1: walk spine, discover images, update keys/total live
+                # so draw_storage shows a live "Scanning..." count not 0/0.
                 for fname in self.doc.spine:
                     if self._prerender_cancel or self._prerender_book_id != book_id_value:
                         return
                     try:
-                        _text, _links, images, _anchors, _styles = self.doc.get_page(fname)
+                        _text, _links, images, _anchors, _styles, _pspans = self.doc.get_page(fname)
                     except Exception:
                         continue
                     for im in images:
                         if im.src in seen_srcs:
                             continue
                         seen_srcs.add(im.src)
-                        pending_srcs.append(im.src)
-                self._prerender_keys = [self._img_key(s) for s in pending_srcs]
-                self._prerender_total = len(pending_srcs)
-                for src in pending_srcs:
+                        self._prerender_keys.append(self._img_key(im.src))
+                        self._prerender_total += 1
+                        self.dirty = True  # refresh Storage screen during scan
+                # Phase 2: enqueue each image for background decode
+                self._prerender_scanning = False
+                for src in list(seen_srcs):
                     if self._prerender_cancel or self._prerender_book_id != book_id_value:
                         return
                     key = self._img_key(src)
@@ -3429,6 +3834,7 @@ class App:
                 _boot_log(f"prerender failed: {e}\n")
             finally:
                 if self._prerender_book_id == book_id_value:
+                    self._prerender_scanning = False
                     self._prerender_active = False
                     self.dirty = True
 
@@ -3440,16 +3846,17 @@ class App:
         self._prerender_active = False
 
     def prerender_progress(self):
-        """(done, total) actually-decoded count for the active/last
-        pre-render pass, checked against the real decode results rather
-        than just how many were enqueued -- enqueueing is near-instant,
-        decoding is the slow part, so this is what a progress bar should
-        reflect."""
+        """Returns (done, total, scanning) where:
+          done    = images fully decoded so far
+          total   = images discovered so far (grows during scan phase)
+          scanning = True while spine walk is still in progress
+        done is checked against real decode results, not just queue depth."""
         total = self._prerender_total
+        scanning = self._prerender_scanning
         if not total or not self._prerender_keys:
-            return 0, total
+            return 0, total, scanning
         done = sum(1 for k in self._prerender_keys if self.image_loader.is_full_res(k))
-        return done, total
+        return done, total, scanning
 
     def _measure_words(self, para):
         """Split a paragraph into words plus each word's character offset
@@ -3692,7 +4099,15 @@ class App:
         cached = self._image_textures.get(key)
         if cached:
             self._image_textures.move_to_end(key)  # mark as recently used
-        result = self.image_loader.get(key)
+
+        # Single lock acquisition for the whole status check (v0.1.49) --
+        # was up to 2 separate lock calls (get() then get_with_full_flag())
+        # on the success path. Same atomicity guarantee as the old
+        # get_with_full_flag() (result and is_full always come from the
+        # same snapshot, so a full-res decode landing mid-check can't
+        # cause a blurry thumb to get permanently tagged as full-res).
+        snap = self.image_loader.get_status_snapshot(key)
+        result = snap["result"]
 
         if result is None:
             if self.image_loader.has_full_disk_cache(key):
@@ -3713,8 +4128,8 @@ class App:
                 return cached  # keep showing whatever we had (thumb) while full-res upgrades
             return "error" if result == "error" else None
 
+        is_full = snap["is_full"]
         rgb, w, h = result
-        is_full = self.image_loader.is_full_res(key)
 
         # only rebuild the texture if we don't have one, or a better-res one arrived
         if cached and cached[3] == is_full:
@@ -3988,7 +4403,67 @@ class App:
 # ============================================================
 # Rendering
 # ============================================================
-HINT_H = 40
+HINT_H_BASE = 40  # single-line height at the reference 18pt UI size
+HINT_H_MAX_LINES = 2  # Kaleb: allow the hint bar to grow "maybe double" at
+                       # large font sizes rather than clipping/overflowing
+
+
+def _wrap_hint_text(font, text, max_w):
+    """Greedy word-wrap of the hint bar string (items separated by regular
+    spaces, e.g. 'D-PAD Select/Scroll  A Follow  B Back ...') into as few
+    lines as fit max_w, capped by HINT_H_MAX_LINES -- if it still doesn't
+    fit in that many lines, the last line is left as-is (truncated by the
+    renderer's clip, same as any other overflow) rather than growing the
+    bar without bound."""
+    words = text.split(" ")
+    lines, cur = [], ""
+    for w in words:
+        trial = (cur + " " + w) if cur else w
+        if text_width(font, trial) <= max_w or not cur:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w
+            if len(lines) == HINT_H_MAX_LINES - 1:
+                break
+    if cur:
+        lines.append(cur)
+    if len(lines) > HINT_H_MAX_LINES:
+        lines = lines[:HINT_H_MAX_LINES]
+    return lines
+
+
+def hint_height(fonts):
+    """Hint bar height in design units (pre-_sy scaling) -- v0.1.52:
+    ALWAYS reserves the worst-case HINT_H_MAX_LINES height for the
+    CURRENT font size, regardless of what text any particular screen's
+    hint bar actually needs. This is a function of font size only, not
+    of any specific hint string or draw order, which is what makes it
+    safe: every screen computes the exact same value, so a screen with a
+    short hint can never leave part of a previous (taller) screen's hint
+    text uncleared underneath it -- the bug that caused the popup MENU's
+    hint to visibly overlap the reader's hint text at max Font Size.
+    Costs a little unused vertical padding when a hint only needs one
+    line; that's an intentional, small trade for correctness."""
+    font = fonts.ui_small if fonts else None
+    if font:
+        line_h_design = TTF.TTF_FontHeight(font) / _SY
+    else:
+        line_h_design = HINT_H_BASE * 0.6
+    return line_h_design * HINT_H_MAX_LINES + HINT_H_BASE * 0.35
+
+
+def _status_bar_h(fonts):
+    """Height of the transient status-message bar (e.g. 'Font size: 32pt
+    (largest)') -- v0.1.54. Was a fixed _sy(30)/_sy(22) pair sized for the
+    old fixed-size UI font; at max Font Size the now-larger ui_small text
+    no longer fit inside that fixed box and visually spilled into the
+    hint bar directly below it (confirmed via Kaleb's on-device
+    screenshot: 'Font size: 32pt (largest)' overlapping the hint text).
+    Scales the same way _row_h() does."""
+    return _row_h(fonts.ui_small, pad=10)
+
+
 IMG_BOX_ROWS = 14  # sized to actually use the FULL_N=4 decoded resolution
                     # (was 6 -- that shrank a typical 1200x600 photo to ~48%
                     # of its decoded size, wasting more than half the decode
@@ -4000,19 +4475,37 @@ IMG_BOX_ROWS = 14  # sized to actually use the FULL_N=4 decoded resolution
 
 
 def draw_hint(renderer, fonts, text):
-    fill_rect(renderer, 0, SH - _sy(HINT_H), SW, _sy(HINT_H), COL_HINT_BG)
-    render_text(renderer, fonts.ui_small, text, COL_HINT_TEXT, _sx(14), SH - _sy(HINT_H) + _sy(9))
+    font = fonts.ui_small
+    max_w = SW - _sx(28)
+    h = hint_height(fonts)
+    lines = _wrap_hint_text(font, text, max_w) or [""]
+    # Always fill the FULL reserved area (not just what these lines need)
+    # so nothing from a previous, taller hint draw can bleed through.
+    fill_rect(renderer, 0, SH - _sy(h), SW, _sy(h), COL_HINT_BG)
+    row_h = _sy(h) / HINT_H_MAX_LINES
+    for li, line in enumerate(lines):
+        render_text(renderer, font, line, COL_HINT_TEXT, _sx(14),
+                    SH - _sy(h) + int(row_h * li) + _sy(9))
 
 
 def draw_library(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
-    render_text(renderer, app.fonts.ui_heading, "LIBRARY", COL_ACCENT, _sx(20), _sy(16))
+    # v0.1.56: heading/sort-label/first-row Y positions used to be fixed
+    # (_sy(16)/_sy(48)/_sy(70)) -- fine at the old fixed UI font size, but
+    # once ui_heading/ui_small grew with Font Size the gaps between them
+    # became too small and the "Sort:" line started overlapping the first
+    # row's selection highlight (confirmed via Kaleb's on-device
+    # screenshot). Now spaced using each line's actual font height.
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, "LIBRARY", COL_ACCENT, _sx(20), heading_y)
+    sort_y = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(4)
     render_text(renderer, app.fonts.ui_small, f"Sort: {LIBRARY_SORT_LABELS[app.lib_sort_mode]}",
-                COL_DIM, _sx(20), _sy(48))
+                COL_DIM, _sx(20), sort_y)
 
-    row_h = _sy(46)
-    top = _sy(70)
-    visible = (SH - top - _sy(HINT_H)) // row_h
+    row_h = _row_h(app.fonts.ui_body)
+    top = sort_y + TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(10)
+    visible = (SH - top - _sy(hint_height(app.fonts))) // row_h
+    row_max_w = SW - _sx(44)
 
     start = max(0, app.lib_index - visible // 2)
     for i in range(visible):
@@ -4033,20 +4526,22 @@ def draw_library(renderer, app):
             title_line += f"  \u2014 {book['author']}"
         if armed:
             title_line = "Press SELECT again to DELETE, or move to cancel"
-        render_text(renderer, app.fonts.ui_body, title_line[:60], color, _sx(24), y + _sy(8))
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, title_line, row_max_w),
+                    color, _sx(24), y + _sy(8))
 
     if not app.books:
         render_text(renderer, app.fonts.ui_body,
                     f"No .epub files found in {LIBRARY_DIR}", COL_DIM, _sx(24), _sy(100))
 
     if app.status_msg and time.time() < app.status_until:
-        fill_rect(renderer, 0, SH - _sy(HINT_H) - _sy(30), SW, _sy(30), COL_PANEL)
+        _sb_h = _status_bar_h(app.fonts)
+        fill_rect(renderer, 0, SH - _sy(hint_height(app.fonts)) - _sy(_sb_h), SW, _sy(_sb_h), COL_PANEL)
         render_text(renderer, app.fonts.ui_small, app.status_msg, COL_WARNING,
-                    _sx(14), SH - _sy(HINT_H) - _sy(22))
+                    _sx(14), SH - _sy(hint_height(app.fonts)) - _sy(_sb_h) + _sy(6))
 
-    lib_hint = "A Open  Y Sort  X Pin  SELECT Delete  START Menu  B Quit"
+    lib_hint = "A Open  Y Sort  X Pin  SELECT Delete  L/R Font Size  START Menu  B Quit"
     if DOWNLOAD_PLUGINS:
-        lib_hint = "A Open  Y Sort  X Pin  SELECT Delete  L2 Download  START Menu  B Quit"
+        lib_hint = "A Open  Y Sort  X Pin  SELECT Delete  L/R Font Size  L2 Download  START Menu  B Quit"
     draw_hint(renderer, app.fonts, lib_hint)
 
 
@@ -4055,7 +4550,19 @@ def draw_reader(renderer, app):
     app._ensure_page_built()
 
     body_top = _sy(14)
-    body_h = SH - body_top - _sy(HINT_H)
+    # v0.1.59: footer_h reserves dedicated space for the progress-percent
+    # indicator BELOW the text area, subtracted from body_h before
+    # body_rows is computed. Previously the percentage was positioned at
+    # a fixed offset above the hint bar with no relationship to body_rows
+    # -- when body_h didn't divide evenly by line_h (leftover remainder
+    # smaller than the label's height, which varies with Font Size), the
+    # last line of text and the percentage ended up sharing the same
+    # vertical space (confirmed via Kaleb's on-device photo: "loyal," and
+    # "26%" overlapping). Reserving the footer up front guarantees text
+    # never lays out into where the percentage is drawn, regardless of
+    # font size or how body_h divides.
+    footer_h = TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(14)
+    body_h = SH - body_top - _sy(hint_height(app.fonts)) - footer_h
     line_h = _sy(app.fonts.SIZE_STEPS[app.fonts.size_index] + 6)
     body_rows = max(1, body_h // line_h)
 
@@ -4115,9 +4622,8 @@ def draw_reader(renderer, app):
             border_color = COL_LINK_SEL if is_selected else COL_DIM
             if entry and entry != "error":
                 tex, iw, ih, is_full, _buf = entry
-                scale = min(box_w / iw, box_h / ih, 1.0) if iw and ih else 1.0
-                # allow modest upscale of small thumbnails so layout doesn't jump around
-                scale = min(box_w / iw, box_h / ih)
+                # scale to fit box; allow upscale for small thumbnails so layout is stable
+                scale = min(box_w / iw, box_h / ih) if iw and ih else 1.0
                 dw, dh = int(iw * scale), int(ih * scale)
                 dx = _sx(20) + (box_w - dw) // 2
                 dy = y + (box_h - dh) // 2
@@ -4145,9 +4651,34 @@ def draw_reader(renderer, app):
             li += 1
             continue
 
+        # Determine paragraph-level formatting for this line (v0.1.42).
+        # Offsets precomputed in _ensure_page_built (v0.1.46 -- was O(n^2)).
+        line_abs_start = app._line_abs_offsets[li] if li < len(app._line_abs_offsets) else 0
+        line_abs_end = line_abs_start + len(line)
+        para_kind = None
+        para_extra = ""
+        for ps in app._para_spans:
+            if ps.start < line_abs_end and ps.end > line_abs_start:
+                para_kind = ps.kind
+                para_extra = ps.extra
+                break
+
+        # box_rule lines: draw the rule text in COL_DIM, skip normal render.
+        if para_kind == "box_rule":
+            render_text_cached(app, renderer, app.fonts.small, line, COL_DIM, _sx(20), y)
+            row += 1
+            li += 1
+            continue
+
+        # All para kinds render as plain body text (v0.1.47).
+        # JW classes sm/sh/si/sb/sj removed; superscript/caption no
+        # longer get small font or grey -- uniform size and colour.
+        # box_rule still uses small+dim for the visual divider line.
+        indent_x = _sx(20)
         style_runs = app._line_style_runs[li] if li < len(app._line_style_runs) else [(0, len(line), False, False)]
         segments = app._line_segments(line, ranges, style_runs)
-        x = _sx(20)
+        x = indent_x
+
         for (s, e, sidx, bold, italic) in segments:
             seg = line[s:e]
             if not seg:
@@ -4168,13 +4699,20 @@ def draw_reader(renderer, app):
         pct = int(100 * app.scroll / max(1, len(app._lines) - body_rows))
         label = f"{pct}% [FAST]" if app.fast_scroll else f"{pct}%"
         color = COL_ACCENT if app.fast_scroll else COL_DIM
+        label_w = text_width(app.fonts.ui_small, label)
+        # v0.1.59: draw within the reserved footer_h band (right below the
+        # last text row) rather than a fixed offset above the hint bar --
+        # see footer_h comment above for why the old fixed offset could
+        # collide with the last line of text.
+        footer_top = body_top + body_rows * line_h
         render_text(renderer, app.fonts.ui_small, label, color,
-                    SW - _sx(90 if app.fast_scroll else 50), SH - _sy(HINT_H) - _sy(24))
+                    SW - label_w - _sx(14), footer_top + _sy(6))
 
     if app.status_msg and time.time() < app.status_until:
-        fill_rect(renderer, 0, SH - _sy(HINT_H) - _sy(30), SW, _sy(30), COL_PANEL)
+        _sb_h = _status_bar_h(app.fonts)
+        fill_rect(renderer, 0, SH - _sy(hint_height(app.fonts)) - _sy(_sb_h), SW, _sy(_sb_h), COL_PANEL)
         render_text(renderer, app.fonts.ui_small, app.status_msg, COL_ACCENT,
-                    _sx(14), SH - _sy(HINT_H) - _sy(22))
+                    _sx(14), SH - _sy(hint_height(app.fonts)) - _sy(_sb_h) + _sy(6))
 
     draw_hint(renderer, app.fonts,
               "D-PAD Select/Scroll  A Follow  B Back  L/R Page  L2/R2 Chapter  Y Fast x10  X Menu  START Bookmark")
@@ -4183,25 +4721,40 @@ def draw_reader(renderer, app):
 def draw_menu(renderer, app):
     draw_reader(renderer, app)
     overlay_w = _sx(360)
-    fill_rect(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(HINT_H), COL_PANEL)
+    fill_rect(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
     render_text(renderer, app.fonts.ui_heading, "MENU", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
-    row_h = _sy(50)
+    row_h = _row_h(app.fonts.ui_body)
     top = _sy(80)
-    for i, item in enumerate(MENU_ITEMS):
+    item_max_w = overlay_w - _sx(44)
+    n_items = len(MENU_ITEMS)
+    # v0.1.54: this list used to draw every item unconditionally assuming
+    # they'd always fit -- true at the old fixed UI font size, but not
+    # once rows grew with Font Size. Windowed like Library/Chapters so it
+    # scrolls instead of running off the bottom of the screen (confirmed
+    # via Kaleb's on-device screenshots at max Font Size).
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.menu_index - visible // 2, max(0, n_items - visible)))
+    for i in range(visible):
+        mi = start + i
+        if mi >= n_items:
+            break
+        item = MENU_ITEMS[mi]
         y = top + i * row_h
-        if i == app.menu_index:
+        if mi == app.menu_index:
             fill_rect(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
-        color = COL_ACCENT if i == app.menu_index else COL_TEXT
-        render_text(renderer, app.fonts.ui_body, item, color, SW - overlay_w + _sx(24), y + _sy(8))
+        color = COL_ACCENT if mi == app.menu_index else COL_TEXT
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, item, item_max_w),
+                    color, SW - overlay_w + _sx(24), y + _sy(8))
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
 
 
 def draw_toc(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     render_text(renderer, app.fonts.ui_heading, "CHAPTERS", COL_ACCENT, _sx(20), _sy(16))
-    row_h = _sy(40)
+    row_h = _row_h(app.fonts.ui_body, pad=10)
     top = _sy(70)
-    visible = (SH - top - _sy(HINT_H)) // row_h
+    visible = (SH - top - _sy(hint_height(app.fonts))) // row_h
+    row_max_w = SW - _sx(44)
     start = max(0, app.toc_index - visible // 2)
     for i in range(visible):
         ti = start + i
@@ -4213,59 +4766,108 @@ def draw_toc(renderer, app):
             fill_rect(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if ti == app.toc_index else COL_TEXT
         label = ("  " * entry.level) + entry.title
-        render_text(renderer, app.fonts.ui_body, label[:60], color, _sx(24), y + _sy(6))
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, row_max_w),
+                    color, _sx(24), y + _sy(6))
     draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R/Y +10   L2/R2 Prev/Next Book   A Go   B Cancel")
 
 
 def draw_text_entry(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
-    render_text(renderer, app.fonts.ui_heading, app.te_prompt, COL_ACCENT, _sx(20), _sy(16))
+    # v0.1.57: prompt/hint text used to be drawn unwrapped at a fixed size
+    # -- fine at the old fixed UI font, but at max Font Size a long prompt
+    # (e.g. "Pub code (+ issue YYYYMM if needed)") or hint
+    # ("w=Watchtower g=Awake! ...") ran past the right edge instead of
+    # wrapping (confirmed via Kaleb's on-device screenshot). Both now wrap
+    # up to 2 lines, same helper the hint bar uses.
+    max_w = SW - _sx(40)
+    prompt_lines = _wrap_hint_text(app.fonts.ui_heading, app.te_prompt, max_w) or [""]
+    heading_h = TTF.TTF_FontHeight(app.fonts.ui_heading)
+    y = _sy(16)
+    for line in prompt_lines:
+        render_text(renderer, app.fonts.ui_heading, line, COL_ACCENT, _sx(20), y)
+        y += heading_h
 
     # typed-so-far value, in its own box near the top
-    box_y = _sy(60)
-    fill_rect(renderer, _sx(20), box_y, SW - _sx(40), _sy(44), COL_PANEL)
+    box_y = y + _sy(10)
+    body_h = TTF.TTF_FontHeight(app.fonts.ui_body)
+    box_h = body_h + _sy(20)
+    fill_rect(renderer, _sx(20), box_y, SW - _sx(40), box_h, COL_PANEL)
     shown = app.te_value if app.te_value else "(type below, OK to confirm)"
     color = COL_TEXT if app.te_value else COL_DIM
-    render_text(renderer, app.fonts.ui_body, shown[:50], color, _sx(30), box_y + _sy(10))
+    render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, shown, SW - _sx(60)),
+                color, _sx(30), box_y + _sy(10))
 
-    status_y = box_y + _sy(50)
+    status_y = box_y + box_h + _sy(10)
+    small_h = TTF.TTF_FontHeight(app.fonts.ui_small)
+    status_lines = []
     if app.te_checking:
-        render_text(renderer, app.fonts.ui_small, "Checking...", COL_DIM, _sx(24), status_y)
+        status_lines = ["Checking..."]
     elif app.te_error:
-        render_text(renderer, app.fonts.ui_small, app.te_error[:70], COL_WARNING, _sx(24), status_y)
+        status_lines = _wrap_hint_text(app.fonts.ui_small, app.te_error, max_w)
     elif app.te_hint:
-        render_text(renderer, app.fonts.ui_small, app.te_hint[:70], COL_DIM, _sx(24), status_y)
+        status_lines = _wrap_hint_text(app.fonts.ui_small, app.te_hint, max_w)
+    status_color = COL_WARNING if app.te_error else COL_DIM
+    for line in status_lines:
+        render_text(renderer, app.fonts.ui_small, line, status_color, _sx(24), status_y)
+        status_y += small_h
 
     # letter/digit/action grid -- ragged rows, so cell width is based on
     # the WIDEST row (10, the digit row) so every cell is the same size
     # regardless of which row it's in; narrower rows just don't fill the
     # full row width, which reads fine visually (left-aligned).
     rows = TEXT_ENTRY_GRID
-    grid_top = box_y + _sy(80)
+    grid_top = status_y + _sy(10)
     max_cols = max(len(row) for row in rows)
     cell_w = (SW - _sx(40)) // max_cols
-    cell_h = _sy(58)
+    cell_h = max(body_h, small_h) + _sy(24)
     for r, row in enumerate(rows):
         for c, (label, kind) in enumerate(row):
             x = _sx(20) + c * cell_w
-            y = grid_top + r * cell_h
+            gy = grid_top + r * cell_h
             selected = (r == app.te_row and c == app.te_col)
             bg = COL_MENU_SEL_BG if selected else COL_PANEL
-            fill_rect(renderer, x + _sx(3), y + _sy(3), cell_w - _sx(6), cell_h - _sy(6), bg)
+            fill_rect(renderer, x + _sx(3), gy + _sy(3), cell_w - _sx(6), cell_h - _sy(6), bg)
             fg = COL_ACCENT if selected else (COL_WARNING if kind in ("confirm", "cancel") else COL_TEXT)
             font = app.fonts.ui_small if kind not in ("char", "space") else app.fonts.ui_body
-            render_text(renderer, font, label, fg, x + _sx(8), y + _sy(14))
+            render_text(renderer, font, _fit_text(font, label, cell_w - _sx(12)), fg, x + _sx(8), gy + _sy(10))
 
     draw_hint(renderer, app.fonts, "D-PAD Move   A Select   X Backspace   B Cancel")
 
 
+def draw_download_categories(renderer, app):
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    heading_y = _sy(16)
+    name = getattr(app.dl_plugin, "PLUGIN_NAME", "Download") if app.dl_plugin else "Download"
+    render_text(renderer, app.fonts.ui_heading, f"{name.upper()} -- CATEGORIES", COL_ACCENT,
+                _sx(20), heading_y)
+    categories = getattr(app.dl_plugin, "CATEGORIES", [])
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    n_items = len(categories)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.dl_cat_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        cat = categories[i]
+        y = top + (i - start) * row_h
+        if i == app.dl_cat_index:
+            fill_rect(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.dl_cat_index else COL_TEXT
+        render_text(renderer, app.fonts.ui_body, cat, color, _sx(24), y + _sy(10))
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+
+
 def draw_download_sources(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
-    render_text(renderer, app.fonts.ui_heading, "DOWNLOAD FROM", COL_ACCENT, _sx(20), _sy(16))
-    row_h = _sy(46)
-    top = _sy(70)
-    for i, plugin in enumerate(DOWNLOAD_PLUGINS):
-        y = top + i * row_h
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, "DOWNLOAD FROM", COL_ACCENT, _sx(20), heading_y)
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    n_items = len(DOWNLOAD_PLUGINS)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.dl_source_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        plugin = DOWNLOAD_PLUGINS[i]
+        y = top + (i - start) * row_h
         if i == app.dl_source_index:
             fill_rect(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.dl_source_index else COL_TEXT
@@ -4278,25 +4880,29 @@ def draw_download_browse(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     name = getattr(app.dl_plugin, "PLUGIN_NAME", "Download") if app.dl_plugin else "Download"
     title = f"{name.upper()}"
+    if app.dl_category:
+        title += f" -- {app.dl_category}"
     if app.dl_query:
         title += f'  -- "{app.dl_query}"'
     if app.dl_page > 1:
         title += f"  (page {app.dl_page})"
     render_text(renderer, app.fonts.ui_heading, title, COL_ACCENT, _sx(20), _sy(16))
 
-    row_h = _sy(52)
-    top = _sy(70)
+    title_h = TTF.TTF_FontHeight(app.fonts.ui_body)
+    sub_h = TTF.TTF_FontHeight(app.fonts.ui_small)
+    row_h = title_h + sub_h + _sy(20)
+    top = _sy(16) + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
 
     if app.dl_loading:
         render_text(renderer, app.fonts.ui_body, "Loading...", COL_DIM, _sx(24), top)
     elif app.dl_load_error:
         render_text(renderer, app.fonts.ui_body, "Couldn't reach server:", COL_WARNING, _sx(24), top)
         render_text(renderer, app.fonts.ui_small, str(app.dl_load_error)[:70], COL_DIM,
-                    _sx(24), top + _sy(26))
+                    _sx(24), top + title_h + _sy(6))
     elif not app.dl_items:
         render_text(renderer, app.fonts.ui_body, "No results.", COL_DIM, _sx(24), top)
     else:
-        visible = max(1, (SH - top - _sy(HINT_H)) // row_h)
+        visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
         start = max(0, app.dl_index - visible // 2)
         for i in range(visible):
             di = start + i
@@ -4312,12 +4918,13 @@ def draw_download_browse(renderer, app):
                 title_line += "  (downloading...)"
             render_text(renderer, app.fonts.ui_body, title_line, color, _sx(24), y + _sy(6))
             render_text(renderer, app.fonts.ui_small, item.get("subtitle", "")[:70], COL_DIM,
-                        _sx(24), y + _sy(28))
+                        _sx(24), y + title_h + _sy(10))
 
     if app.status_msg and time.time() < app.status_until:
-        fill_rect(renderer, 0, SH - _sy(HINT_H) - _sy(30), SW, _sy(30), COL_PANEL)
+        _sb_h = _status_bar_h(app.fonts)
+        fill_rect(renderer, 0, SH - _sy(hint_height(app.fonts)) - _sy(_sb_h), SW, _sy(_sb_h), COL_PANEL)
         render_text(renderer, app.fonts.ui_small, app.status_msg, COL_ACCENT,
-                    _sx(14), SH - _sy(HINT_H) - _sy(22))
+                    _sx(14), SH - _sy(hint_height(app.fonts)) - _sy(_sb_h) + _sy(6))
 
     hint = "UP/DOWN Select   A Download   B Back"
     if app.dl_has_next or app.dl_page > 1:
@@ -4332,12 +4939,17 @@ def draw_download_browse(renderer, app):
 def draw_library_menu(renderer, app):
     draw_library(renderer, app)
     overlay_w = _sx(320)
-    fill_rect(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(HINT_H), COL_PANEL)
+    fill_rect(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
     render_text(renderer, app.fonts.ui_heading, "MENU", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
-    row_h = _sy(46)
+    row_h = _row_h(app.fonts.ui_body)
     top = _sy(76)
-    for i, item in enumerate(LIBRARY_MENU_ITEMS):
-        y = top + i * row_h
+    item_max_w = overlay_w - _sx(40)
+    n_items = len(LIBRARY_MENU_ITEMS)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.lib_menu_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        item = LIBRARY_MENU_ITEMS[i]
+        y = top + (i - start) * row_h
         label = item
         if (item, app.lib_sort_mode) in (
             ("Sort: Title A-Z", "title"), ("Sort: Author A-Z", "author"),
@@ -4348,7 +4960,8 @@ def draw_library_menu(renderer, app):
         if i == app.lib_menu_index:
             fill_rect(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.lib_menu_index else COL_TEXT
-        render_text(renderer, app.fonts.ui_body, label, color, SW - overlay_w + _sx(20), y + _sy(8))
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
+                    color, SW - overlay_w + _sx(20), y + _sy(8))
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
 
 
@@ -4398,7 +5011,7 @@ def draw_storage(renderer, app):
     else:
         backup_line = "Bookmark backups: none yet"
     info_lines = [
-        f"Image cache on disk: {cache_size} (cap 200 MB)",
+        f"Image cache on disk: {cache_size} (cap 500 MB)",
         f"Orphaned bookmark sets: {orphan_count} deleted book(s)",
         f"Disk cache: {cache_state}",
         f"Images: {'ON' if app.images_enabled else 'OFF (text-only)'}",
@@ -4407,36 +5020,51 @@ def draw_storage(renderer, app):
     if app.doc is not None and app._book_id:
         info_lines.insert(1, f"This book's cache: {format_bytes(book_cache_size_bytes(app._book_id))}")
     if app._prerender_active or app._prerender_total:
-        done, total = app.prerender_progress()
-        if app._prerender_active:
-            info_lines.append(f"Pre-render: {done}/{total} images decoded (running in background)")
+        done, total, scanning = app.prerender_progress()
+        if scanning:
+            info_lines.append(f"Pre-render: scanning book... ({total} images found so far)")
+        elif app._prerender_active:
+            info_lines.append(f"Pre-render: {done}/{total} images decoded (running)")
         elif total:
             info_lines.append(f"Pre-render: {done}/{total} images decoded (last run)")
+    line_h = _row_h(app.fonts.ui_small, pad=6)
     y = _sy(50)
     for line in info_lines:
         render_text(renderer, app.fonts.ui_small, line, COL_DIM, _sx(20), y)
-        y += _sy(22)
+        y += line_h
 
-    row_h = _sy(44)
+    row_h = _row_h(app.fonts.ui_body)
     top = y + _sy(16)
-    for i, action in enumerate(STORAGE_ACTIONS):
-        ry = top + i * row_h
-        armed = (i == app._storage_confirm_idx)
+    action_max_w = SW - _sx(40)
+    n_items = len(STORAGE_ACTIONS)
+    # v0.1.54: windowed like Library/Chapters/Menu -- this list used to
+    # draw every action unconditionally, which ran past the bottom of
+    # the screen once info_lines + row_h both grew with Font Size
+    # (confirmed via Kaleb's on-device screenshot: "Pre-render Book
+    # Images" and "Back" were pushed off-screen with no way to reach
+    # them).
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.storage_index - visible // 2, max(0, n_items - visible)))
+    for idx in range(start, min(n_items, start + visible)):
+        action = STORAGE_ACTIONS[idx]
+        ry = top + (idx - start) * row_h
+        armed = (idx == app._storage_confirm_idx)
         if armed:
             fill_rect(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_WARNING)
-        elif i == app.storage_index:
+        elif idx == app.storage_index:
             fill_rect(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
-        color = COL_BG if armed else (COL_ACCENT if i == app.storage_index else COL_TEXT)
+        color = COL_BG if armed else (COL_ACCENT if idx == app.storage_index else COL_TEXT)
         label = action
         if action == "Pre-render Book Images" and app._prerender_active:
-            done, total = app.prerender_progress()
-            label = f"Cancel Pre-render ({done}/{total})"
+            done, total, scanning = app.prerender_progress()
+            label = f"Cancel Pre-render (scanning... {total} found)" if scanning                 else f"Cancel Pre-render ({done}/{total})"
         if armed:
             label = "Press A again to confirm, or B to cancel"
-        render_text(renderer, app.fonts.ui_body, label, color, _sx(24), ry + _sy(10))
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, action_max_w),
+                    color, _sx(24), ry + _sy(10))
 
     if app.status_msg and time.time() < app.status_until:
-        msg_y = top + len(STORAGE_ACTIONS) * row_h + _sy(20)
+        msg_y = top + min(visible, n_items) * row_h + _sy(20)
         render_text(renderer, app.fonts.ui_small, app.status_msg, COL_ACCENT, _sx(20), msg_y)
 
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
@@ -4551,7 +5179,7 @@ def main():
 
             if btn:
                 app.dirty = True
-                handle_button(app, btn, SH - HINT_H)
+                handle_button(app, btn, SH - hint_height(app.fonts))
                 if app.quit_requested:
                     running = False
                     break
@@ -4587,6 +5215,8 @@ def main():
                 draw_text_entry(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_SOURCES:
                 draw_download_sources(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_CATEGORIES:
+                draw_download_categories(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_BROWSE:
                 draw_download_browse(renderer, app)
 
@@ -4654,6 +5284,28 @@ def handle_button(app, btn, body_h_px):
             else:
                 app.dl_source_index = 0
                 app.screen = SCREEN_DOWNLOAD_SOURCES
+        elif btn == "L":
+            # v0.1.55: L/R were unmapped on the Library screen -- added as
+            # a Font Size -/+ hotkey (Kaleb's request) so the setting is
+            # reachable without opening the Library menu. Same logic/
+            # status message as the "Font Size -/+" menu items.
+            before = app.fonts.size_index
+            app.fonts.smaller()
+            app._page_cache_key = None
+            pt = app.fonts.SIZE_STEPS[app.fonts.size_index]
+            if app.fonts.size_index == before:
+                app.set_status(f"Font size: {pt}pt (smallest)")
+            else:
+                app.set_status(f"Font size: {pt}pt")
+        elif btn == "R":
+            before = app.fonts.size_index
+            app.fonts.bigger()
+            app._page_cache_key = None
+            pt = app.fonts.SIZE_STEPS[app.fonts.size_index]
+            if app.fonts.size_index == before:
+                app.set_status(f"Font size: {pt}pt (largest)")
+            else:
+                app.set_status(f"Font size: {pt}pt")
         elif btn == "START":
             app._lib_delete_confirm_idx = None
             app.lib_menu_index = 0
@@ -4695,6 +5347,19 @@ def handle_button(app, btn, body_h_px):
         elif btn == "A" and DOWNLOAD_PLUGINS:
             app.open_downloader(DOWNLOAD_PLUGINS[app.dl_source_index])
 
+    elif app.screen == SCREEN_DOWNLOAD_CATEGORIES:
+        categories = getattr(app.dl_plugin, "CATEGORIES", [])
+        n = len(categories)
+        if btn == "UP": app.dl_cat_index = (app.dl_cat_index - 1) % n if n else 0
+        elif btn == "DOWN": app.dl_cat_index = (app.dl_cat_index + 1) % n if n else 0
+        elif btn == "B":
+            if len(DOWNLOAD_PLUGINS) > 1:
+                app.screen = SCREEN_DOWNLOAD_SOURCES
+            else:
+                app.screen = SCREEN_LIBRARY
+        elif btn == "A" and categories:
+            app.open_category(categories[app.dl_cat_index])
+
     elif app.screen == SCREEN_DOWNLOAD_BROWSE:
         n = len(app.dl_items)
         if btn == "UP": app.dl_index = (app.dl_index - 1) % n if n else 0
@@ -4708,6 +5373,17 @@ def handle_button(app, btn, body_h_px):
             app.open_text_entry("Search " + getattr(app.dl_plugin, "PLUGIN_NAME", ""),
                                  app.dl_query or "", _on_search_confirm, SCREEN_DOWNLOAD_BROWSE,
                                  hint="Search by title or author  (case-insensitive)")
+        elif btn == "Y" and getattr(app.dl_plugin, "SUPPORTS_CATEGORIES", False):
+            # Same search entry as SUPPORTS_SEARCH above, but scoped to the
+            # currently-open category via start_search() -> _load_dl_page(),
+            # which already threads self.dl_category through.
+            def _on_cat_search_confirm(app, value):
+                app.screen = SCREEN_DOWNLOAD_BROWSE
+                app.start_search(value)
+            cat_label = app.dl_category or getattr(app.dl_plugin, "PLUGIN_NAME", "")
+            app.open_text_entry(f"Search {cat_label}", app.dl_query or "",
+                                 _on_cat_search_confirm, SCREEN_DOWNLOAD_BROWSE,
+                                 hint="Search by title  (case-insensitive)")
         elif btn == "Y" and getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
             def _on_code_validate(app, value):
                 parts = value.strip().split()
@@ -4731,7 +5407,9 @@ def handle_button(app, btn, body_h_px):
                                  None, SCREEN_DOWNLOAD_BROWSE, on_validate=_on_code_validate,
                                  hint=getattr(app.dl_plugin, "MANUAL_CODE_HINT", ""))
         elif btn == "B":
-            if len(DOWNLOAD_PLUGINS) > 1:
+            if app.dl_category is not None:
+                app.screen = SCREEN_DOWNLOAD_CATEGORIES
+            elif len(DOWNLOAD_PLUGINS) > 1:
                 app.screen = SCREEN_DOWNLOAD_SOURCES
             else:
                 app.screen = SCREEN_LIBRARY
