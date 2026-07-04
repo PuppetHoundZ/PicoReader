@@ -422,6 +422,26 @@ class EpubDocument:
                     emit("\n")
                 return
 
+            # SVG <image> (v0.1.56): newer Project Gutenberg "ebookmaker"
+            # covers wrap the cover picture as <svg><image xlink:href="..."/>
+            # </svg> instead of a plain <img>, so the img-only check above
+            # silently produced a blank page for the whole cover spine
+            # entry. xlink:href is the correct SVG1.1 attribute name; some
+            # tools drop the xlink: prefix per SVG2, so fall back to a bare
+            # "href" too. Confirmed against a real Gutenberg epub (The
+            # Adventures of Sherlock Holmes, gutenberg.org/1661) -- see
+            # wrap0000.xhtml in that file for the exact markup.
+            if tag == "image":
+                href = elem.get("{http://www.w3.org/1999/xlink}href") or elem.get("href")
+                if href:
+                    base_dir = posixpath.dirname(file_path)
+                    resolved = posixpath.normpath(posixpath.join(base_dir, href))
+                    img_start = cursor[0]
+                    emit("[IMG]")
+                    images.append(ImageSpan(start=img_start, end=cursor[0], src=resolved, alt=""))
+                    emit("\n")
+                return
+
             if tag in ("script", "style"):
                 return
 

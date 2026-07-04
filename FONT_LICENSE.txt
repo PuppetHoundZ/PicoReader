@@ -1,0 +1,17 @@
+Bundled fonts: Liberation Sans -- assets/font.ttf (Regular),
+assets/font-bold.ttf (Bold), assets/font-italic.ttf (Italic),
+assets/font-bolditalic.ttf (Bold Italic).
+
+Full license text (SIL Open Font License 1.1) has moved into the
+project's consolidated LICENSE file, alongside the MIT license that
+covers this project's own source code. See LICENSE in the repo root.
+
+Source: built directly from the official upstream source at
+https://github.com/liberationfonts/liberation-fonts, tag 2.1.5
+(commit 4b0192046158094654e865245832c66d2104219e), using the
+project's own documented build process (fontforge -script
+scripts/fontexport.pe against the .sfd sources, via `make`). Verified
+by inspecting each output file's embedded name-table version field
+(all four report "Version 2.1.5") -- not sourced from a third-party
+mirror or a distro repackaging. Not modified from the original
+release beyond this standard build step.
