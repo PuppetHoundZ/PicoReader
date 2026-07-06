@@ -2,12 +2,7 @@
 """
 PicoReader for muOS (Anbernic RG CubeXX-H, 720x720)
 
-*** THIS IS THE PERSONAL BUILD -- INCLUDES jw_fetch.py ***
-jw_fetch.py is a PRIVATE downloader plugin (JW.org publications) and
-must NEVER be published to the public GitHub repo. This build is for
-Kaleb's own device only. For the public/GitHub-safe build (identical
-otherwise, jw_fetch.py simply not included), see the separate release
-build's main.py header.
+*** THIS IS THE PUGLIC BUILD --.
 
 Companion app to Pico8FavsSorter -- same conventions: raw ctypes SDL2,
 no external deps, hint bar, controller-first navigation.
