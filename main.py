@@ -60,69 +60,45 @@ scrolled to your current reading position, not always the top of the list.
 
 ===========================================================================
 AI NOTES -- read this first if you're a future Claude session picking this
-project back up. Kept deliberately short; the versioned changelog below
-has full detail on any specific fix.
+project back up. This describes the CURRENT build only. Full version
+history has been condensed below the standing rules; don't go looking
+for a longer historical changelog elsewhere, this is the whole thing.
 
-CURRENT STATE (v0.1.75): Rounded-corner polish from Kaleb's on-device
-testing: row bottom padding increased (_row_h() default pad 16->20,
-Chapters 10->14) since the gap between a glyph's descender and a
-selection highlight's bottom edge was a tight 4px at every Font Size
-before, now 8px. The hint bar's top-left/top-right corners are also
-"rounded" (_round_top_corners_to_bg(), draw_hint()) by painting a
-COL_BG quarter-circle over each -- makes the reading area above it
-read as having a curved bottom edge. Bottom corners untouched (flush
-with the screen's physical edge, rounding wouldn't show).
-Library empty-state message ("No .epub files found in <LIBRARY_DIR>")
-no longer overflows at large Font Size -- _wrap_path_message() wraps a
-filesystem path (no spaces to word-wrap on) by also splitting on '/',
-with a character-level fallback if a segment is somehow still too
-wide alone.
-Selector highlights and popup windows have slightly rounded corners
-(fill_rect_rounded(), CORNER_RADIUS = 6px scaled, 3px for the
-text-entry keyboard cells specifically, which had less natural
-clearance). No SDL2_gfx is linked, so this is a cheap approximation: a
-center cross of 3 plain rects + one 1px-tall SDL_RenderFillRect per
-row per corner (quarter-circle mask via math.sqrt). Applied to every
-list-row selection highlight, the Menu/Library Menu popup panels, the
-text-entry keyboard cells and value box, and the image-loading
-placeholder box. NOT applied to the full-width hint/status bars
-(edge-to-edge, only 2 of 4 corners would show).
-Text color is fully theme-driven system-wide (every render_text() call
-and full-screen background fill across all 12 screens resolves to
-COL_TEXT/COL_ACCENT/COL_DIM/COL_WARNING/COL_BG) -- confirmed via audit,
-no hardcoded colors anywhere.
-Color Themes -- "Theme +"/"Theme -" (Reader menu or Library menu)
-cycle THEMES (Default / Dim Warm / Deep Amber / Red Shift / Adventure),
-saved as settings.json "theme_index". apply_theme(index) is the ONLY
-place a theme touches: it rebinds the module-level COL_* globals that
-every draw_* function already reads by name, so adding a future theme
-is just one new dict in THEMES -- no per-screen draw code changes
-needed. Dim Warm/Deep Amber/Red Shift are bedtime-reading palettes
-(progressively less blue, more amber/red) based on blue-light/
-melatonin-suppression research; Default uses a muted teal accent
-(95,168,156) and Deep Teal link (61,125,118); Adventure is the
-BMO-inspired palette (link=Deeper Mint, accent=Pale Mint, selected
-link=Button Yellow, warning=Button Red/Pink, dark bg kept per Kaleb's
-request, text=Muted Mint-Grey (180,200,190) -- picked after reviewing
-4 swatch options, softer than the original near-white).
-Global Font Size setting scales ALL UI text (reading + hint bar +
-menus + Library/Chapters/Storage), with dynamic row heights/wrapping
-so nothing overflows at max size -- see v0.1.50-57 below if anything
-still clips/overlaps at large Font Size, that's the most likely place
-to look first.
-JW.org plugin: category picker (Bibles/Books & Brochures/Tracts/
-Watchtower/Awake!/Meeting Workbooks), search scoped per-category, and
-manual pub-code entry -- all pub codes in jw_fetch.py are individually
-verified live against the real API, not guessed (see v0.1.58-61).
-Gutenberg plugin: handles both plain <img> covers and newer SVG-wrapped
-covers (<svg><image xlink:href>), Loading/Checking screens show a
-spinner + elapsed seconds, and any spine page that renders fully blank
-(no text, no images) is logged to data/render_issues.log and shown as
-a visible on-screen note rather than silently looking broken (v0.1.62-63).
-This header was itself found stale during the v0.1.64 audit (stuck at
-v0.1.55 while the changelog below had already reached v0.1.61) -- if
-this ever happens again, trust the highest version number IN the
-changelog over this line, and fix this line to match.
+CURRENT STATE (v0.1.82):
+
+UI: 5 color themes (Default, Dim Warm, Deep Amber, Red Shift, Adventure)
+via THEMES list + apply_theme(index) -- rebinds module-level COL_*
+globals that every draw_* function already reads by name, so adding a
+6th theme is just one new dict entry, no per-screen code changes.
+Dim Warm/Deep Amber/Red Shift are bedtime palettes (progressively less
+blue, more amber/red). Saved as settings.json "theme_index".
+Global Font Size setting scales ALL UI text (reading + hint bar + menus
++ Library/Chapters/Storage) via dynamic row heights/wrapping
+(_row_h(), _fit_text()) -- nothing overflows at any of the 7 font-size
+steps. If something clips/overlaps at large Font Size, it's almost
+certainly a spot still using a fixed pixel constant instead of one of
+these two helpers.
+Selector highlights, popup windows, and the hint bar's top corners are
+rounded (fill_rect_rounded(), CORNER_RADIUS = 6px scaled, 3px for the
+text-entry keyboard cells specifically -- tighter clearance there).
+No SDL2_gfx linked; this is a cheap quarter-circle mask approximation.
+Text color is fully theme-driven system-wide -- no hardcoded colors.
+
+JW.org plugin (jw_fetch.py, PRIVATE, never publish): category picker
+(Bibles/Books & Brochures/Tracts/Watchtower/Awake!/Meeting Workbooks),
+search scoped per-category, manual pub-code entry. All pub codes
+individually verified live against GETPUBMEDIALINKS before being
+hardcoded -- never guessed. Watchtower and Meeting Workbook have full
+generated back-issue lists (safe: both are non-monthly-but-regular).
+Awake! has a hard-coded back-issue list instead (2016-2025, 28 issues)
+since its publish frequency changed twice (6/yr 2016-17, 3/yr 2018-21,
+1/yr 2022+) -- see jw_fetch.py's own docstring for the verification
+method and how to extend it when a new issue ships.
+Gutenberg plugin (gutenberg_fetch.py, public): handles both plain <img>
+covers and SVG-wrapped covers (<svg><image xlink:href>); download
+screens show a spinner + elapsed seconds instead of static "Loading...";
+any spine page that renders fully blank (no text, no images) logs to
+data/render_issues.log and shows a visible on-screen note.
 
 Architecture, three files:
   main.py         SDL2/ctypes UI, App class (all mutable reader state),
@@ -131,105 +107,106 @@ Architecture, three files:
   epub_engine.py  EpubDocument: manifest/spine/TOC (NCX+nav) parsing,
                    get_page() (HTML->wrapped text+links+images+anchors),
                    pure stdlib only
-  mini_jpeg.py    from-scratch JPEG decoder (no PIL/Pillow available)
+  mini_jpeg.py    from-scratch JPEG decoder (no PIL/Pillow available),
+                   full progressive JPEG (SOF2) support since v0.2.0.
+                   Fallback path only as of v0.1.80 -- see native_jpeg.py
+  native_jpeg.py  v0.1.80+: ctypes bridge to the system libSDL2_image
+                   (confirmed present on RG CubeXX-H muOS at /usr/lib)
+                   for real C-speed JPEG decode. decode_jpeg() in
+                   main.py tries this first, falls back to mini_jpeg.py
+                   automatically if unavailable/fails
 
-Recurring bug shape to watch for: UNIT MISMATCHES between "_lines[] index"
-(li) and "visual screen rows" (row). An image is ONE _lines[] entry but
-costs IMG_BOX_ROWS (14) visual rows to draw. Any code that scrolls/pages
-MUST walk li and row as separate counters (see App._rows_for_li(),
-draw_reader(), visible_span_indices() for the canonical pattern) --
-mixing them (e.g. `scroll += body_rows` where scroll is li-indexed) is
-exactly what caused the v0.1.23 image-skip/cutoff bug. If a report sounds
-like "images skip/cut off/reappear when paging," check this first.
+Recurring bug shape to watch for: UNIT MISMATCHES between "_lines[]
+index" (li) and "visual screen rows" (row). An image is ONE _lines[]
+entry but costs IMG_BOX_ROWS (14) visual rows to draw. Any code that
+scrolls/pages MUST walk li and row as separate counters (see
+App._rows_for_li(), draw_reader(), visible_span_indices() for the
+canonical pattern) -- mixing them is exactly what caused a real
+image-skip/cutoff bug early on. If a report sounds like "images
+skip/cut off/reappear when paging," check this first.
 
 Chapter/day navigation (L2/R2, and the "Chapters" TOC screen) are TWO
 SEPARATE systems, easy to conflate when debugging:
-  - Chapters screen = doc.toc, straight from the EPUB's NCX/nav (coarse --
-    e.g. one "January" entry for a whole month in a daily-text book).
+  - Chapters screen = doc.toc, straight from the EPUB's NCX/nav (coarse
+    -- e.g. one "January" entry for a whole month in a daily-text book).
   - L2/R2 = App._chapter_nav_points, a heuristic (chapterN anchors, else
     TOC, else weekday-prefix detection for daily-text books, else raw
     spine) built once per book open. _jump_chapter()'s bisect math must
-    handle sitting BEFORE the first nav point (front matter) correctly --
-    see the v0.1.22 fix for the exact off-by-one this produces if wrong.
+    handle sitting BEFORE the first nav point (front matter) correctly.
 
 Image cache keys are ALWAYS "{book_id}__{internal epub path}" (see
 App._img_key), book_id = sha1(book_path)[:16], flat directory
 (IMG_CACHE_DIR), no per-book subfolders. Per-book size/delete is a
 filename-prefix match (book_cache_size_bytes/delete_book_cache) -- do
-NOT introduce a second scoping scheme.
+NOT introduce a second scoping scheme. Disk cache is crash-safe;
+MAX_CACHE_BYTES 500MB, MAX_INMEMORY_IMAGES 80.
+Decode-target box (ImageLoader.TARGET_BOX_W/H, 480x272) only affects
+which scale_n mini_jpeg decodes at -- NOT the on-screen display size
+(that's SW-40 wide x IMG_BOX_ROWS tall, computed in draw_reader()).
 
-Font: bundled assets/font.ttf is Liberation Sans (proportional), checked
-FIRST in FONT_PATHS. This was deliberate and confirmed by device
-evidence (DejaVu is not actually present on this hardware) -- don't
-"fix" it back to DejaVu without new evidence.
+Fonts: bundled assets/font.ttf (+ -bold/-italic/-bolditalic variants)
+are Liberation Sans 2.1.5, SIL OFL, checked FIRST in FONT_PATHS --
+confirmed by device evidence that DejaVu isn't actually present on this
+hardware. Rebuilt v0.1.76 directly from the official
+liberationfonts/liberation-fonts GitHub repo at tag 2.1.5 (fontforge
+build from source, not a third-party mirror) -- see FONT_LICENSE.txt
+for the exact commit and verification method.
 
-Decode-target box (ImageLoader.TARGET_BOX_W/H, currently 480x272) only
-affects which scale_n mini_jpeg decodes at -- NOT the on-screen display
-size (that's SW-40 wide x IMG_BOX_ROWS tall, computed in draw_reader()).
-Shrinking it trades sharpness for decode speed; don't confuse the two.
+get_page() returns SIX values: text, links, images, anchor_offsets,
+styles, para_spans. Every call site must unpack all 6. ParaSpan kinds
+still active: superscript, caption, box_rule only (JW paragraph classes
+sm/sh/si/sb/sj were removed -- caused incorrect italic/indent/grey
+rendering on Bible text; pagenum markers also removed, silently
+skipped). draw_reader() resolves active ParaSpan per line via
+_line_abs_offsets[] (precomputed once in _ensure_page_built).
+_page_text_cache (200-entry RAM-only LRU) eliminates XML parse lag on
+distant chapter/scripture jumps. _wrapped_cache, keyed by (href,
+font_size_index), skips the SDL_ttf word-wrap pass on revisits to a
+page already built at the current font size (same-thread memoization;
+not populated from the background prefetch thread since SDL_ttf calls
+off the main thread haven't been verified safe on this hardware). Both
+cleared on open_book().
 
-get_page() returns SIX values (v0.1.42, was five): text, links, images,
-anchor_offsets, styles, para_spans. Every call site must unpack all 6
-or it throws on every page load. Para_spans are ParaSpan dataclasses
-(epub_engine.py) -- active kinds: superscript, caption, box_rule only.
-pagenum removed v0.1.46 (JW print-page markers silently skipped).
-JW paragraph classes sm/sh/si/sb/sj removed v0.1.47 (caused italic,
-indent, small font, grey on Bible text). draw_reader() resolves active
-ParaSpan per line via _line_abs_offsets[] (precomputed once in
-_ensure_page_built, v0.1.46). Only box_rule gets special rendering;
-all other kinds render as plain body text, uniform size and colour.
-_page_text_cache (v0.1.48, raised to 200 in v0.1.68): RAM-only LRU,
-eliminates XML parse lag on distant chapter/scripture jumps, not just
-adjacent ones. _wrapped_cache (v0.1.69), separate cache keyed by (href,
-font_size_index), skips the SDL_ttf word-wrap pass on revisits to a page
-already built at the current size -- see v0.1.69 changelog for measured
-before/after on a real large chapter. Both cleared on open_book().
-
-Bold/italic (v0.1.35): StyleSpans from walk() -> _compute_line_style_runs()
--> _line_segments() -> per-segment render with body_styled(bold, italic).
-Font files: assets/font-bold.ttf, font-italic.ttf, font-bolditalic.ttf
-(Liberation Sans 2.1.5, SIL OFL -- third-party open-source fonts).
-Dummy SDL video driver can't create textures (known sandbox limitation);
-verify logic-level + zero-exception real-SDL walks rather than visual.
-
-epub_engine.py's walk() treats <tr> specially (v0.1.34): a row is forced
-onto its own line ONLY if its cells' average text length exceeds ~10
-chars (real chapter titles) -- short compact grids like the JW Bible's
-book-navigation table (5-char book abbreviations) are deliberately left
-to flow/wrap naturally instead, matching how they render everywhere
-else. This was chosen (over simpler options like cell count) specifically
-because two REAL Gutenberg books use two different table shapes for
-their TOC (one cell per row vs. two), and cell count alone couldn't
-distinguish either from the JW grid. If a future table renders wrong,
-check average-cell-length against this threshold before assuming the
-threshold itself needs adjusting -- get real numbers from the actual
-book first, the way this fix was derived, rather than guessing a new one.
+Bold/italic: StyleSpans from walk() -> _compute_line_style_runs() ->
+_line_segments() -> per-segment render with body_styled(bold, italic).
+epub_engine.py's walk() treats <tr> specially: a row is forced onto its
+own line ONLY if its cells' average text length exceeds ~10 chars (real
+chapter titles) -- short compact grids (like the JW Bible's book-nav
+table) flow/wrap naturally instead. This threshold was derived from two
+real Gutenberg books with different TOC table shapes; if a future table
+renders wrong, get real numbers from the actual book before adjusting
+the threshold, don't guess a new one.
 
 Every fix ships with an AST-parse check and, wherever feasible, a
 standalone simulation (a types.SimpleNamespace/plain-function harness
 reproducing the exact bug scenario) run BEFORE delivery, not just after.
+This sandbox has real SDL2 installed (SDL_VIDEODRIVER=dummy,
+SDL_AUDIODRIVER=dummy) -- main.py, App, and every draw_*/handle_button
+function can be imported and driven for real, no physical device
+needed. After ANY edit touching handle_button()'s screen dispatch chain
+(the long if/elif app.screen==... ladder), re-verify by actually
+constructing App(renderer) and calling handle_button() with real button
+strings -- AST-parsing alone has missed a real bug here before (a
+str_replace that silently deleted a critical "elif" line and merged two
+screens' input handling together; still syntactically valid Python).
 Crash log for boot/runtime failures: /tmp/picoreader_crash.log.
 
 ===========================================================================
-PROJECT-LEVEL NOTES (added for future reference/troubleshooting)
-===========================================================================
 TARGET HARDWARE: Anbernic RG CubeXX-H, 720x720 display, running MustardOS
 (muOS) Funky Jacaranda. The device has 1GB of RAM total. This is a hard
-constraint on everything: avoid unbounded caches (see the 24-entry GPU
-texture cache / disk-cached decoded images pattern already in use), avoid
-loading whole large assets into memory when a streaming/chunked approach
-is possible, and be skeptical of any change that meaningfully grows
-steady-state memory use. When in doubt, ask before adding a cache,
-buffer, or preload step that isn't obviously small and bounded.
+constraint on everything: avoid unbounded caches, avoid loading whole
+large assets into memory when a streaming/chunked approach is possible,
+and be skeptical of any change that meaningfully grows steady-state
+memory use. When in doubt, ask before adding a cache, buffer, or preload
+step that isn't obviously small and bounded.
 
 OPEN SOURCE ATTRIBUTION -- ALWAYS FLAG IT: Any time a change ships,
 touches, or references code/assets that did not originate in this
-project, say so explicitly and plainly, e.g.: "This uses Liberation
-Sans, SIL Open Font License, third-party -- not code we wrote." Applies
-to the bundled fonts (Liberation Sans family, SIL OFL), MustardOS/muOS
-source referenced for launcher/controller behavior, and any future
-library or snippet pulled in from elsewhere. Never let an open-source
-dependency pass by silently as if it were original work.
+project, say so explicitly and plainly. Applies to the bundled fonts
+(Liberation Sans family, SIL OFL), MustardOS/muOS source referenced for
+launcher/controller behavior, and any future library or snippet pulled
+in from elsewhere. Never let an open-source dependency pass by silently
+as if it were original work.
 
 MUSTARDOS SOURCE ACCESS: The MustardOS GitHub org (github.com/MustardOS)
 and its "internal" repo (board configs, sdl_map, func.sh, etc.) ARE
@@ -238,12 +215,41 @@ try that first. Only ask the user to open a GitHub page and paste its
 contents back if a direct fetch genuinely fails (blocked path, private
 repo, rate limit, etc.) -- don't ask preemptively when a fetch would work.
 
+TROUBLESHOOTING ORDER: before changing any code, check (1) this file's
+own AI notes/changelog, (2) the relevant GitHub repo's source/issues/
+README, (3) muos.dev docs/forums. All three are directly web_fetch-able.
+Discord is NOT fetchable from here -- if a relevant Discord thread might
+have the answer, ask the person to paste the text/screenshot rather than
+trying to fetch it. Only fall back to theorizing from first principles
+once those sources come up empty, and say so explicitly when that's
+what's happening (don't present a guess as a confirmed root cause).
+
+CURRENT STATE header above may go stale (see VERSION NUMBERING below) --
+this project's real current version lives in the changelog, not the
+header line.
+
 DELIVERY FORMAT -- ALWAYS BOTH: Every delivery that changes app files
 must include (1) the individual changed file(s) and (2) a full .muxapp
 zip bundle containing everything needed to run (main.py + epub_engine.py
 + mini_jpeg.py + assets/ + mux_launch.sh, etc.), so the person can test
 on-device quickly AND push individual file diffs to GitHub. Never ship
 only one of the two.
+
+.MUXAPP ZIP STRUCTURE -- GET THIS EXACTLY RIGHT, IT HAS REGRESSED BEFORE:
+the zip's TOP-LEVEL ENTRY must be a "PicoReader/" folder containing every
+file (main.py, epub_engine.py, mini_jpeg.py, jw_fetch.py,
+gutenberg_fetch.py, mux_launch.sh, assets/, README.md, LICENSE.md) --
+files must NOT sit loose at the zip root. Confirmed against a real
+working on-device install. Build it by staging everything inside a
+"PicoReader/" directory, then zip from ONE LEVEL ABOVE it:
+    zip -r PicoReader.muxapp PicoReader/
+NOT from inside the staging folder itself (zip -r ../out.muxapp .) --
+that omits the wrapping folder and makes muOS's unpacker dump files
+straight into applications/ instead of applications/PicoReader/, which
+breaks the install silently (app just won't launch, no clear error).
+This exact mistake has happened more than once across sessions --
+always run `unzip -l` on the finished .muxapp and confirm every path
+listed starts with "PicoReader/" before delivering it.
 
 NEVER ASSUME -- ALWAYS ASK: Standing instruction from the project owner.
 Get clarification before making changes whenever the request, root cause,
@@ -252,1633 +258,343 @@ or intended behavior is not fully clear from evidence already gathered
 present theories as confirmed fixes. Don't start editing code on an
 ambiguous request -- ask first, then act once confirmed.
 
-v0.1.75 -- Adventure theme's reading text color changed to Muted
-  Mint-Grey (180,200,190), Kaleb's pick from the 4-swatch review in
-  v0.1.74 -- softer than the original near-white (220,228,222), which
-  read too bright on-device.
+VERSION NUMBERING -- CHECK THE CHANGELOG, NOT JUST THIS HEADER: This
+"CURRENT STATE (vX)" line has gone stale before, and a past session once
+assigned a new version number that collided with one already used
+further down, because it trusted a stale header instead of scanning the
+actual changelog. Before assigning a new version number, grep this file
+for version lines starting "v0.1." and confirm the true highest number,
+every time.
 
-v0.1.74 -- Two fixes reported by Kaleb testing the rounded-corner work
-  (v0.1.70/71) on-device: (1) _row_h()'s default pad bumped 16->20
-  (Chapters' custom pad 10->14) -- measured a consistent 4px gap
-  between a glyph's descender and the selection highlight's bottom
-  edge at every Font Size; read as cramped once that edge became a
-  visible curve. Now 8px. (2) Added _round_top_corners_to_bg(), called
-  from draw_hint(), which paints a COL_BG quarter-circle over the hint
-  bar's top-left/top-right corners -- makes the reading area above the
-  hint bar read as having a curved bottom edge (Kaleb's request).
-  Bottom corners left alone since they're flush with the screen's own
-  edge. Verified with a full regression pass: all 7 Font Size steps x
-  all 5 themes x every screen, no crashes.
-  Adventure theme's reading text color (220,228,222) flagged by Kaleb
-  as too bright/white on-device -- showed 4 softer teal options
-  (soft sage teal, muted mint-grey, deeper soft teal, kept current as
-  baseline), awaiting his pick before changing THEMES.
+START is deliberately unbound outside the Reader screen -- reserved for
+the downloader plugin trigger, which ended up bound to Library-screen L2
+instead once actually built. Don't repurpose it without checking first.
 
-v0.1.73 -- Bug fix: Library's empty-state message ("No .epub files
-  found in <LIBRARY_DIR>") could run off the right edge of the screen
-  at large Font Size, reported by Kaleb. Root cause: it was a single
-  un-wrapped render_text() call, and unlike other Library rows it
-  didn't even use _fit_text() truncation. Added _wrap_path_message()
-  since the existing hint-bar word-wrap can't help with an unbroken
-  filesystem path (no spaces) -- new helper also splits on '/' and
-  falls back to character-level breaking as a last resort. Also moved
-  the message's y-position from a hardcoded _sy(100) to the same
-  dynamic `top` value the book list already uses, so it can't overlap
-  the heading/sort line at large Font Size either. Verified against
-  the real on-device path and a pathological single-token path at all
-  7 Font Size steps, plus a regression check that a normal
-  library-with-books draw is unaffected.
-
-v0.1.72 -- Feature: 5th theme "Adventure", requested by Kaleb (BMO/
-  Adventure Time inspired, background kept dark/black per his explicit
-  ask). Colors he picked from a swatch review: link = Deeper Mint
-  (68,176,151), accent = Pale Mint (175,245,191), selected link =
-  Button Yellow (255,236,71), warning = Button Red/Pink (242,5,83).
-  Remaining fields (bg/panel/text/dim/hint_bg/hint_text/menu_sel_bg)
-  filled in to match -- dark neutral background (14,14,16), off-white
-  text with a faint mint tint (220,228,222) for readability. No
-  official BMO/Adventure Time brand color palette exists (Cartoon
-  Network/WBD haven't published one), so these hex values are based on
-  fan-made palette references (Lospec "Beemo", ColorsWall "bmo
-  design") -- close approximations, not exact. Just a 5th dict added
-  to THEMES; apply_theme()/menu wiring needed no changes.
-
-v0.1.71 -- Kaleb asked for verification that the new rounded corners
-  don't overlap or clip any text. Audited clearance (rect-edge to
-  text-position distance) at every fill_rect_rounded() call site
-  against the 6px CORNER_RADIUS: found the text-entry keyboard cells
-  had only ~5px clearance, tighter than the radius -- fixed by using
-  radius=3 for that specific call site. Everything else already had
-  10-20px clearance. Re-ran the headless smoke test across all 4
-  themes x all 7 font-size steps x all 11 screens to confirm.
-
-v0.1.70 -- Feature: slightly rounded corners on selector highlights
-  and popup windows, requested by Kaleb. Added fill_rect_rounded()
-  (center cross + per-row quarter-circle corner mask, no SDL2_gfx
-  needed) and CORNER_RADIUS = 6px scaled. Swapped in at every list-row
-  selection highlight, the Menu/Library Menu popup panels, the
-  text-entry keyboard cells, the text-entry value box, and the
-  image-loading placeholder box. Left the full-width hint/status bars
-  square since they run edge-to-edge (only 2 of 4 corners would show).
-  Verified with a headless smoke test across all 4 themes and all 12
-  screens (no crashes) plus an ASCII render of the corner math to
-  confirm a smooth quarter-circle taper rather than a jagged
-  staircase at radius 6-8px.
-
-v0.1.69 -- Theme +/- added to LIBRARY_MENU_ITEMS (the START popup menu
-  on the Library screen), so themes can be changed without opening a
-  book first. Same handler logic as the Reader menu's Theme +/-
-  (apply_theme/save_settings), just added to a second screen's button
-  handler. Also audited every draw_* function's selection-highlight
-  color per Kaleb's question -- confirmed COL_MENU_SEL_BG is already
-  one shared global applied identically on every list screen in the
-  app (Library, Reader Menu, Chapters, Bookmarks, Storage, Library
-  Menu, Download screens); no code change was needed for that part.
-
-v0.1.66/68 -- Added Color Themes (THEMES list + apply_theme(index),
-  see CURRENT STATE above for how it works) with 4 palettes: Default,
-  Dim Warm, Deep Amber, Red Shift -- the latter three are bedtime
-  palettes based on blue-light/melatonin-suppression research. Reader
-  menu gained "Theme +"/"Theme -", saved to settings.json as
-  "theme_index". Default theme's link color changed to Deep Teal
-  (61,125,118) and accent to a soft muted teal (95,168,156) -- both
-  picked by Kaleb after reviewing swatch comparisons, replacing the
-  original green/blue.
-
-v0.1.64 -- Full-project audit per Kaleb's request (all .py/.sh files, not
-  just recent changes): ran pyflakes across every Python file (only
-  pre-existing, harmless dead-variable warnings, e.g. para_extra unused
-  since v0.1.47 removed per-kind styling -- nothing acted on), bash -n
-  on mux_launch.sh, and a full regression of get_page() against all 20
-  real epub files collected across this session (5 Kaleb-provided +
-  15 freshly downloaded from gutenberg.org, spanning English/French/
-  German/Spanish and one Arabic title) -- zero blank/error pages.
-  Found and fixed ONE real bug, not in the app itself but in this
-  changelog: v0.1.62/63 below were originally written as v0.1.56/57,
-  colliding with real entries already at those numbers (v0.1.57-61,
-  JW categories/magazine-scan/pub-code work) because the CURRENT STATE
-  header above was itself stale at "v0.1.55" despite the changelog
-  already reaching v0.1.61 underneath it -- i.e. the header hadn't been
-  updated across some earlier session(s). Renumbered to the true next
-  version and fixed the header. Lesson for future sessions: check the
-  highest version number IN THE CHANGELOG, not just the CURRENT STATE
-  line, before assigning a new version number.
-
-v0.1.63 -- Per Kaleb's request: added both a persistent log AND a visible
-  on-screen note for the "page rendered completely blank" failure mode
-  (the class of bug v0.1.62's Gutenberg svg-cover fix addressed one
-  instance of). New RENDER_LOG_PATH ("data/render_issues.log", inside
-  the app folder so it survives reboots and can be pulled off the SD
-  card -- unlike CRASH_LOG in /tmp, which is wiped on reboot). Logged
-  once per fresh page parse (not on RAM-cache hits) when a spine page
-  produces zero text AND zero images; the reading screen also swaps in
-  "(This page appears empty -- it may use formatting PicoReader doesn't
-  support yet.)" instead of a silent blank screen. Logging is
-  best-effort/swallow-all-errors, matching _boot_log()'s pattern -- a
-  logging failure must never interrupt reading.
-  Note: a small number of real epubs may have an intentionally blank
-  page by design (rare) -- this would show the note as a false
-  positive in that case. Acceptable trade-off per Kaleb's request for
-  visibility; can be revisited if it turns out to be noisy in practice.
-
-v0.1.62 -- Two fixes reported by Kaleb after testing real Gutenberg epubs:
-  (1) Cover pages skipped/blank on some Gutenberg books (confirmed on
-  "The Adventures of Sherlock Holmes", gutenberg.org/1661). Root cause:
-  newer Gutenberg "ebookmaker" output wraps the cover as
-  <svg><image xlink:href="cover.jpg"/></svg> instead of a plain <img>,
-  and epub_engine.py's walk() only had an <img> branch -- the whole
-  cover spine page rendered as empty text. Added an <image> branch
-  (checks xlink:href, falls back to bare href for SVG2-style markup
-  some tools produce) that emits it as a normal [IMG] span, same as
-  <img>. Verified against the real cover markup in that epub's
-  wrap0000.xhtml before writing the fix, not guessed.
-  (2) Download-browse "Loading..." was static text -- indistinguishable
-  from a frozen screen on a slow connection, which read as "stuck until
-  I press the D-pad" even though the v0.1.32 dirty-flag fix (see that
-  entry) was confirmed still working correctly on both the plain-browse
-  and Y-button-search paths. Changed to a spinner + elapsed seconds
-  ("Loading |  (3s)") so a slow real network call is visibly still
-  alive instead of looking hung. Same pattern applied to the JW manual
-  pub-code "Checking..." status (same static-text problem, same fix).
-  Regression-tested the cover fix against all 5 real Gutenberg epubs
-  Kaleb provided (Study in Scarlet, Adventures/Return/Case-Book of
-  Sherlock Holmes, Illustrated Adventures) -- all 5 use the same
-  svg-wrapped cover pattern and all 5 now produce a real [IMG] span.
-  Also re-checked a normal body chapter page from the same file to
-  confirm the new <image> branch didn't affect ordinary <img> parsing.
-
-v0.1.61 -- Verified a batch of historical/edge-case pub codes live against
-  the real GETPUBMEDIALINKS API (Kaleb's request, not just guessed):
-  w/mwb confirmed to work for issue=YYYYMM back to January 2016, and
-  confirmed to 404 for 2015 and earlier -- EPUB doesn't appear to exist
-  before 2016 for either. g/wp issue dates can't be reliably guessed
-  (irregular real publish months); use manual code entry with a known
-  issue instead. Walked back "mwbr" from v0.1.60 -- tried 8+ plausible
-  issue codes live and none resolved, so it's commented out until
-  actually confirmed rather than left looking verified when it wasn't.
-
-v0.1.60 -- Scanned jw.org's Magazines and Meeting Workbooks library pages
-  per Kaleb's request. Finding: both pages only surface recent issues
-  (Study Watchtower to Jan 2026, Workbook to May 2025, public
-  Watchtower/Awake! to ~2022) -- not a deep historical archive. A true
-  historical scan (the year filter goes back to 1981) would need
-  fetching each year separately; deferred pending Kaleb's confirmation
-  it's still worth doing, since any past issue is already reachable via
-  the existing manual pub-code entry (Y Enter Code, e.g. "w 202001").
-  Did find one genuinely new, useful pub code: "mwbr" (References for
-  Life and Ministry Meeting Workbook, a companion to mwb) -- added to
-  the Meeting Workbooks category.
-
-v0.1.59 -- Fixed reading-percentage indicator overlapping the last line
-  of body text (confirmed via Kaleb's photo: "loyal," and "26%" drawn on
-  top of each other). Root cause: the percentage label was positioned at
-  a fixed offset above the hint bar, with no relationship to body_rows
-  -- whenever body_h didn't divide evenly by the current line_h (which
-  varies with Font Size), the leftover remainder could be smaller than
-  the label, so the last text row and the percentage shared the same
-  vertical space. Fixed by reserving dedicated footer_h space BELOW the
-  text area up front (subtracted from body_h before body_rows is
-  computed), so text can never lay out into where the percentage is
-  drawn. Verified by simulation across 15 font-size/hint-height
-  combinations: the old logic overlapped in 12 of them, the new one in
-  none.
-
-v0.1.58 -- Feature: JW.org plugin now has categories (Kaleb's request):
-  Bibles, Books & Brochures, Tracts, Watchtower (Public & Study), Awake!,
-  Meeting Workbooks. Selecting the plugin now opens a category picker
-  first; selecting a category opens the browse list scoped to just that
-  category, with search (Y) still available and scoped to the same
-  category. New generic plugin capability (SUPPORTS_CATEGORIES +
-  CATEGORIES list + list_items(category=...)) -- gutenberg_fetch.py is
-  unaffected, it simply doesn't declare it. Along the way: added the
-  "wp" (public Watchtower) and "g" (Awake!) periodical codes, which
-  weren't in the catalog before at all -- both confirmed live on
-  jw.org's own magazines page. Verified end-to-end with the real
-  jw_fetch.py code (not simulated): all 6 categories return the
-  expected items, and search-within-category filters correctly.
-
-v0.1.57 -- More font-scaling overflow fixes at max Font Size, found by
-  Kaleb: (1) Library header ("LIBRARY"/"Sort:"/first row) used fixed Y
-  offsets, causing the sort label to overlap the first row's selection
-  highlight. (2) Download-from selector and Gutenberg/JW download
-  browse lists used fixed row heights/gaps, causing title/author lines
-  to overlap. (3) Text-entry keyboard (search, pub-code entry) used a
-  fixed cell height (SPACE/DEL/OK/CANCEL spilled outside their boxes)
-  and didn't wrap the heading/hint text (got clipped instead). All now
-  scale/wrap with font size, same pattern as v0.1.50-56.
-  jw_fetch.py: added be/cf/jd/ia/jr/bt/mbs/yb11-17/tracts (t-ftr, t-fam,
-  t-god, t-pry, t-jss, t-kng, t-sfr, t-dth, t-rlg) per Kaleb's request,
-  titles verified against wol.jw.org's official Abbreviations page and
-  jw.org's Tracts library page (not guessed).
-
-v0.1.55 -- Feature: L/R on the Library screen are now a Font Size -/+
-  hotkey (Kaleb's request -- L/R were unmapped there). Same logic and
-  status message as the existing "Font Size -/+" menu items, so it's
-  reachable without opening the Library menu. Hint bar updated to
-  advertise it.
-
-v0.1.54 -- Two more font-scaling bugs at max Font Size, found by Kaleb:
-  (1) Transient status-message bar (e.g. "Font size: 32pt (largest)")
-      used a fixed-height panel sized for the old fixed-size UI font --
-      at max size the text no longer fit and visually overlapped the
-      hint bar directly below it. New _status_bar_h() scales it like
-      _row_h() does. Fixed in draw_library, draw_reader,
-      draw_download_browse (all 3 places this panel is drawn).
-  (2) MENU popup, Library MENU popup, and the Storage action list drew
-      every item unconditionally with no bounds check -- fine at the
-      old fixed font size where everything always fit, but at max Font
-      Size (taller rows) items ran past the bottom of the screen with
-      no way to reach them (e.g. "Pre-render Book Images" and "Back"
-      on Storage). All three now use the same windowed-scroll pattern
-      Library/Chapters already used, centered on the selected item.
-
-v0.1.53 -- Two more font-scaling overflow bugs, found by Kaleb at max
-  Font Size after v0.1.52:
-  (1) Storage screen info lines (cache size, disk cache state, etc.)
-      used a fixed 22px line-height increment that didn't grow with
-      ui_small -- at max size lines started overlapping. Now uses
-      _row_h(fonts.ui_small) like the action rows below it.
-  (2) Reader's fast-scroll "%  [FAST]" indicator used a fixed guessed
-      x-offset from the right edge, sized for the old fixed-size UI
-      font -- at max Font Size the wider label ran off-screen. Now
-      right-aligned using the label's actual measured width.
-
-v0.1.52 -- Fixed hint bar text overlap at large Font Size (confirmed via
-  Kaleb's on-device screenshots: popup MENU's hint bar visibly overlapped
-  with leftover reader hint text above it). Root cause: hint_height()
-  cached whatever text last called draw_hint() in the same frame --
-  draw_menu() draws draw_reader() first (long hint, wraps to 2 lines),
-  THEN its own short hint (1 line). The menu's overlay panel was sized
-  using the reader's stale 2-line height, but the final draw_hint() call
-  only cleared/redrew a 1-line area, leaving part of the reader's old
-  hint text uncleared underneath. Fix: hint_height(fonts) is now a pure
-  function of font size only (always reserves the HINT_H_MAX_LINES
-  worst case), so every screen's layout math and its own hint draw
-  always agree, regardless of what any other screen drew first. All
-  hint_height() call sites now take app.fonts.
-
-v0.1.51 -- Cache size increases (confirmed by Kaleb, 32GB SD card):
-  MAX_CACHE_BYTES: 200MB → 500MB (on-disk image cache cap)
-  MAX_INMEMORY_IMAGES: 60 → 80 (decoded images held in RAM)
-  Storage screen "cap" label updated to match.
-
-v0.1.50 -- Two fixes:
-  (1) Global text size: "Font Size +/-" now scales ALL UI text (hint bar,
-      popup menus, Library, Chapters, Bookmarks, Storage, text entry),
-      not just reading text -- previously these were pinned to a fixed
-      18pt (UI_STEP) specifically to avoid overflow at large sizes. That
-      protection is now handled at each draw site instead of by capping
-      the font: hint bar wraps to up to 2 lines and grows vertically
-      (hint_height()/draw_hint()); list rows use dynamic height
-      (_row_h(), via TTF_FontHeight) instead of fixed pixel constants;
-      popup menu/list text truncates with an ellipsis if it would run
-      past its container (_fit_text()) instead of clipping/overflowing.
-      Touches: FontManager.ui_body/ui_small/ui_heading, draw_hint,
-      draw_menu, draw_library_menu, draw_storage, draw_library, draw_toc.
-  (2) Bible chapter-navigation cursor bug: selecting a chapter (e.g.
-      Genesis 1) from the in-book "CHAPTERS:" grid scrolled to roughly
-      the right spot but left the highlighted link on an unrelated
-      chapter number, confirmed via real on-device screenshots. Root
-      cause: _ensure_page_built() always reset selected_span to 0
-      (first span in document order) after ANY page rebuild, including
-      same-file anchor jumps -- so for a huge single-page Bible nav file
-      the cursor landed nowhere near the actual target, and the
-      renderer's "snap to first visible span" fallback then grabbed
-      whatever was nearest on screen instead. Fixed: selected_span is
-      now set to the span at/after the anchor's/resume's char offset.
-      Verified against the real bi12_E.epub structure (BIBLE_01.xhtml)
-      -- link targets themselves were always correct; this was purely
-      an app-side cursor bug, not a bad EPUB link.
-
-Earlier versions (condensed -- see AI NOTES above for anything still
-architecturally relevant):
-v0.1.42  ParaSpan formatting support added (superscript/caption/box_rule/
-         JW paragraph classes); JW classes later removed v0.1.47.
-v0.1.41  Search hint added to Gutenberg text-entry screen.
-v0.1.40  JW pub-code entry hint added; noted Awake! issue-number mapping
-         quirk (jw_fetch.py).
-v0.1.39  Bookmarks/resume-reading now save exact paragraph (char offset),
-         not just chapter.
-v0.1.38  Fixed progressive-JPEG band-skip desync on one real image;
-         fixed L2/R2 chapter nav skipping all front matter on Bible books.
-v0.1.37  Progressive JPEG decoding added (mini_jpeg.py v0.2.0).
-v0.1.36  Fixed bold/italic word-wrap overflow (bold text ~11% wider than
-         regular wasn't accounted for).
-
-START is deliberately unbound outside the Reader screen (v0.1.27) --
-reserved for the downloader plugin trigger, which ended up bound to
-Library-screen L2 instead (v0.1.28) once actually built. START remains
-free; don't repurpose it without checking with the person first.
-
-DOWNLOADER PLUGINS (v0.1.28): gutenberg_fetch.py (public/GitHub-safe)
-and jw_fetch.py (PRIVATE -- never publish this one) are optional,
+DOWNLOADER PLUGINS: gutenberg_fetch.py (public/GitHub-safe) and
+jw_fetch.py (PRIVATE -- never publish this one) are optional,
 self-contained modules main.py loads defensively at import time into
 DOWNLOAD_PLUGINS (empty list if neither file is present -- the app must
 work identically either way). Contract: PLUGIN_NAME, list_items(query,
 page)->(items,has_next,err), download(item,dest_dir)->(ok,msg,path).
-See gutenberg_fetch.py's docstring for the full contract, and each
-file's own docstring for its specific API details/legal basis (both
-were checked in-conversation against real ToS/policy pages, not
-assumed). JW pub codes in jw_fetch.py were all verified LIVE against
-GETPUBMEDIALINKS before being hardcoded -- b.jw-cdn.org and jw.org ARE
-reachable from this sandbox (allowed network domains), gutendex.com is
-NOT (verify gutenberg_fetch.py's parsing against a real response the
-first time it runs on real hardware, if anything looks off).
+See gutenberg_fetch.py's docstring for the full contract.
 
-HARD LESSON from building this feature, worth repeating: a str_replace
-that inserted a new elif block accidentally deleted the following
-"elif app.screen == SCREEN_READER:" line, silently merging all
-Reader-screen input handling into the wrong block and breaking normal
-reading completely -- and AST-parse alone did NOT catch it (still
-syntactically valid Python). This sandbox has real SDL2 installed
-(check: `ctypes.util.find_library` fails but the .so exists at
-/usr/lib/x86_64-linux-gnu/libSDL2-2.0.so.0 and libsdl2-ttf-2.0-0 can be
-apt-installed) -- meaning main.py, App, and every draw_*/handle_button
-function can actually be imported and driven for real with
-SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy, no physical device needed.
-After ANY edit that touches handle_button()'s screen dispatch chain (the
-long if/elif app.screen==... ladder), re-verify by actually constructing
-App(renderer) and calling handle_button() with real button strings,
-checking app.screen/app.scroll/etc. after each press -- not just
-AST-parsing. This is now the required verification bar for edits to
-that function, not merely a nice-to-have.
 ===========================================================================
+Version: 0.1.86
 
-Version: 0.1.70
+Changelog (recent versions in detail; earlier work grouped by theme --
+see git history for full narrative detail on any specific older fix):
 
-Changelog:
-  v0.1.70 -- Two unrelated additions, both documented here for one clean
-    build reference:
-    (1) jw_fetch.py: added AWAKE_BACK_ISSUES, a hard-coded list of every
-      real Awake! issue from 2016-2025 (28 issues), shown when browsing
-      the Awake! category. Previously Awake! had no back-issue browse
-      list at all -- only manual code entry (Y button) worked, unlike
-      Watchtower/Workbook which already had full generated back-issue
-      lists. Not a generator like w/mwb because Awake!'s frequency
-      changed twice (6/yr Feb-Dec even months 2016-17, 3/yr Mar/Jul/Nov
-      2018-21, 1/yr 2022+) -- a per-year count alone can't derive the
-      right issue=YYYYMM codes, so each of the 28 entries was
-      individually confirmed live against GETPUBMEDIALINKS (HTTP 200 +
-      real EPUB file present) before being added, same bar as every
-      other pub code in that file. Frequency history independently
-      corroborated via Wikipedia's Awake! article, which matches the
-      live results exactly. Titles sourced from jw.org's own magazine
-      library pages. Wired into list_items() the same way w/mwb
-      back-issues are: only shown when browsing that specific category,
-      deduplicated against the RSS "(new)"/"(this month, guess)"
-      entries. No main.py logic changed for this -- browse/download/UI
-      code is pub-agnostic.
-    (2) assets/ fonts (font.ttf, font-bold.ttf, font-italic.ttf,
-      font-bolditalic.ttf): re-sourced and rebuilt to fix a provenance
-      gap in FONT_LICENSE.txt, which previously cited "the
-      fonts-liberation Debian/Ubuntu package" as the source -- less
-      precise than it should be. Rebuilt directly from the official
-      https://github.com/liberationfonts/liberation-fonts repo at tag
-      2.1.5 (commit 4b0192046158094654e865245832c66d2104219e), using
-      that project's own documented build process (fontforge -script
-      scripts/fontexport.pe against the .sfd sources via `make`) --
-      not a third-party mirror. Verified by inspecting each output
-      file's embedded name-table version field: all four report
-      "Version 2.1.5", matching FONT_LICENSE.txt's existing version
-      claim exactly. FONT_LICENSE.txt's source note updated to reflect
-      this. No glyph/rendering changes expected -- same official 2.1.5
-      source as before, just a corrected and independently-verified
-      provenance trail.
-  v0.1.69 -- Two loading-speed fixes, both verified against real nwt_E.epub
-    content (not just AST-parsed -- actually built with real SDL2_ttf,
-    SDL_VIDEODRIVER=dummy, timed before/after):
-    (1) NEW wrapped-lines cache (_wrapped_cache), separate from
-        _page_text_cache. Investigated first whether "cache the parsed
-        book structure" (spine/TOC/chapter-nav) was worth doing -- it
-        wasn't: _build_anchor_index() (the expensive full-book scan,
-        used by both anchor lookups and chapter-nav-point building) was
-        ALREADY disk-cached via anchor_cache_path/mtime since earlier
-        work, so there was no real second win there. The actual gap:
-        _ensure_page_built() was re-running self._wrap() (SDL_ttf word-
-        width measurement) on EVERY build, even on a full
-        _page_text_cache hit. Measured on the largest real chapter in
-        nwt_E.epub (OEBPS/1001061175.xhtml, 2880 lines): cold wrap
-        1.94s, warm (cache hit) 0.0008s. Keyed by (href, font_size_index)
-        -- confirmed correct via real test: changing font size produces
-        a genuinely different line count (2880 -> 3288 lines) and a
-        separate cache entry, not stale reuse. NOT populated from the
-        background prefetch thread -- self._wrap() calls SDL_ttf
-        (TTF_SizeUTF8), and this project's own rule is real-device
-        verification before trusting anything novel; calling SDL_ttf off
-        the main thread hasn't been verified safe on this hardware. So
-        this is a same-thread memoization win (revisits, L2/R2 back-and
-        -forth, returning to a recent scripture) rather than a
-        preemptive background-wrap -- flagged as a possible v2 if Kaleb
-        wants to verify background SDL_ttf calls on real hardware first.
-        Capped at 200 entries, same bound as _page_text_cache, cleared
-        on open_book().
-    (2) Widened _prefetch_adjacent_chapters() from 1 chapter each
-        direction to 2 (delta -2,-1,+1,+2). Kaleb reads ahead across more
-        than just the immediate next chapter in a sitting; RAM impact is
-        zero beyond the existing 200-entry _page_text_cache cap since
-        candidates already skip anything already cached.
-  v0.1.68 -- Raised _page_text_cache from 4 to 200 entries. Prompted by
-    Kaleb's actual usage pattern: NWT scripture lookups during meetings
-    jump non-sequentially across the Bible (e.g. Genesis to Matthew --
-    confirmed by direct inspection of nwt_E.epub: 1189 real chapterN
-    anchors, matching the standard 929 OT + 260 NT count, spread across
-    2749 actual spine files once chapter-splitting is accounted for).
-    A 4-entry cache is fine for straight sequential reading (L2/R2) but
-    thrashes hard under "jump to book, jump to another book" access,
-    forcing a fresh XML parse on every visit even to a recently-viewed
-    passage.
-    RAM cost: ~28KB/entry x 200 = ~5.6MB worst case (up from ~112KB at 4
-    entries) -- trivial against 1GB total, and this is the only thing
-    using that memory (doesn't compete with the separately-bounded image
-    caches). CPU cost: none from the cache itself (dict insert is O(1)
-    regardless of size); the only size-sensitive part is
-    _page_text_cache_put()'s eviction list (.remove()/.pop(0), O(n)),
-    which at n=200 is still sub-millisecond -- not worth the complexity
-    of an OrderedDict swap at this size, left as plain list on purpose.
-    200 was chosen over other sizes considered (300, 500) as adequate
-    headroom (~10x a typical meeting's actual page-touch count) without
-    committing RAM the real usage pattern doesn't need.
-  v0.1.67 -- Crash-safe image disk cache, prompted by Kaleb asking
-    whether switching chapters/closing the book mid-decode could
-    corrupt cached images. Confirmed: chapter/page switching was
-    already async and non-blocking (resets _page_cache_key only, never
-    joins the image worker thread) -- that part was fine. The real gap
-    was _load_or_decode()'s disk-cache write, which wrote straight to
-    the final .rgb/.meta filenames. An interruption mid-write (app
-    killed, power loss, SD card hiccup -- exactly what a fast chapter
-    switch could trigger while a background image was still being
-    cached) could leave a truncated .rgb paired with a .meta still
-    claiming the original dimensions, producing a garbled texture (or
-    worse, SDL reading past a too-short buffer) on next load.
-    Fix, two parts:
-    (1) Read-side validation: before trusting a cached entry, checks
-        that the .rgb file size exactly matches w*h*3 from its .meta.
-        Mismatch -> logs it, deletes both files, falls through to a
-        fresh decode instead of handing back garbage pixel data.
-    (2) Write-side atomicity: decode result is written to temp files,
-        then os.rename()'d into place (atomic on the same filesystem on
-        Linux). rgb is renamed into place before meta, so a reader can
-        never see a meta file whose matching rgb isn't fully written.
-        An interrupted write now just leaves the OLD cache entry (or
-        nothing) instead of a corrupted one.
-    Net effect: chapters can be switched or the book closed at any time
-    without any risk of poisoning the on-disk image cache.
-  v0.1.66 -- CPU throttle for background image decode, addressing Kaleb's
-    report that page/chapter loads could stutter behind image work.
-    Root cause: the single ImageLoader worker thread is correct in
-    design (image decode is GIL-serialized Python work, so more threads
-    would only add contention -- see v0.1.9 notes), but once a
-    PRIORITY_PRERENDER image started decoding it could NOT be
-    interrupted, so a page turn or chapter change (PRIORITY_VISIBLE)
-    landing mid-decode had to wait for that background image to finish
-    -- worse for large/progressive JPEGs.
-    Fix: added _pending_counts, a per-priority counter of not-yet-started
-    queued tasks (kept in sync under _lock in request()/_worker_loop()
-    since PriorityQueue has no safe peek). Before starting a PRERENDER
-    task, the worker now checks whether VISIBLE or PREFETCH work is
-    already waiting; if so, it requeues the PRERENDER task behind it
-    instead of starting it, avoiding the block. Also added
-    PRERENDER_THROTTLE_SECONDS=0.03 -- a small sleep between PRERENDER
-    decodes only (never applied to VISIBLE/PREFETCH), so a long
-    whole-book pre-render run generates noticeably less sustained
-    CPU/heat without slowing down real reading.
-    NOTE: _results was previously flagged in old notes as "unbounded" --
-    that was stale. MAX_INMEMORY_IMAGES=80 with LRU eviction in
-    _evict_if_needed() has handled this since v0.1.48/v0.1.51; no change
-    needed there.
-  v0.1.65 -- Fixed prerender progress falsely looking like it "restarts
-    from the beginning" after a crash (Kaleb reported). Root cause:
-    prerender_progress()'s done-count only checked is_full_res(), which
-    tests the in-memory ImageLoader._results dict -- empty on every fresh
-    process. The on-disk image cache (IMG_CACHE_DIR) already survives
-    crashes/reboots, and _walk_and_enqueue() was already correctly
-    skipping the expensive raw-JPEG-decode for disk-cached images -- but
-    the progress bar had no way to know that until each one was
-    individually re-touched through the single-worker queue (a real,
-    serialized disk read per image), which for "lots of images" was slow
-    enough to be visually indistinguishable from a genuine full restart.
-    Fix: done-count now also counts has_full_disk_cache(key) as done,
-    without waiting for the worker to reload it into RAM (cheap --
-    os.path.exists, no decode, no RAM cost). Verified directly: simulated
-    a post-crash state (fresh ImageLoader, empty _results, real file
-    already in the disk cache) and confirmed the old calc reported it
-    "not done" while the new one correctly reports "done" instantly.
-    Also fixed this file's own stale version headers while here --
-    CURRENT STATE above and this line were still at v0.1.61/64 despite
-    the changelog having already reached v0.1.64 underneath -- same class
-    of mistake the v0.1.64 audit entry below already flagged once.
+v0.1.86 -- Kaleb reported images getting skipped entirely with L1/R1 and
+  slow d-pad scrolling, worst at 24pt. Root cause: draw_reader() (what's
+  actually drawn) and handle_button() (what drives page_up()/page_down()
+  and the UP/DOWN scroll clamp -- i.e. navigation) computed body_rows
+  via two INDEPENDENT formulas that quietly disagreed. handle_button()
+  never subtracted body_top or footer_h at all, and used hint_height()'s
+  return value (explicitly documented as pre-_sy-scaling "design units")
+  directly against real-pixel SH without scaling it first. Verified with
+  the real bundled font at every Font Size (14-32pt): handle_button()
+  overcounted body_rows by 1-2 rows at EVERY size, not uniquely at
+  24pt -- 24pt is just where the overcount happened to line up badly for
+  this particular book's line layout and cause a visible skip. Since
+  handle_button() believed more rows fit per page than draw_reader()
+  would actually draw, page_up()/page_down() could advance scroll
+  straight past an image the real screen never had room for. Fixed by
+  extracting _reader_body_layout(fonts) as the single formula both now
+  call -- draw_reader() and handle_button() can no longer disagree,
+  structurally, regardless of Font Size or book content.
 
-  v0.1.61 -- Hint bar clipping fully fixed (supersedes v0.1.60, which
-    only papered over the symptom). ROOT CAUSE found via direct
-    word-count testing: _wrap_hint_text's line-cap logic, on reaching the
-    last allowed line, kept only the ONE word that had just overflowed
-    and then broke out of the loop -- silently discarding every word
-    after it. This is what produced the orphaned "X"/"Y" alone on a
-    clipped line in Kaleb's on-device screenshots; it was never a
-    rendering overflow. Fixed: the last allowed line now packs ALL
-    remaining words (may exceed the bar's width and get renderer-clipped
-    as a last resort, but never drops content).
-    Also: the hint bar no longer always reserves a fixed worst-case
-    height. hint_height()/draw_hint() now use _hint_lines_needed() --
-    1-3 lines, calibrated per current global Font Size against the two
-    longest hint strings in the app (_HINT_CALIBRATION_TEXTS) -- so the
-    bar stays 1 line thick at 14-18pt and only grows to 2 at 21pt+
-    (verified: nothing needs 3 once _hint_pt()'s font-shrink fallback is
-    applied). _hint_pt() shrinks just the hint font (floor 11pt,
-    independent of the rest of the UI) if a hint string is ever too long
-    to fit in HINT_H_MAX_LINES=3 even at that scale.
-    Verified end-to-end by measuring real SDL_ttf-rendered word counts
-    and line widths at all 7 Font Size steps (14-32pt): 24/24 words drawn
-    at every step, zero width overflow on any line.
-  v0.1.49 -- Single-lock image status check (main.py only). Added
-    ImageLoader.get_status_snapshot(key) -- returns result/is_full/
-    is_upgrading/seconds in ONE lock acquisition, replacing the old
-    pattern of calling get(), is_upgrading(), get_with_full_flag(),
-    and seconds_loading() separately (each took its own lock).
-    has_pending_image_updates() and get_image_texture() both switched
-    to the single snapshot call -- was up to 3 lock acquisitions per
-    image per frame while any image on the page was still decoding
-    (has_pending_image_updates() polls every loop iteration by design).
-    Verified behaviorally equivalent across all 8 possible entry states
-    (None/empty/loading/upgrading/full-landed/error) before switching --
-    identical results to the old separate calls. Check frequency is
-    UNCHANGED (still every frame) so images cannot get stuck waiting for
-    a button press; this only reduces redundant lock overhead per check,
-    not how often the check runs. Root cause: person reported 3-8s lag
-    resuming a book to an exact paragraph -- images on that page still
-    decoding meant has_pending_image_updates()+draw_reader() were doing
-    3 lock acquisitions per image per frame competing with real
-    rendering work on the ARM device's more limited CPU.
-  v0.1.48 -- Background chapter pre-parse (main.py only). Added
-    _page_text_cache (RAM-only LRU dict, 4 entries, ~112KB) and
-    _page_text_cache_put() LRU helper. _prefetch_adjacent_chapters()
-    fires a daemon thread after every page build -- pre-parses the
-    prev and next chapter nav-point files into cache so L2/R2 jumps
-    find the XML already parsed. _ensure_page_built() checks cache
-    before calling doc.get_page(), stores result on cold miss.
-    Cache cleared on open_book(). Eliminates main-thread XML parse
-    lag (~0.7s+ on ARM) for chapter navigation.
-  v0.1.47 -- Removed all JW paragraph class rendering (sm/sh/si/sb/sj).
-    epub_engine.py: JW_PARA_CLASSES dict and detection/emit block
-    removed from walk(). These caused italic, indent, small font and
-    grey colour on Bible verse text (sb class on every NWT verse),
-    outline labels, copyright lines etc. Bold still comes through
-    naturally from <strong> in source HTML. main.py: draw_reader
-    simplified -- all para kinds now render as plain body text, same
-    size and colour. superscript/caption also no longer get small font
-    or COL_DIM (uniform rendering throughout). box_rule unchanged.
-  v0.1.46 -- Two fixes (epub_engine.py + main.py):
-    (1) Removed pagenum ([p.N]) tokens entirely. JW print-page markers
-        (<span class="pageNum">) are now silently skipped in walk().
-        Previously they were emitted as "[p.N]" text tokens with a
-        pagenum ParaSpan, which caused the whole wrapped line containing
-        the marker to render in small/dim font (the para_span overlap
-        check painted the entire line, not just the token). All pagenum
-        references removed from ParaSpan docstring, draw_reader
-        use_small check, and segment color logic.
-    (2) Fixed O(n^2) line_abs_start in draw_reader. Previously computed
-        as sum(len(_lines[i])+1 for i in range(li)) on every line every
-        frame -- ~32M iterations/frame on large NWT chapters (8000+
-        lines). Now precomputed once in _ensure_page_built() into
-        _line_abs_offsets[] list; draw_reader does a single index lookup.
-  v0.1.45 -- Pre-render counter fix: previously showed 0/0 during the
-    entire spine-walk phase (up to 3941 files for NWT) because
-    _prerender_total was only set after the walk completed. Added
-    _prerender_scanning flag; _prerender_keys and _prerender_total now
-    update live per spine file so the Storage screen shows
-    "Scanning book... (N images found so far)" during the walk, then
-    switches to "done/total images decoded" once decoding begins.
-    Button label also updates live. prerender_progress() now returns
-    (done, total, scanning) -- all three callers updated.
-  v0.1.44 -- Two image rendering bug fixes:
-    (1) Race in get_image_texture(): get() + is_full_res() were separate
-        lock acquisitions; worker could land full decode between them,
-        tagging a blurry thumb texture as full-res permanently ("improving..."
-        stuck, pixelated image). Fixed with new atomic get_with_full_flag().
-    (2) Duplicate scale= in draw_reader(): zero-guard line silently
-        overwritten by second line without guard (div-by-zero if iw/ih=0).
-        Collapsed to: min(box_w/iw, box_h/ih) if iw and ih else 1.0
+v0.1.85 -- Kaleb asked specifically whether images always render on both
+  R1 (page_down) and L1 (page_up) without ever being skipped. They
+  didn't: page_up() was missing page_down()'s `row > 0` guard on its
+  break condition, so it wasn't actually symmetric with page_down() the
+  way its own docstring claimed. Consequence: an image whose row cost
+  alone exceeds body_rows (a real case now that portrait covers use
+  IMG_BOX_ROWS_PORTRAIT=20, v0.1.84) broke page_up()'s loop on its very
+  first iteration, before li ever moved -- self.scroll ended up
+  unchanged, so L1 did nothing at all when that image was the thing
+  immediately behind the current scroll position. page_down() already
+  always includes at least the first/nearest item (showing an oversized
+  one clipped rather than skipping it, matching draw_reader()'s own
+  row==0 exception) -- page_up() now does the same. Verified with a
+  synthetic cost-sequence simulation (5 text lines, one cost-20 image,
+  10 more text lines): before the fix, repeated L1 from past the image
+  got stuck at the same position forever; after the fix, the exact
+  stop sequence retraces symmetrically in both directions.
 
+v0.1.84 -- Kaleb noticed portrait-oriented images (Bible/book covers)
+  were width-shrunk well below the full 680px content width just to fit
+  the fixed IMG_BOX_ROWS(14) height budget. Added a second fixed tier,
+  IMG_BOX_ROWS_PORTRAIT(20), used for any image whose JPEG header
+  reports height > width (peeked via peek_jpeg_size(), no decode, cached
+  per img_key in App._image_box_rows_cache so it's only read once per
+  image). New App._image_box_rows(image_span) is now the single source
+  of truth for an image's row reservation -- _rows_for_li(),
+  draw_reader(), visible_span_indices(), and page_down()/page_up() all
+  already funnel through it (visible_span_indices/page_down/page_up
+  needed no changes at all, since they already called _rows_for_li()
+  rather than referencing IMG_BOX_ROWS directly). Kept as two FIXED
+  tiers rather than fully dynamic per-image height, by Kaleb's choice --
+  keeps pagination deterministic.
 
-  v0.1.35 -- Two things:
-    (1) Fixed the Library pin icon: it used a star (U+2605), which is
-        NOT present in Liberation Sans -- confirmed via both fontTools
-        cmap inspection and a live SDL_ttf glyph lookup (returned glyph
-        index 0, i.e. "not provided") -- meaning it was always rendering
-        as a blank/tofu box, not a design choice. Switched to a heart
-        (U+2665), confirmed present in the font both ways too. Audited
-        every other Unicode escape used in the UI while at it: em dash
-        is present and fine; the one other escape found is a sort-key
-        sentinel value that's never actually rendered as text, so no
-        other glyph issues exist right now.
-    (2) Completed the full bold/italic styling system (font loading and
-        HTML-side extraction already existed from earlier in this
-        session; the actual rendering pipeline connecting them did not
-        -- get_page()'s signature had already changed to return a 5th
-        value (styles) but main.py's callers hadn't been updated yet,
-        which meant every single page load was crashing outright before
-        this fix). Real Liberation Sans Bold/Italic/BoldItalic (matching
-        version 2.1.5, byte-identical to the already-bundled Regular,
-        confirmed via checksum) now ship in assets/. FontManager already
-        had per-style font-handle caching with graceful fallback to
-        regular if a style file is missing. epub_engine.py already
-        tracked <strong>/<b> -> bold and <em>/<i> -> italic as
-        StyleSpans with absolute text offsets. What was missing and is
-        now built: _wrap() computes per-line style runs from those
-        offsets (new _compute_line_style_runs()), and draw_reader()
-        renders each line as a merged sequence of link/image-range AND
-        style-run segments (new _line_segments()) rather than one
-        whole-line draw call -- so a character that's e.g. both a link
-        and bold gets the link's color WITH the bold font, neither
-        dimension silently overriding the other.
-    Verification for this size of change: re-parsed every page of all 9
-    real books (5,199 pages, 0 errors, 77,178 real style spans
-    extracted); confirmed a real bold span in actual JW content (a Bible
-    citation reference); confirmed FontManager returns genuinely
-    different font handles per style; confirmed at the FreeType surface
-    level (bypassing this sandbox's known broken dummy-driver texture
-    step) that the bold font actually renders wider glyphs for identical
-    text (108px vs 97px), not just a different pointer; then drove a
-    full real-SDL render walk through 3,254 actual screens across all 10
-    library books with zero exceptions. One bug caught and fixed during
-    this pass: the new per-line style-run helper was originally named
-    the same as the instance attribute meant to store its output
-    (self._line_style_runs), which silently shadowed the method after
-    the first assignment -- renamed to _compute_line_style_runs().
-  v0.1.34 -- Fixed HTML <table>-based content (common in Project
-    Gutenberg books, essentially never seen in JW publications until
-    now) rendering as one giant run-on wall of text with no line breaks
-    between table rows -- reported as "renders weird" on A Study in
-    Scarlet's and The Hound of the Baskervilles' in-book Contents pages.
-    Root cause: epub_engine.py's BLOCK_TAGS set (which decides which
-    HTML tags force a line break) has never included <tr> -- and for
-    good reason, confirmed by an EXISTING comment in the code from an
-    earlier fix: the JW Bible's book-navigation grid (biblebooknav.xhtml,
-    5 short book-abbreviation links per row, e.g. "Gen. Ex. Lev. Num.
-    Deut.") deliberately relies on natural width-based word-wrap instead
-    of a forced per-row break, or it wastes most of the screen wrapping
-    one row per line no matter how much width is available. A blanket
-    "tr = newline" would have fixed the reported bug while regressing
-    that one. Investigated two REAL Gutenberg TOC patterns (both
-    genuinely different table structures) before landing on a fix:
-      - A Study in Scarlet: <tr><td><a>Chapter title</a></td></tr> --
-        exactly one cell per row.
-      - The Hound of the Baskervilles: <tr><td><a>Chapter N</a></td>
-        <td>Title</td></tr> -- two cells per row (a plain cell-COUNT
-        check alone, tried first, correctly handled the first case but
-        missed this one).
-    Fixed with a per-row heuristic based on average TEXT LENGTH per
-    cell, not cell count: the JW grid's cells average ~4 characters
-    each (short abbreviations); both real Gutenberg TOC patterns
-    average ~18-35 characters per cell (actual chapter titles).
-    Threshold (>10 chars/cell average) picked from these real, measured
-    numbers across all three known cases, not guessed. A <tr> that
-    trips this average gets treated as a block element (its own line);
-    one that doesn't is left exactly as before, completely unchanged.
-    Verified thoroughly given this touches the core HTML walker used by
-    literally every page of every book: re-confirmed the JW book-nav
-    grid still flows identically to before (byte-compared the actual
-    output text); confirmed both Gutenberg TOC patterns now render one
-    chapter per line; then re-parsed EVERY page of all 9 real books in
-    the library (5,199 pages total: 2 Gutenberg novels + 7 JW
-    publications, including the 3,941-page NWT) with zero exceptions;
-    finally drove a real SDL render pass (open + page through + draw)
-    across all 10 library books to catch anything a text-only diff
-    could have missed.
-  v0.1.33 -- Performance: mini_jpeg.py's scale_n=1 decode path (the
-    instant DC-only thumbnail pass every image goes through first,
-    before the full-res upgrade -- the single most-executed decode case
-    in the app) now uses a closed-form calculation instead of running
-    the general truncated-IDCT machinery. Mathematically, a 1x1 IDCT
-    output is exactly dc_coeff * qtable[0] / 8 (the textbook "DC-only
-    IDCT" identity -- basis[0][0]^2 = 1/8 exactly, not an approximation)
-    -- so this skips building the unused 8x8 dequant block, the 64-entry
-    zigzag walk, and both matrix-multiply passes entirely for this case.
-    Verified before shipping: diffed the new fast path against the OLD
-    general-path code across a DC/quantizer sweep (max difference
-    3.6e-12, pure float-ordering noise); ran a full real-image decode
-    with both old and new paths and diffed every output byte (max diff
-    1/255, a single rounding-boundary artifact from that same float
-    noise, not a systematic error); re-ran the PIL ground-truth
-    comparison from the original decoder audit to confirm nothing else
-    regressed. Benchmarked on 60 real images from an actual JW
-    publication epub: 409.6ms/image -> 232.9ms/image, a 1.76x speedup
-    for this pass specifically (real measured numbers, not estimated --
-    proportional gain on the actual ARM handheld should be similar even
-    if absolute timings differ from this dev machine).
-    Also reviewed main.py's render side (get_image_texture/draw_reader)
-    per request -- no equivalent change made there: the LRU texture
-    cache already skips rebuilding when nothing's changed, and on-screen
-    scaling is already delegated to SDL_RenderCopy's destination rect
-    (a GPU-side blit), not Python-level arithmetic, so there isn't a
-    comparable "restructure the math" opportunity on that side.
-  v0.1.32 -- Fixed download browse screens getting stuck showing
-    "Loading..." (or a blank screen) after the load actually finished,
-    until an unrelated button press forced a redraw. Root cause, once
-    traced: the render loop's redraw-polling conditions (e.g. "redraw
-    while dl_loading is True") can only ever trigger a redraw WHILE
-    their condition holds -- but the background thread flips that flag
-    to done on a completely different thread, at an arbitrary moment the
-    render loop isn't watching for. The very next redraw check after
-    that happens sees "nothing pending anymore" and skips rendering
-    entirely, leaving the stale last-drawn frame on screen indefinitely.
-    This is a general bug CLASS, not a one-off -- found and fixed FOUR
-    occurrences of it once traced, all now explicitly set self.dirty =
-    True at the exact moment they finish rather than relying on the main
-    loop to notice indirectly:
-      (1) the reported case -- _load_dl_page()'s background list_items()
-          call (download browse screens)
-      (2) start_download()'s background download() call (download
-          completion status/library refresh)
-      (3) the JW manual pub-code entry's on_validate background lookup
-          (v0.1.31's own new feature -- same bug, same session it
-          shipped in)
-      (4) whole-book pre-render (v0.1.24) finishing
-    Also fixed the SAME bug class in image decoding on the Reader screen
-    itself, found while tracing the others even though it wasn't
-    reported: ImageLoader gained an on_update callback, invoked from its
-    worker thread every time a decode finishes (thumb or full stage,
-    success or error), wired to mark the app dirty immediately --
-    instead of only via has_pending_image_updates()'s WHILE-pending
-    polling, which had the exact same class of gap and could in theory
-    leave a just-finished image's upgrade to full resolution unpainted
-    until the next button press.
-    Verified for real, not just by reasoning about it: for each of the
-    four cases, kicked off the operation, explicitly reset app.dirty to
-    False (simulating "already rendered once"), then polled app.dirty in
-    a tight loop with NO button presses at all -- confirming it flips
-    back to True on its own once the background thread completes, for
-    every case. Also ran a full regression pass (page-turn, chapter
-    jump, draw_reader) to confirm nothing else broke.
-  v0.1.31 -- Feature: manual JW.org publication-code entry, per request
-    -- for typing in a code the person already knows/found themselves,
-    not limited to the curated STATIC_PUBLICATIONS list in jw_fetch.py.
-    Reuses the same D-pad text-entry screen v0.1.30 built for Gutenberg
-    search, but through a new on_validate path (App.open_text_entry()
-    gained this as a second, mutually-exclusive option alongside the
-    existing on_confirm): the typed code is actually looked up against
-    the live API on a background thread BEFORE leaving the entry screen,
-    so an invalid code shows a clear inline error and lets the person
-    fix a typo and retry immediately, rather than bouncing to the
-    results list with nothing in it (per explicit confirmation on both
-    of these points). Periodicals are supported by typing the code and
-    issue together, space-separated (e.g. "w 202609"). New
-    jw_fetch.lookup_pub_code(code, issue) does the actual round-trip.
-    Gated behind a new SUPPORTS_MANUAL_CODE flag (jw_fetch.py sets it;
-    gutenberg_fetch.py doesn't -- Gutendex has actual search, a raw code
-    lookup wouldn't make sense there) -- same opt-in pattern
-    SUPPORTS_SEARCH already established, so Y does the right thing for
-    whichever plugin is active without main.py needing to know which
-    plugin it's talking to.
-    TWO real bugs caught and fixed during verification (again, by
-    actually driving real button input against the real API, not just
-    reading the code):
-      (1) lookup_pub_code()'s retry logic (for pubs like the plain NWT
-          that need an explicit fileformat=EPUB param) never actually
-          ran -- urllib.request.urlopen() raises HTTPError for the
-          server's 400 response to the FIRST attempt (confirmed live;
-          curl doesn't surface this the same way, which is why it wasn't
-          obvious from earlier curl-based testing), and the old code
-          returned on that first error before ever reaching the retry.
-          Fixed the control flow so a failed first attempt falls through
-          to the retry instead of giving up immediately; also improved
-          the error message for a genuinely nonexistent code to say so
-          plainly instead of "Network error: HTTP Error 400" (technically
-          accurate, but reads like a connectivity problem when it isn't).
-      (2) MUCH more basic: the letter grid built for v0.1.30 had NO
-          DIGITS at all -- typing a periodical issue number like 202609
-          was flatly impossible with the shipped grid, silently
-          defeating the periodical-support requirement for this very
-          feature. Caught immediately when the first real test tried to
-          type "w 202609". Rebuilt the grid with letters, then digits,
-          then actions as separate (ragged-length, ordinary) rows;
-          confirmed the existing navigation code already handled ragged
-          rows correctly without needing changes there.
-    Verified end to end with real button input: typed "bhs" (a code NOT
-    in the static list) and confirmed it resolves via the live API;
-    typed a deliberately bogus code and confirmed the screen stays put
-    with a clear error, then backspaced and retried successfully without
-    losing the session; typed "w 202609" and confirmed the correct
-    periodical issue resolves; confirmed Gutenberg's search (v0.1.30)
-    still works unaffected on the rebuilt grid.
-  v0.1.30 -- Feature: on-screen search for the Gutenberg downloader, per
-    request (the earlier "browse popular only" limitation was flagged as
-    a known gap when the downloader shipped, not a bug -- this fills it
-    in). Built as a GENERIC D-pad letter-grid text-entry screen
-    (SCREEN_TEXT_ENTRY, App.open_text_entry()) rather than something
-    Gutenberg-specific, so any future feature needing typed input can
-    reuse it. 6x5 grid (26 letters + space/backspace/confirm/cancel,
-    exact fit, no wasted cells); D-pad moves the cursor, A selects a
-    cell, X is a quick-backspace shortcut, B cancels outright (the
-    on_confirm callback is simply never called -- whatever triggered the
-    search stays exactly as it was).
-    Gated behind a new SUPPORTS_SEARCH flag plugins can declare --
-    gutenberg_fetch.py sets it (Gutendex actually supports a `search`
-    param); jw_fetch.py does not (its catalog is small/fixed, a search
-    box would be pointless there) and the Y-Search hint simply doesn't
-    appear for it. Search results reuse the exact same
-    list_items()/pagination path as browsing -- a query is just another
-    parameter alongside page, with a matching stale-response guard
-    (dl_query included, not just dl_page) so a slow in-flight request
-    can't clobber a newer search.
-    Verified with real button-driven input end to end: opened search,
-    typed "DUNE" letter by letter through actual grid navigation
-    (confirmed via a monkeypatched list_items() that the exact query and
-    page reached the plugin call), confirmed and watched dl_query and
-    the on-screen title update; separately verified B correctly cancels
-    without invoking the callback or touching the existing search, X
-    backspaces correctly including on a prefilled value, and Y is
-    correctly a no-op on jw_fetch (SUPPORTS_SEARCH absent).
-  v0.1.29 -- Button remap on the Library screen, per request (accidental
-    deletions were happening even with the two-press confirm, because B
-    sits right next to the D-pad and means "go back" everywhere else in
-    the app -- too easy to hit by muscle memory):
-      - SELECT now triggers delete (still press-twice-to-confirm, same
-        armed-row behavior as before) -- was B.
-      - B now quits the app from Library -- was SELECT's job since
-        v0.1.27.
-      - START opens a new Library-specific popup menu (SCREEN_LIBRARY_MENU):
-        direct sort-mode shortcuts (Title A-Z / Author A-Z / Last Read /
-        Recently Added -- picks the mode directly instead of cycling
-        blind through Y), "Download Books" (same as L2, just discoverable
-        without needing to already know the shortcut), and "Storage" --
-        which was previously ONLY reachable by opening a book first; the
-        Library now has its own path to it. Reader-screen START is
-        UNCHANGED (still sets a bookmark), per explicit confirmation.
-      Storage's own Back/B previously always returned to the Reader
-      screen unconditionally -- harmless when only reachable from there,
-      but would have shown a broken/bookless Reader screen now that
-      Storage is also reachable from the Library menu with no book open.
-      Fixed with a small return-screen tracker (_storage_return_screen)
-      set at the point Storage is opened, so Back always goes back to
-      wherever you actually came from.
-    Verified with real button-driven input through handle_button() again
-    (not just AST-parse) after last version's lesson -- specifically
-    re-confirmed the Reader screen's own input handling still works
-    untouched (the exact regression class from v0.1.28), plus every new
-    transition (Library SELECT arm+delete, B quit, START menu, sort
-    shortcuts, Storage opened from both the Reader menu and the new
-    Library menu returning to the correct place from each).
-  v0.1.28 -- Feature: optional downloader plugin system, per request.
-    Two new self-contained, OPTIONAL module files:
-      gutenberg_fetch.py -- browses/downloads public-domain EPUBs from
-        Project Gutenberg via Gutendex (gutendex.com), a community JSON
-        API over PG's catalog. Legal to publish publicly per Project
-        Gutenberg's own policy (gutenberg.org/policy/permission.html):
-        "No permission is needed for non-commercial use... you can
-        freely redistribute any eBook, anywhere, any time." Schema
-        verified against Gutendex's own GitHub README (this sandbox
-        can't reach gutendex.com directly to pull a live sample -- if a
-        real response ever looks different from the documented schema,
-        re-verify list_items()/_book_to_item() against it).
-      jw_fetch.py -- downloads JW.org EPUB publications via the same
-        public API (b.jw-cdn.org/apis/pub-media/GETPUBMEDIALINKS) their
-        own official apps use, plus parses the jw.org "What's New" RSS
-        feed to auto-detect the latest Watchtower Study Edition and
-        Meeting Workbook issue (no hardcoded/guessed date). All pub
-        codes were verified LIVE against the real API, not guessed --
-        see this file's own docstring. PRIVATE per explicit instruction
-        -- do not publish this file to a public repo alongside
-        gutenberg_fetch.py; keep it local-only. Legal basis (checked
-        in-conversation against jw.org's actual Terms of Use, not
-        assumed): personal/non-commercial download of public EPUB files
-        via a free, non-commercial application is explicitly exempted
-        from their anti-scraping clause.
-    Both plugins share one contract (PLUGIN_NAME, list_items(), 
-    download()) documented in gutenberg_fetch.py's docstring. main.py
-    loads whichever files are actually present via a defensive
-    try/except __import__ loop (DOWNLOAD_PLUGINS list) -- deleting a
-    plugin file removes the feature cleanly with no dead menu items or
-    crashes; dropping it back in restores it, nothing else to wire up.
-    Library screen: L2 opens the downloader (only shown/bound if
-    DOWNLOAD_PLUGINS is non-empty) -- goes straight to the one plugin's
-    browse list if only one is present, or a source-picker screen if
-    both are. Downloads run on a background thread (same reasoning as
-    every other network/decode call in this app: never block input).
-    Two real bugs caught and fixed during verification, BEFORE
-    shipping, by actually importing and running main.py against real
-    SDL2 (this sandbox has libSDL2 installed) rather than relying on
-    AST-parse alone:
-      (1) jw_fetch.py's RSS date parser resolved bi-monthly titles like
-          "November-December 2026" (the Workbook) to December instead
-          of November -- wrong issue code entirely (202612 vs the
-          correct, live-confirmed 202611). Fixed to always anchor on
-          the FIRST month in a range.
-      (2) CRITICAL, self-inflicted: an earlier edit in this same session
-          that added the SCREEN_DOWNLOAD_BROWSE input-handling block
-          accidentally deleted the following "elif app.screen ==
-          SCREEN_READER:" line during a str_replace, silently merging
-          ALL Reader-screen input handling (scroll, page-turn, chapter
-          jump, menu, everything) into the download-browse screen's
-          block and leaving the Reader screen with NO input handling at
-          all -- normal reading would have been completely broken.
-          AST-parse alone did not catch this (still syntactically
-          valid). Caught by actually driving real button input through
-          handle_button() against a live App instance and checking
-          app.screen transitions and app.scroll after each press.
-          Fixed by restoring the missing elif header. Both fixes
-          re-verified the same way before shipping -- see this
-          session's tool-call history for the actual test output.
-    Also confirmed via a full real download: gutenberg/jw_fetch's
-    download() correctly writes a valid EPUB (verified with zipfile)
-    into the actual Library folder, App.start_download()'s background
-    thread correctly updates status/refreshes the library list, and
-    duplicate-download detection works (won't re-download an existing
-    file).
-  v0.1.27 -- Button remap, per request: SELECT (JOY_BACK -- was mapped
-    to a constant but never actually dispatched to a button name, so it
-    did nothing at all) now quits the app from the Library screen,
-    replacing START in that role. START keeps its existing "set a
-    bookmark" behavior in the Reader screen (left untouched per
-    confirmation) and is otherwise unbound, deliberately reserved for a
-    planned JW.org publication downloader trigger. Updated the controls
-    docstring and Library hint bar to match.
-  v0.1.26 -- Feature: "Toggle Images (text-only mode)" on the Storage
-    screen. When off, image lines render as a single compact placeholder
-    ("[Image hidden -- text-only mode]") instead of the full IMG_BOX_ROWS
-    box, and the decoder is never touched at all -- no request(), no
-    prefetch, no pending-image polling -- for faster reading when images
-    aren't wanted. Refactored visible_span_indices() to call the same
-    _rows_for_li() helper page_down()/page_up()/draw_reader() already
-    use (previously it duplicated the image-line classification inline),
-    so text-only mode's row-cost change (image lines now cost 1 row, not
-    14) is automatically consistent everywhere instead of needing the
-    same edit made in four places -- exactly the kind of duplicated
-    accounting that caused the v0.1.23 skip/cutoff bug in the first
-    place. Persisted via settings.json like the existing disk-cache
-    toggle; live-updates immediately, no restart needed.
-  v0.1.25 -- Feature: delete a book from the Library screen. B, twice to
-    confirm (same "press again on the same row" pattern the Bookmarks
-    screen already uses for deletes -- armed row highlights, any other
-    input cancels it). Only removes the .epub file itself; the image
-    cache, anchor cache, and pin entry are deliberately NOT touched
-    directly -- scan_library() already detects and purges cache/pin
-    entries for any book file no longer present on disk (that cleanup
-    already existed, originally written for the case of a book being
-    removed by hand outside the app), so refresh_library() right after
-    the delete reuses that exact path instead of duplicating the
-    cleanup logic. Bookmarks are left alone on purpose, consistent with
-    that same existing cleanup's philosophy -- they're the person's own
-    data; Storage > Clean Up Orphaned Bookmarks remains the deliberate,
-    separate way to clear those. If the book being deleted is also the
-    one currently mid-pre-render (v0.1.24), that pre-render is cancelled
-    first.
-  v0.1.24 -- Three additions, all from direct feedback:
-    (1) Shrunk ImageLoader.TARGET_BOX_H from 360 to 480x272 (was
-        480x360) -- per follow-up request, aimed specifically at slow-
-        loading Bible story book cover images (large/high-res source
-        photos). Same tradeoff as the original 680x560->480x360 change:
-        a smaller decode-resolution TARGET picks a smaller scale_n,
-        trading a bit of sharpness for real decode time, with no visible
-        difference since the result is upscaled to fill the same
-        on-screen box either way.
-    (2) Book-scoped cache accounting: book_cache_size_bytes() and
-        delete_book_cache() (prefix-match against the existing
-        "{book_id}__..." cache filenames -- no directory restructuring
-        needed, the namespacing was already there from the book_id work
-        that prevented cross-book image collisions). Storage screen now
-        shows the currently-open book's own cache size alongside the
-        total. Foundation for an upcoming "delete book" feature that
-        will reuse delete_book_cache() to clean up after itself.
-    (3) Feature: "Pre-render Book Images" on the Storage screen --
-        walks every spine file, collects every unique image, and
-        enqueues them all at a new PRIORITY_PRERENDER level (lower
-        priority than both PRIORITY_VISIBLE and PRIORITY_PREFETCH).
-        Deliberately reuses the existing single-worker priority queue
-        instead of a separate thread pool: real reading needs (the page
-        you're actually looking at, or about to turn to) always jump the
-        queue ahead of pre-render work, so this can run for a long time
-        in the background -- a full year of a daily-text book, hundreds
-        of images -- without making scrolling or menu input feel
-        unresponsive. Progress (X/Y actually decoded, not just
-        enqueued -- checked against real decode results) shows live on
-        the action row and in the info panel; pressing A again cancels
-        it. Automatically cancelled if you switch to a different book
-        mid-run, guarded by a book-id check so a stale progress bar or
-        late-arriving decode can never bleed into the wrong book.
-    Also added a permanent "AI NOTES" block at the top of this file
-    (architecture summary + recurring bug shapes) per request, so a
-    future session can orient quickly instead of re-deriving context
-    from the full changelog every time.
-  v0.1.23 -- Fixed images getting cut off ("shows half the image") and
-    then skipped entirely on the next page-turn, reported while reading
-    the second study article of a real Watchtower epub with L/R page
-    turns (and, less predictably, after D-pad scrolling too). CONFIRMED
-    via direct simulation (a 30-line page with an image sitting right
-    where a page boundary would fall at body_rows=20): two compounding
-    bugs, both now fixed together --
-    (1) page_down()/page_up() did `scroll +/- body_rows` directly.
-        body_rows is a VISUAL row count (screen height / line height),
-        but self.scroll is an index into self._lines[], where one image
-        is a SINGLE entry that costs IMG_BOX_ROWS (14) visual rows to
-        draw -- draw_reader() and visible_span_indices() already knew
-        this and walked row/li separately, but page_down/page_up never
-        did, so a flat body_rows added straight to scroll could jump
-        clean over an image's li (skipping it) or land short of a full
-        page (re-showing lines already seen). Fixed by giving both
-        methods the same row-cost-aware li walk draw_reader() uses (new
-        shared helper _rows_for_li()), so paging always advances/
-        retreats by exactly what was actually shown on screen.
-    (2) draw_reader()'s render loop drew an image unconditionally once
-        it started iterating that line, even when the remaining space
-        on screen (body_rows - row) was less than IMG_BOX_ROWS -- so an
-        image near the bottom of a page rendered cropped instead of
-        being deferred to the next page. Fixed: the loop now checks
-        whether the image would fully fit in what's left of the current
-        screen and, if not, stops the page there (unless it's the very
-        first thing being drawn, to avoid an infinite stall on an
-        oversized image) -- the image becomes the first thing shown on
-        the next page instead of being torn in half.
-    Verified: simulated page_down() from just before the image stops
-    exactly at the image's line (not mid-image, not past it); the next
-    page_down() shows the full image plus a full following screenful;
-    page_up() from there returns to exactly the same starting line.
-  v0.1.22 -- Fixed L2/R2 "next chapter" skipping day/chapter 1 of any
-    book that has cover/front-matter pages before its first real
-    chapter (reported: opening a daily-text epub and pressing R2 from
-    the cover landed on "Friday, January 2", never "Thursday, January
-    1"). CONFIRMED root cause via direct simulation against the
-    person's own es26_E.epub: _build_chapter_nav_points() correctly
-    detects Jan 1 as the first daily entry (365 weekday-prefixed pages
-    found, in order, Jan 1 first) -- the bug was purely in
-    _jump_chapter()'s position math. When the reader is currently
-    positioned BEFORE the first nav point (spine index less than the
-    first chapter's), bisect gives pos = -1, meaning "not yet at any
-    chapter". The old code clamped this to pos = 0 (treating the
-    front-matter page as if it were already sitting AT chapter 0), so
-    "next" (pos + 1) jumped straight to chapter 1, permanently skipping
-    chapter/day 0. Fix: when pos < 0, "next" now explicitly targets
-    chapter 0 instead of chapter 1; "previous" from that same position
-    correctly still reports no previous chapter. This affects any book
-    with front matter, not just daily-text publications -- general fix.
-  v0.1.21 -- Fixed the menu/hint bar font-size scaling bug (reported
-    multiple times -- confirmed via screenshots showing the hint bar
-    text running past the right edge of the screen). Root cause: every
-    UI element (hint bar, menu popup, Library/Chapters/Bookmarks/Storage
-    screens, all headings) shared the SAME size-index-driven font
-    properties as the actual reader body text, so "Font Size +/-" (meant
-    to control the book text only) also inflated the chrome around it,
-    and none of that chrome's layout code accounted for suddenly-larger
-    text needing more room. FontManager now has a separate fixed
-    UI_STEP=18pt reference, with ui_body/ui_small/ui_heading properties
-    that never move regardless of size_index. Reader body text (the
-    _wrap() layout pass and the actual line/link/image rendering in
-    draw_reader) is the ONLY thing still tied to the scalable
-    body/small/heading properties -- correctly, since that's the whole
-    point of the font-size control. Every other draw_* function (hint
-    bar, library, menu, TOC, bookmarks, storage, and the image
-    loading/upgrading placeholder text) switched to the fixed ui_*
-    variants. Verified directly: hint bar rendered width is now
-    identical (595px, well under the 720px screen) at the smallest,
-    default, and largest reading sizes -- previously this would have
-    grown proportionally with each step up. Also re-rendered menu/TOC
-    at max reading size with no errors.
-  v0.1.20 -- Image loading indicator now shows elapsed time
-    ("Loading image... (3s)") instead of a static placeholder that looks
-    identical whether decode has been running for 1 second or 30.
-    Investigated first (not assumed): simulated the exact real sequence
-    (button press -> open_book() -> first draw_reader() call) and the
-    exact idle-loop logic main() actually runs, with real decode timing.
-    Both the image-request trigger and the periodic while-loading
-    redraw worked correctly in that simulation -- the image resolved on
-    its own within the idle wait, no scroll/input needed. Given the
-    report was specifically that the first image looked "stuck" until
-    scrolling, and other images resolved fine without needing anything
-    beyond time passing, the mechanism itself wasn't broken; the person
-    just had no visible confirmation that a fixed placeholder was still
-    doing something. Chose the transparent fix over guessing at
-    speeding up decode without evidence that decode speed was the
-    problem. ImageLoader.request() now stamps a requested_at timestamp;
-    new ImageLoader.seconds_loading(key) exposes elapsed time to the UI.
-  v0.1.19 -- Font: reverted priority order back to checking system paths
-    FIRST (matching the original v0.1.0 behavior), now safe to do since
-    v0.1.17 added unconditional logging -- a failure here is diagnosable
-    now instead of silent. Also switched the searched typeface to DejaVu
-    Sans Mono, matching Pico8FavsSorter's exact font list and look
-    (confirmed directly from Favs Sorter's actual source, not guessed):
-      DejaVuSansMono.ttf -> DejaVuSans.ttf -> TTF/DejaVuSansMono.ttf ->
-      FreeMono.ttf -> LiberationMono-Regular.ttf (two path variants) ->
-      bundled assets/font.ttf (now also DejaVu Sans Mono, swapped from
-      the previous bundled DejaVu Sans) as the final fallback.
-    Bundled font kept as the LAST resort (not removed) -- this is the
-    one thing standing between "text renders" and the exact blank-UI
-    bug this device already hit once. Verified both paths: system-path
-    resolution (this dev sandbox has DejaVuSansMono.ttf) and the bundled
-    fallback (forced FONT_PATH to the bundled file directly) both render
-    correctly with no crash.
-    Still open: the menu popup / hint bar scaling with reading font size
-    and overflowing off-screen at larger sizes (diagnosed, not yet
-    fixed -- holding per explicit request until other items are
-    gathered), and the image-loading-only-on-scroll report (not yet
-    investigated).
-  v0.1.18 -- Two items, both grounded in evidence the person actually
-    provided (crash log + screenshots), not assumptions:
-    (1) CONFIRMED (not theorized) by picoreader_crash.log: FONT_PATH
-        resolved to the bundled assets/font.ttf and text now renders
-        correctly on-device. v0.1.17's diagnostic logging did its job.
-        Why the original v0.1.0 (identical font-path code, no bundled
-        font) apparently worked before remains unexplained and is being
-        left alone rather than guessed at further -- not worth chasing
-        now that this build works, but noted here so it isn't silently
-        forgotten.
-    (2) Fix: inconsistent Bible chapter-link highlighting, diagnosed
-        directly from a real screenshot (Exodus chapter grid: 10, 13, 14
-        highlighted; 28, 29, 30, 31 in the same row plain white) rather
-        than guessed at. Root cause: v0.1.5's whitespace-collapse fix
-        (epub_engine.py's emit_text()) collapsed whitespace WITHIN each
-        text/tail fragment independently, but not ACROSS fragment
-        boundaries -- so a table row's trailing whitespace-only tail
-        followed by the next row's leading whitespace each collapsed to
-        one space separately, concatenating into a double-space in the
-        final page text (confirmed: exactly one double-space per <tr>
-        boundary, matching the table's 5-links-per-row structure).
-        main.py's line-wrapper then silently re-collapsed each of those
-        double-spaces back to one when reconstructing the visual line
-        (word-join with " ".join(), which drops the empty string a
-        double-space produces on split) -- permanently desyncing
-        character offsets, and therefore link span positions, from that
-        point forward in the paragraph. Worse with each subsequent row
-        as the drift compounded, matching the reported pattern exactly.
-        Fixed emit_text() to also collapse across fragment boundaries
-        (skip a leading space if the previously-emitted text already
-        ended in one). Verified: 0 double-spaces and 0 uncovered link
-        characters remain across all 61 chapter-nav pages in the whole
-        Bible (was checking one page's worth of manual evidence before;
-        now checked exhaustively). Regular prose paragraphs (Psalm 91,
-        Genesis) reconfirmed unaffected.
-    Still pending clarification from the person: what specifically
-    looked "nicer" about Pico8FavsSorter's font rendering, for
-    comparison -- not acted on without more detail, per explicit
-    instruction to ask rather than assume.
-  v0.1.17 -- DIAGNOSTIC BUILD, not a confirmed fix. Correction to
-    v0.1.16 below: that entry stated the missing-bundled-font theory as
-    a confirmed root cause. It wasn't confirmed -- it was a plausible
-    theory built from reading the code, presented with more certainty
-    than the evidence supported. The person directly disproved it:
-    the ORIGINAL v0.1.0 (still sitting in project knowledge, byte-for-
-    byte identical FONT_PATHS/FontManager/render_text to what shipped
-    in v0.1.16) reportedly showed text working, and /tmp/picoreader_
-    crash.log doesn't exist on the device at all -- meaning no
-    exception has ever been logged, this specific failure mode included.
-    Reported symptom (still unexplained): background/highlights/images
-    all render correctly, app runs and responds normally (book opens,
-    chapters scroll, menu opens), but literally zero text renders
-    anywhere -- and the gaps between images are short, suggesting line
-    layout/height IS being computed from real font metrics, just
-    nothing visible gets drawn.
-    This build adds real diagnostics instead of another guess:
-    - TTF_Init result logged unconditionally (OK, or the SDL error).
-    - FONT_PATH resolution logged unconditionally, not just on failure.
-    - render_text() now logs (once per failure type, to avoid flooding)
-      if TTF_RenderUTF8_Blended returns NULL, if
-      SDL_CreateTextureFromSurface returns NULL, or if SDL_RenderCopy
-      returns a nonzero (error) code -- covering every step between
-      "font handle exists" and "pixels actually copied to the screen."
-    - COL_TEXT/COL_BG values logged once at startup, to rule out a
-      color/alpha mixup without more speculation.
-    Bundled font and reordered FONT_PATHS from v0.1.16 are kept in (they
-    can only help, not hurt), but this build should be treated as a
-    request for real evidence, not a claim that the blank-text issue is
-    resolved. Next step: run this on-device, reproduce the blank text,
-    and share whatever /tmp/picoreader_crash.log contains -- that
-    determines what actually needs fixing.
-  v0.1.16 -- [SEE CORRECTION ABOVE] Attempted fix for a blank-UI report (background
-    colors, highlights, and images rendered fine, but zero text
-    anywhere -- no menu labels, no book content, nothing). Root cause:
-    FONT_PATHS only listed standard desktop-Linux font locations
-    (/usr/share/fonts/truetype/dejavu/...), none of which exist on
-    muOS's minimal embedded Linux. The intended fallback
-    (assets/font.ttf) was never actually bundled into any package this
-    whole project -- every dev-machine test happened to have DejaVu Sans
-    already installed system-wide, so this was never caught locally.
-    render_text() silently no-ops when font is None (`if not font: return
-    0`), with zero logging -- exactly matching "images and highlights
-    work, but no text at all."
-    Fixed:
-    - Actually bundled DejaVu Sans (assets/font.ttf, ~760KB) into the
-      package this time, plus its license file (permissive, explicitly
-      allows redistribution/embedding in software -- verified before
-      including it).
-    - Reordered FONT_PATHS to check the bundled font FIRST, falling back
-      to system paths only if that's somehow missing -- so this can't
-      depend on the device's font layout at all going forward.
-    - Added crash-log diagnostics for BOTH failure modes that were
-      previously silent: no font found at all, and TTF_OpenFont failing
-      even with a valid path (corrupt file, bad format, etc.) -- the
-      latter needed SDL_GetError(), not TTF_GetError(), since SDL2_ttf
-      doesn't export its own error function and reports through the
-      shared SDL error string. Confirmed this the hard way: my first
-      attempt called a nonexistent TTF_GetError symbol, which would have
-      crashed on exactly the failure path it was meant to diagnose --
-      caught via direct ctypes testing before shipping, not after.
-    Verified: forced a font-open failure with an invalid file and
-    confirmed a real, readable message now lands in the crash log
-    instead of silence; confirmed the bundled font resolves first and
-    renders correctly end-to-end.
-  v0.1.15 -- Feature: bookmark backup/restore via Menu > Storage.
-    - "Backup Bookmarks Now" writes a timestamped snapshot of every
-      book's bookmarks to a new backups/ folder -- deliberately a
-      sibling of library/ and data/ (not buried inside data/) so it's
-      easy to find and copy off the device with a file manager. Non-
-      destructive/instant (only ever adds a file), so no confirm needed.
-      Keeps only the 10 most recent backups so this can't grow
-      unboundedly like everything else this session has been careful
-      about.
-    - "Restore Latest Backup" merges (does NOT blindly overwrite) the
-      newest backup into live data -- per book, per (file, anchor, label)
-      entry: if both a live and backed-up version exist, keep whichever
-      has the later timestamp; otherwise add it. Still respects
-      MAX_BOOKMARKS_PER_BOOK=20 by keeping the most recent entries per
-      book after merging. Confirm-armed (press A twice) since it does
-      modify live data, unlike the backup action.
-    - Storage screen now also shows backup count and the most recent
-      backup's timestamp.
-    Verified end-to-end: backed up 2 real bookmarks, simulated data loss
-    by deleting bookmarks.json entirely, restored -- both came back
-    correctly. Then added a third bookmark AFTER that backup and
-    restored the (now-older) backup again to confirm the merge doesn't
-    clobber newer local changes -- all three bookmarks survived.
-  v0.1.14 -- UI/stability review across every screen, requested
-    specifically to find missing usability features and edge cases (not
-    tied to a single bug report). Found and fixed:
-    (1) Feature: Chapters screen always opened at the very top of the
-        list, regardless of where you were actually reading -- for a
-        66-book Bible or 741-day daily text, that meant re-navigating
-        from scratch every time. Added
-        App._toc_index_for_current_position(), which finds the TOC entry
-        nearest-at-or-before the current spine position (same pattern
-        already used for bookmark labels), so Chapters now opens
-        scrolled to "you are here." Verified: opened from Psalm 91,
-        Chapters now lands on index 63 ("Psalms") instead of index 0.
-    (2) Feature: UP/DOWN on every list screen (Menu, Library, Chapters,
-        Bookmarks, Storage) now wraps around top<->bottom instead of
-        just clamping at the ends. Also fixed a latent bug this touched:
-        the old clamp pattern (min(n-1, ...)) would have produced index
-        -1 for an empty list (0 bookmarks/chapters), which Python
-        silently accepts as "last element" on list indexing rather than
-        erroring -- not currently reachable with any real book tested,
-        but a real landmine for a future edge case. Now guarded to 0 for
-        n=0 instead.
-    (3) Feature: "Font Size +/-" gave zero feedback -- no indication of
-        the current size or that you'd hit the min/max. Now shows a
-        status toast ("Font size: 24pt", or "... (largest)"/"(smallest)"
-        at the bounds). Confirmed it displays correctly through the Menu
-        overlay, which draws the reader (where toast rendering already
-        lived) as its background.
-    (4) Fix: only the Chapters screen truncated long text; Library and
-        Bookmarks didn't, so an unusually long title/label could run off
-        -screen (SDL clips it safely -- not a crash -- but looks broken,
-        and on Bookmarks could push the timestamp off-screen entirely).
-        Added the same truncation pattern to both.
-    Reviewed but found no issues: flatten_toc()'s recursion is bounded by
-    TOC nesting depth (real books never exceed ~10 levels vs Python's
-    1000-frame default limit) -- not a practical stack-overflow risk.
-  v0.1.13 -- Real-world test pass against 5 newly-provided sample epubs
-    (lffi, od, rr, lfb, es26 -- a brochure, a small book, two larger
-    illustrated books, and the previously-fixed daily-text booklet) plus
-    one non-epub upload (a .jwpub file), covering library scan/sort,
-    chapter navigation, linking, and images. Found and fixed:
-    (1) Real bug: silently opening an incompatible file (tested with a
-        .jwpub renamed to .epub -- confirmed via inspection that .jwpub
-        is a fundamentally different container format, manifest.json +
-        contents, no OPF/META-INF at all, not just a malformed epub) did
-        nothing visible -- open_book() already failed safely internally,
-        but gave the person zero feedback, so pressing A just looked
-        like the button didn't work. Added status-toast feedback (and
-        toast rendering support to the Library screen, which didn't have
-        any before) for both known open_book failure paths.
-    (2) Real bug found via testing, NOT hypothetical: JPEGs using restart
-        intervals (DRI marker) failed to decode -- confirmed via a real
-        sample book (lffi_E.epub) where this hit 37 of 49 images (75%).
-        The decoder had a previous defensive NotImplementedError for
-        this rather than risk producing corrupted pixels, with a correct
-        implementation already partially started downstream (_decode_scan
-        already threaded restart_interval through and called
-        reset_byte_align() at each boundary) -- but reset_byte_align()
-        cleared the bit-buffer state without ever advancing pos past the
-        2-byte restart marker itself, meaning if the early fail hadn't
-        been there, decoding would have silently corrupted every image
-        that actually used restart intervals. Fixed reset_byte_align()
-        to correctly consume the marker's second byte (the leading 0xFF
-        is already consumed when the marker is first detected during
-        bulk-fill, but the marker-type byte itself was only peeked, not
-        consumed) and removed the now-safe-to-remove NotImplementedError.
-        Verified by actually decoding and visually inspecting several of
-        the previously-failing images at full resolution (not just
-        checking for "no crash") -- clean, correct output, no artifacts
-        at restart boundaries. Re-verified all 49/49 images in lffi now
-        succeed (up from 12/49), sampled 109+65 images across lfb_E.epub
-        and rr_E.epub with zero further failures, and reconfirmed non-
-        restart-interval images (everything in NWT/Watchtower/es26) are
-        completely unaffected -- reset_byte_align() is only ever called
-        from the restart-interval branch, so books without DRI markers
-        never touch this code path at all.
-    (3) Fix: a permanently-failed image (like the DRI ones before the
-        fix above, or any future genuine decode failure) showed "Loading
-        image..." forever, indistinguishable from one that's just slow.
-        get_image_texture() now returns a distinct "error" sentinel when
-        a decode has permanently failed with nothing cached to fall back
-        on, and the reader shows "Image unavailable (unsupported JPEG
-        features)" instead. Confirmed has_pending_image_updates() already
-        correctly excluded the "error" state, so this was never a
-        battery-drain risk, just a misleading message.
-    Chapter navigation (L2/R2), library sort, and TOC/link-following all
-    checked out correctly on lffi/od/rr/lfb with no further issues found
-    -- od_E.epub's unusually high link count (2884 links in a 54-file
-    book) was inspected and confirmed legitimate (a dense scripture/
-    subject index), not a parsing bug.
-  v0.1.12 -- Fix: L2/R2 chapter navigation jumped by full months instead
-    of by day in daily-text publications (reported against a real
-    "Examining the Scriptures--2026" epub). Root cause: this book has no
-    chapterN-style structural anchors (that's Bible-specific), so
-    _build_chapter_nav_points() fell through to its TOC fallback -- but
-    this book's TOC only lists the 12 months (17 entries total incl.
-    front matter), even though every single day is genuinely its own
-    spine file (741 spine files total; "-split" suffixes here mean a new
-    day, NOT pagination-within-a-chapter like they do in the Bible epub
-    -- confirmed by actually reading the page content, not just
-    filenames: "...-split2.xhtml" opens with "Friday, January 2").
-    Added a third detection strategy: JW daily-text publications reliably
-    open each entry with a weekday name ("Thursday, January 1", "Friday,
-    January 2", ...) -- a distinctive signal essentially never seen at
-    the start of a Bible chapter or magazine article. Deliberately gated
-    to only run this extra per-spine-file scan when the TOC already
-    looks suspiciously coarse relative to the spine (fewer than 10% as
-    many TOC points as spine files, on a book with >50 spine files) --
-    so it can never fire for, and can't risk affecting, books that
-    already resolve correctly via the first two strategies. First
-    version of the regex was anchored at position 0 and missed all 12
-    first-of-month days (each has a "January" heading before the weekday
-    line); caught via testing (352/365 matches instead of ~365) and
-    fixed by searching a wider window instead of matching at the start.
-    Verified end-to-end with real button presses on the real file: 365
-    daily nav points found (one full year, correct), R2 now steps
-    Jan 2 -> Jan 3 -> Jan 4 -> Jan 5 -> Jan 6 one day at a time, L2
-    correctly reverses. Reverified the Bible (1,190 points, still via
-    chapterN anchors, completely unaffected) and a Watchtower issue
-    (9 points/19 spine files -- well above the 10% gating threshold, so
-    the new scan never even runs for it) to confirm no regression.
-  v0.1.11 -- Storage screen: manual cache management, none of which had
-    a UI before (the backend functions -- image_cache_size_bytes(),
-    orphaned_bookmark_book_paths(), clean_orphaned_bookmarks(),
-    clear_image_cache(), and ImageLoader's disk_cache_enabled flag --
-    already existed from the previous session but were never wired to
-    anything reachable in the app). Added via Menu > Storage:
-    - Live stats: current image cache size on disk, count of orphaned
-      bookmark sets (from deleted books), disk cache on/off state.
-    - "Clear Image Cache" -- deletes every on-disk cache file and clears
-      both in-memory caches (ImageLoader._results and the App's SDL
-      texture cache), so nothing stale lingers in RAM either. Confirm-
-      armed (press A twice) using the same pattern already established
-      for bookmark deletion, so a stray press can't wipe it.
-    - "Clean Up Orphaned Bookmarks" -- removes bookmark entries for
-      books no longer in the library. Also confirm-armed, since this
-      touches the person's own data, not disposable cache.
-    - "Toggle Disk Cache (RAM-only mode)" -- flips ImageLoader's
-      disk_cache_enabled LIVE (no restart needed) and persists the
-      choice to settings.json for next launch. With it off, decoded
-      images are never written to disk at all -- pure RAM operation,
-      still bounded by MAX_INMEMORY_IMAGES.
-    Verified all four against real data: cleared a real 3.4MB cache
-    (12 files -> 0, in-memory caches confirmed empty after); created a
-    genuine orphaned bookmark by deleting a book, confirmed cleanup
-    removed exactly that entry; toggled RAM-only mode and confirmed
-    zero disk writes while viewing images that still loaded correctly
-    into memory.
-  v0.1.10 -- Bounded image memory, plus a real correctness bug found
-    while implementing it (not a hypothetical -- caught by testing):
-    (1) Fix: the shared ImageLoader keyed cached images purely by their
-        INTERNAL epub path (e.g. "OEBPS/images/cover.jpg") with no book
-        identifier at all. Since ImageLoader is shared across every book
-        opened in a session, two different books that happened to reuse
-        the same internal image path (common in EPUB packaging) would
-        have silently collided -- one book showing another's cached
-        image, both in memory and on disk. Added book_id() (same
-        derivation the anchor cache already used) and namespace every
-        image-cache key by it via a new App._img_key() helper, covering
-        ImageLoader.get/request/has_full_disk_cache/is_upgrading/
-        is_full_res, the prefetch path, and the App's own SDL-texture
-        cache. Verified: the same internal path in two different books
-        now produces two different cache keys.
-    (2) Feature: deleting a book's epub file used to leave its image
-        cache, anchor cache, and pin entry sitting on disk forever with
-        nothing that could ever reference them again. scan_library()'s
-        existing stale-entry cleanup (which already handled the title/
-        metadata cache) now also globs and removes {book_id}__* files
-        from the image cache and the book's anchor_cache/{book_id}.json,
-        and drops its pinned.json entry. Caught and fixed a real bug
-        during testing: the on-disk pinned.json purge wasn't being
-        reflected back into the already-loaded in-memory App.pinned set,
-        so a deleted-but-still-pinned book would silently un-pin on disk
-        but still show as pinned in the running app until restart --
-        refresh_library() now reloads pinned state from disk after
-        scanning. Verified end-to-end: copied a book in, viewed/cached
-        its images, pinned it, deleted the file, rescanned -- all 12
-        cache files and the pin entry were gone, in memory and on disk.
-    (3) Feature: ImageLoader._results (the in-memory decoded-image cache)
-        grew unboundedly for the entire life of the app before this --
-        unlike the App's own SDL-texture cache, which already had a
-        24-entry LRU cap. Added MAX_INMEMORY_IMAGES=60 with the same
-        OrderedDict-based LRU pattern (~15-25MB of RAM at typical real
-        image sizes). Eviction only runs on fully-resolved entries, never
-        one still "loading" mid-decode. Verified: pushing 90 entries in
-        correctly trims to 60, oldest evicted first.
-  v0.1.9 -- Two more image-loading optimizations, both verified against
-    real epub content:
-    (1) Fix: get_image_texture() and the next-page prefetch were both
-        unconditionally reading the raw JPEG bytes out of the epub zip
-        (potentially decompressing a DEFLATE-stored entry) EVERY time an
-        image was first requested in a session -- even when the decoded
-        result was already sitting in the on-disk .rgb cache from a
-        previous session, about to make that zip read pointless.
-        ImageLoader.has_full_disk_cache() lets both call sites skip the
-        zip read entirely and pass jpeg_bytes=None through the normal
-        async request() queue (kept on the background worker thread, not
-        blocking the render loop) when a disk-cache hit is already known.
-        Verified against a real Watchtower article: reopening it in a
-        fresh App instance with a warm disk cache dropped total image
-        load time from 3.76s to 0.02s.
-    (2) mini_jpeg.py's IDCT basis matrix (trig-heavy, but only depends on
-        scale_n, of which there are just 8 possible values) was being
-        rebuilt from scratch on every single decode_jpeg() call, even
-        when several images on the same page share the same scale_n.
-        Added @functools.lru_cache(maxsize=8) -- pure function, safe to
-        cache (verified _idct_scaled() only reads from it, never
-        mutates), confirmed identical decode output before/after.
-    Also discussed but NOT implemented (bigger scope, flagged for a
-    future session if wanted): switching the single-threaded ImageLoader
-    worker to a multiprocessing pool for true parallel decode across
-    CPU cores (the current single-worker-thread design is correct for
-    threads specifically, since CPU-bound Python work is GIL-serialized
-    anyway -- processes could actually help but need muOS/fork
-    verification first), and bounding ImageLoader._results in memory
-    (currently grows unboundedly for the life of the app, unlike the
-    already-bounded _image_textures LRU).
-  v0.1.8 -- Feature: Library sorting and pinning, none of which existed
-    before (books were always plain filename order). Verified against
-    the real library directory with a mix of authors and mtimes:
-    - Y on the Library screen cycles four sort modes: Title A-Z,
-      Author A-Z (no-author books sort last, not first), Last Read
-      (pulled from the same bookmarks.json __lastpos__ timestamp already
-      used for "resume reading" -- never-read books sort last), and
-      Recently Added (a NEW first_seen timestamp added to
-      library_cache.json, deliberately kept stable across rescans/edits
-      so it doesn't reorder every time a file's mtime changes for an
-      unrelated reason).
-    - X pins/unpins the selected book. Pinned books float to the top
-      under every sort mode, still sorted among themselves by whichever
-      mode is active, and are marked with a "star" prefix. Persisted to
-      a new pinned.json, independent of the sort mode itself.
-    - Author extraction (dc:creator, same regex approach as the existing
-      dc:title extraction) added to the library scan/cache.
-    - Verified: pinning a book keeps it first across all four sort
-      modes; unpinning drops it back into normal sorted position;
-      selection follows the pinned book rather than jumping elsewhere
-      when the list re-sorts under it.
-  v0.1.7 -- Bookmark management: duplicate handling, a 20-per-book cap,
-    and deletion, none of which existed before. Verified end-to-end:
-    - Bookmarking the same file+anchor twice now UPDATES the existing
-      entry's label/timestamp instead of creating a duplicate.
-    - Capped at MAX_BOOKMARKS_PER_BOOK=20 real bookmarks per book (the
-      internal __lastpos__ "resume reading" marker doesn't count against
-      this). Attempting to add past the cap is refused with a status
-      message telling the person to delete one first, rather than
-      silently failing or silently growing forever.
-    - X on the Bookmarks screen now deletes: first press arms the
-      selected row (shown in red with "Press X again to delete, or B to
-      cancel"), second press on the same row actually deletes it. Any
-      navigation (UP/DOWN/L/R/Y) or B cancels the pending delete instead
-      of accidentally deleting the wrong row.
-    - Added a lightweight status-toast system (App.status_msg /
-      set_status()) since none existed -- used here for "Bookmarked...",
-      "Bookmark updated...", "Bookmark limit reached...", and "Bookmark
-      deleted" feedback, so none of this happens silently. The main loop
-      now also keeps redrawing while a toast is showing so it disappears
-      on schedule instead of lingering until the next button press.
-    - Bookmarks screen header now shows "BOOKMARKS (n/20)".
-    Tested with a real add/duplicate/cap-to-20/delete/cancel sequence
-    against the actual bookmarks.json flow.
-  v0.1.6 -- Feature: L2/R2 on the Chapters screen now jump to the
-    previous/next "real" section (Bible book or magazine article)
-    instead of a fixed row count -- a simpler alternative to a numeric
-    keyboard-entry screen for long lists like the Bible's 66 books.
-    First attempt used TocEntry.level to detect section boundaries, but
-    this epub's TOC turned out to have NO nesting at all (every entry is
-    level 0), so that approach silently did nothing useful -- caught via
-    testing against the real file before shipping. Fixed by using a
-    title-pattern heuristic instead: each Bible book appears as two
-    consecutive entries ("Genesis Outline" then "Genesis"), so L2/R2 skip
-    the "<Name> Outline" summary pages and land only on the real
-    book/article entry. Verified against the real NWT TOC: R2 from
-    Genesis correctly steps Exodus -> Leviticus -> Numbers -> Deuteronomy
-    -> Joshua -> Judges, one full book per press.
-  v0.1.5 -- Four fixes from real-device feedback, all verified against the
-    real NWT and Watchtower epubs:
-    (0) CRITICAL SELF-FIX: an earlier edit this session had accidentally
-        merged draw_toc() and draw_bookmarks() into one function, deleting
-        the "def draw_bookmarks(...)" header entirely -- opening the
-        Bookmarks screen would have crashed with NameError. Caught and
-        fixed before shipping; verified both screens render standalone.
-    (1) Fix: chapter-link pages like the Psalms "1 2 3 4 5 / 6 7 8 9 10..."
-        grid only used a small strip of screen width. Root cause: that
-        page's source HTML is a real <table> (5 links per <tr>), and the
-        raw XML's pretty-printed "\r\n" between tags was being emitted as
-        literal hard line breaks instead of being collapsed to a space
-        like normal HTML whitespace handling -- so every table row was
-        forced onto its own screen line no matter how much width was
-        free. Added whitespace-run collapsing (epub_engine.py) matching
-        standard HTML rendering. Verified: the Psalms grid went from 33
-        wrapped lines to 8, now using the full screen width.
-    (2) Fix: a real, pre-existing bug (not something from this session)
-        in draw_reader()'s image handling -- the loop used ONE variable
-        for both "how many visual rows drawn so far" (row, which jumps by
-        IMG_BOX_ROWS=14 for an image) and "which _lines[] entry to render
-        next" (also called row, via app.scroll+row). Since an image is
-        only ONE entry in _lines but consumes 14 visual rows, every image
-        was silently skipping up to 13 lines of real text right after it.
-        Verified on a real Watchtower article: an image at the top of the
-        page was hiding the article's title, byline, and opening lines
-        entirely. Fixed by tracking row (visual) and li (_lines index) as
-        separate counters; same fix applied to visible_span_indices() so
-        link-selection scope matches what's actually drawn. This is very
-        likely the cause of the reported "text moving around" symptom.
-    (3) Feature: image decode is faster. Added peek_jpeg_size() to
-        mini_jpeg.py (reads just the SOF0 width/height, no entropy
-        decode -- ~0.01ms vs 300ms+ for a real decode) so ImageLoader can
-        pick a decode resolution sized to the actual on-screen box
-        instead of always using a fixed scale. Also lowered the target
-        box used for that resolution pick (680x560 -> 480x360), trading
-        some sharpness for real speed per direct feedback, and skips the
-        separate "instant thumb, then upgrade" pass entirely for images
-        that land at scale_n<=4 (most real photos) since paying for a
-        second full entropy-decode pass just to show a placeholder for a
-        fraction of a second wasn't worth it. Measured against every real
-        image in a full Watchtower issue: 39% less total decode time
-        (up to 61% for an oversized cover image that was previously
-        always decoded at a fixed resolution regardless of its actual
-        size).
-    (4) Feature: LEFT/RIGHT now do fine (always 1-step) link navigation,
-        as the docstring always claimed but was never actually wired up.
-        Complements Y's coarse 10x jump and UP/DOWN's toggleable speed.
-  v0.1.4 -- Three fixes/improvements from real-device feedback, verified
-    against the actual NWT epub:
-    (1) Fix: B (go back) after following a footnote/cross-reference link
-        always snapped to the top of the chapter instead of returning to
-        where you actually were. Root cause: ReaderState.back_stack only
-        ever stored (file, anchor) -- never the in-chapter scroll offset
-        -- so there was nothing to restore. Added a parallel
-        App._scroll_stack pushed everywhere a history-tracked goto()
-        happens (follow_selected, Chapters-screen jump, Bookmarks-screen
-        jump) and popped in go_back(); reset alongside back_stack when a
-        new book is opened. Verified: scroll=3 preserved across a real
-        footnote round-trip on Psalm 91.
-    (2) Fix: bookmarks were labeled with the raw internal spine filename
-        (e.g. "1001061123-split20.xhtml"), which is meaningless -- the
-        save-date shown next to it was the only readable part, making
-        bookmarks look like they were "labeled by date." Added
-        App._current_location_label(), which finds the nearest top-level
-        TOC entry at-or-before the current position (book/section title)
-        and, where available, the nearest structural chapterN anchor (the
-        same index L2/R2 chapter-nav already uses) to produce labels like
-        "Psalms 91" for Bible content, or the article title for
-        magazines. Verified against the real file.
-    (3) Feature: wired up D-PAD LEFT/RIGHT to actually do fine (always
-        1-step) link navigation, matching what the top-of-file docstring
-        already claimed but was never implemented (LEFT/RIGHT previously
-        just duplicated line-scrolling). Gives a natural way to step
-        across a link grid like the Psalms chapter-number list without
-        the coarser UP/DOWN (row-order) or Y-toggled 10x jump.
-  v0.1.3 -- Feature: Y now doubles as a fast-scroll TOGGLE inside the
-    reader itself (not just the Chapters/Bookmarks screens). Pressing Y
-    turns on 10x D-pad movement -- both for stepping through inline
-    links (e.g. a page full of Psalms chapter links) and for plain line
-    scrolling -- and pressing Y again turns it back off. State is shown
-    next to the page-progress %% as "[FAST]" so it's never a silent
-    toggle. No held-button/repeat infrastructure exists in the event
-    loop (SDL_JOYHATMOTION only fires on directional change, not on
-    hold), so a toggle was used instead of a hold-modifier -- simpler
-    and more reliable given the current single-shot event dispatch.
-  v0.1.2 -- Feature: fast-scroll for long Chapters/Bookmarks lists (e.g.
-    the NWT Bible epub's ~1,190 chapter anchors). Y now jumps +10 in the
-    TOC/Bookmarks screens; L/R jump -10/+10 there too (previously unused
-    on those screens). X is now the sole menu-open button in the reader
-    (Y freed up so it isn't double-booked with the new jump-10 action).
-  v0.1.1 -- Fix: crash-log/excepthook install was happening AFTER the
-    `from epub_engine import ...` / `from mini_jpeg import decode_jpeg`
-    imports, so any import-time failure in those modules (syntax error,
-    missing symbol, stdlib behaving differently on the device's Python
-    build) died silently to stderr with nothing written to
-    /tmp/picoreader_crash.log -- muOS has no way to show/save that.
-    Same class of bug as Pico8FavsSorter Fix 11/13. Fixed by moving
-    _boot_log/_excepthook installation to the top of the file, before
-    those imports, and wrapping the imports (plus the DATA_DIR/
-    LIBRARY_DIR os.makedirs calls) in their own try/except that logs
-    and exits cleanly instead of crashing bare. Also added
-    threading.excepthook (a separate hook from sys.excepthook on
-    Python 3.8+) so a crash inside ImageLoader's background worker
-    thread reaches the crash log too, and wrapped App(renderer)
-    construction in main() with explicit crash logging for a clear,
-    labelled log entry if init itself fails.
+v0.1.83 -- Two real bugs found via live device testing of native image
+  rendering (Kaleb, "Enjoy Life Forever"/"Courage"/meeting workbooks):
+  (1) First cover image not appearing until a page turn/dpad press.
+  Root cause: a race in the main loop between the render thread and
+  ImageLoader's worker thread. The old order was "draw frame, THEN set
+  app.dirty=False". The worker thread's on_update() callback (fires the
+  instant a background decode lands, see ImageLoader._worker_loop())
+  could land mid-draw -- entirely plausible now that native_jpeg
+  decodes near-instantly -- setting dirty=True while the CURRENT frame
+  was still drawing the "Loading image..." placeholder from before the
+  decode finished. The post-draw `app.dirty=False` then silently wiped
+  that signal, and has_pending_image_updates() no longer reported
+  anything pending (the decode was already done), so the loop went
+  idle with the completed image never actually painted -- only a
+  button press (which force-sets dirty=True) revealed it. Present with
+  mini_jpeg too but rare there; native's speed made the race land
+  almost every time. Fixed by clearing dirty BEFORE the draw call
+  instead of after, so a mid-draw dirty=True survives into the next
+  loop iteration (worst case: one harmless extra redraw).
+  (2) Yellow selection-border overlapping/crossing the image edge on
+  some images, at some font sizes (most visible with near-16:9 photos,
+  since that's also ImageLoader.TARGET_BOX_W/H's ratio). Root cause:
+  the image was scaled to fit the FULL box_w x box_h, while the
+  selection border/panel are drawn INSET from that box -- so an image
+  whose aspect ratio nearly matched the box could scale right up to
+  (or past) the border line instead of sitting inside it with a clean
+  margin. Fixed by scaling the image against the same inset region the
+  border/panel actually occupy (pad_x=_sx(4), pad_y=_sy(4)), so there's
+  always real margin between the image edge and the border, at any
+  font size.
+
+v0.1.82 -- Follow-up now that v0.1.80's native decode is confirmed
+  working on-device ("full native instantaneous image rendering"):
+  (1) Disk image cache now defaults to OFF (RAM-only) for anyone who
+  hasn't already set the toggle. The 500MB on-disk cache existed to
+  avoid re-paying mini_jpeg.py's slow decode across app restarts --
+  with native decode instant, that benefit is now negligible, while SD
+  card write wear and 500MB of storage for near-zero benefit is a real
+  cost. RAM-only (MAX_INMEMORY_IMAGES=80) still makes same-session
+  scrolling instant. Still user-togglable from Storage for anyone who
+  wants persistence (e.g. relying on the mini_jpeg fallback on a device
+  without libSDL2_image, where re-decode cost is real again).
+  (2) "Pre-render Book Images" is now a no-op with an explanatory
+  message ("not needed -- native fast image decode is already active")
+  whenever native_jpeg.available is True, both on the Storage screen
+  label and on button press. Its whole purpose was front-loading
+  mini_jpeg.py's slow decode so it wasn't happening mid-read; with
+  decode already instant there's nothing left to front-load. Kept as a
+  real, working feature for the mini_jpeg fallback path, where it's
+  still genuinely useful.
+  (3) Updated AI notes/changelog: v0.1.79's now-resolved "needs
+  on-device confirmation" caveat trimmed (superseded by v0.1.80's
+  confirmed fix); v0.1.80's entry and native_jpeg.py's own docstring
+  both now note the real on-device confirmation instead of just the
+  dev-machine benchmark.
+
+v0.1.81 -- Raised ImageLoader.TARGET_BOX_W/H (the size used to pick a
+  decode resolution) from 480x272 to 720x405, exact 16:9 at the device's
+  full native width. That old, smaller size existed specifically to
+  keep mini_jpeg.py's pure-Python decode fast, at the cost of decoding
+  images well under their real on-screen size and upscaling (visible
+  blur). With native_jpeg.py (v0.1.80) decoding at real C speed, that
+  tradeoff no longer applies -- decode cost barely depends on this
+  constant now, only the final downscale step does, and that's cheap at
+  any size. Deliberately a bit WIDER than the real on-screen box
+  (SW-40=680) so the on-screen render does a small downscale instead of
+  an upscale. Verified real impact against mwb_E_202507.epub's actual
+  images before shipping (not estimated): most 1200x675 photos move
+  from scale_n 4->5 (592KB->925KB decoded each); worst case at
+  MAX_INMEMORY_IMAGES=80 goes from ~44MB to ~67MB -- comfortably inside
+  the 1GB budget. mini_jpeg.py's fallback path honors the same constant,
+  so quality improves there too if it's ever the one running.
+
+v0.1.80 -- The actual fix for the image-decode freeze (v0.1.78/v0.1.79
+  made the symptom fairer, this removes the cause). Kaleb found via SFTP
+  file browsing that the RG CubeXX-H's muOS build ships libSDL2_image.so
+  and libjpeg.so at /usr/lib already -- not something we'd be adding to
+  the device, a library muOS already installs for its own use (mpv,
+  other apps). Added native_jpeg.py: a ctypes bridge (same technique
+  already used for core SDL2) that decodes JPEGs via that real C
+  library instead of mini_jpeg.py's pure-Python decoder. A C decode
+  doesn't hold Python's GIL for the whole decode the way mini_jpeg.py's
+  loop does regardless of how many yield points get added to it --
+  that's the actual root cause the last two versions were working
+  around rather than fixing.
+  Verified end-to-end on a dev machine (real libSDL2_image, not a
+  simulation) against all 18 real images in mwb_E_202507.epub: exact
+  same dimensions after fixing an off-by-one (mini_jpeg's scale rounds
+  UP -- (dim*n+7)//8 -- an initial pass here rounded down and every
+  non-multiple-of-8 image came out 1px off; caught by cross-checking
+  against mini_jpeg's own output before this went anywhere near
+  main.py). Colors/channels confirmed correct (0/325 sample points
+  differed at full resolution). ~143x faster than mini_jpeg even
+  decoding at full resolution vs. mini_jpeg's already-downscaled output
+  (0.070s vs 9.955s for all 18 images) -- on the slower ARM CPU this
+  device actually has, the gap should be at least as large.
+  CONFIRMED ON-DEVICE (same session, after v0.1.81's resolution bump
+  shipped alongside it): Kaleb's exact words, "full native instantaneous
+  image rendering." The freeze reported in v0.1.76-v0.1.79 is resolved,
+  not just reduced -- libSDL2_image loads and decodes correctly on the
+  real RG CubeXX-H hardware, not just the dev-machine benchmark above.
+  mini_jpeg.py is NOT removed -- it's the automatic fallback if
+  native_jpeg.py can't load libSDL2_image for any reason (different
+  muOS build, missing library, decode failure on a specific file).
+  decode_jpeg() in main.py now tries native_jpeg first and falls back
+  silently per-call; verified both paths directly (native available ->
+  native path used; native unavailable -> pure-Python path used
+  automatically, same correct output either way). No other code
+  changed -- ImageLoader and everything downstream of decode_jpeg()
+  needed zero changes since the (rgb_bytes, w, h) contract is identical.
+
+v0.1.79 -- Follow-up to v0.1.78: Kaleb confirmed on real hardware that
+  the freeze is shorter but still real (several seconds), happens during
+  LIBRARY/pre-caching too (not just reading), and -- the worse practical
+  symptom -- queued button presses during a stall all fired at once the
+  instant it recovered, cascading B presses into backing all the way out
+  of the app. Three changes:
+  (1) mini_jpeg.py: tightened the v0.1.78 yield points from "every 4th
+  row" to every row (all four hot loops), and added sys.setswitchinterval
+  (0.001) in main() so CPython forces a GIL handoff opportunity 5x more
+  often (was the 5ms default). Re-verified byte-for-byte identical output
+  across all 18 mwb_E_202507.epub images with negligible overhead
+  (17.43s->17.52s total decode across all 18 real images, ~0.5%).
+  (2) These per-row yields and a shorter switch interval are real,
+  verified-safe improvements on their own, but turned out not to be the
+  actual root cause -- see v0.1.80, which replaced the pure-Python
+  decoder entirely and is what actually fixed this on-device.
+  (3) Fixed the avalanche-quit regardless of whether the stall itself is
+  fully gone: every SDL button/key/hat event carries its own timestamp
+  (SDL_GetTicks() at the moment it fired). The main event-drain loop now
+  drops (doesn't act on) any event older than 350ms versus the current
+  tick count when it's finally processed -- events queued during a stall
+  get silently discarded instead of all firing at once. Doesn't touch
+  genuine fast double-taps.
+
+v0.1.78 -- Fixed a real bug: whole app (ALL input, not just L2/R2) froze
+  for a few seconds whenever a page's image was still decoding, always
+  recovering on its own. Root cause confirmed by direct benchmarking of
+  mini_jpeg.py against real embedded images (mwb_E_202507.epub, July
+  2026 Meeting Workbook): at the app's own auto-picked scale_n, real
+  1200x675 photos cost ~0.9-1.3s each to decode on x86 dev hardware --
+  correspondingly longer on the actual ARM handheld, and mwb pages
+  often carry two images per section decoded back-to-back on one
+  worker thread. mini_jpeg.py is pure Python (no numpy/PIL per this
+  project's no-pip-deps rule), so that whole cost is CPU-bound
+  Python bytecode competing for the GIL against the main thread's SDL
+  event loop -- and evidently not yielding often enough on this
+  hardware to keep input/rendering responsive, despite the decode
+  itself running on a background thread with no locks/joins involved
+  (confirmed via full trace of ImageLoader/request()/_process() --
+  everything already async, ruled out as a locking bug). Fix: added
+  explicit `time.sleep(0)` GIL-yield points every few MCU rows in
+  mini_jpeg.py's four hot pixel loops (_decode_scan, the progressive
+  DC-scan MCU loop, _render_progressive, and both _planes_to_rgb color-
+  conversion loops) -- a pure scheduling hint, costs nothing measurable
+  (verified: patched vs. unpatched decode time within noise on the same
+  18 real images) and produces byte-for-byte IDENTICAL pixel output
+  (verified against all 18 images in mwb_E_202507.epub and 40 baseline+
+  progressive images in nwt_E.epub -- zero mismatches). Does not change
+  total decode time, only how often the main thread gets a chance to
+  run during it.
+
+v0.1.77 -- Three real bugs found via live device testing (nwt_E.epub +
+  es26_E.epub daily text):
+  (1) L2/R2 chapter nav silently dropped any TOC section that fell
+  BETWEEN two chapterN anchor points, or after the last one -- only
+  front matter before the first chapter got its own nav points before
+  this. Confirmed on nwt_E.epub: "Appendix A"/"Appendix B" (real
+  sections between Malachi and Matthew) had zero nav points, so R2 from
+  Revelation 22 (or from inside the appendix via the TOC popup) always
+  jumped to the same neighboring real chapter instead of stepping
+  through appendix pages. Fixed in _build_chapter_nav_points() by also
+  pulling in TOC entries for any spine index in a gap after the first
+  chapter point (mirrors the existing front-matter fix).
+  (2) Same missing-front-matter bug existed independently in the
+  daily-text fallback path -- "Our Christian Life and Ministry Bible
+  Reading Schedule" and "How to Use This Booklet" (es26_E.epub) had no
+  nav points, so R2 from the cover skipped straight to Jan 1. Fixed the
+  same way (front_points-style prepend before the first day entry).
+  (3) Root cause of the hard-freeze when opening that schedule page:
+  the daily-text detection scan called self.doc.get_page() -- a full
+  XML parse + link/style/para-span walk -- on EVERY spine file (740 in
+  es26_E.epub) synchronously in open_book(), before the reader screen
+  could render or process any input. Fast enough on a dev machine to go
+  unnoticed (~0.4s), but long enough on the real ARM device with no SDL
+  events pumped that it looked like a full hang, forcing an L2+R2+SELECT
+  reboot. Fixed by replacing the full parse with self.doc._read() (raw
+  zip-read + decode, no ElementTree) plus a cheap tag-strip regex --
+  same information at ~10x less cost on the dev-machine benchmark.
+  (4) jw_fetch.py: added generate_wp_back_issues() -- Public Watchtower
+  ("wp") previously had NO back-issue browsing at all, only manual code
+  entry. Modeled all three real eras (bi-monthly odd-months 2016-2017,
+  3/year Jan/May/Sep 2018-2021, 1/year irregular-month 2022+), every
+  month individually confirmed live against GETPUBMEDIALINKS before
+  being added -- same bar as AWAKE_BACK_ISSUES. No EPUB exists before
+  Jan 2016 (confirmed 404 for 2015 dates) -- same floor as w/mwb.
+
+v0.1.76 -- (1) jw_fetch.py: added AWAKE_BACK_ISSUES, a hard-coded list of
+  every real Awake! issue from 2016-2025 (28 issues), shown when
+  browsing the Awake! category -- previously Awake! had no back-issue
+  browse list at all, only manual code entry worked. Not a generator
+  like w/mwb because Awake!'s frequency changed twice (6/yr 2016-17,
+  3/yr 2018-21, 1/yr 2022+); each of the 28 entries individually
+  confirmed live against GETPUBMEDIALINKS before being added. Frequency
+  history independently corroborated via Wikipedia's Awake! article.
+  (2) assets/ fonts rebuilt from the official liberationfonts/
+  liberation-fonts GitHub repo at tag 2.1.5 (fontforge build from
+  source) to fix a provenance gap -- FONT_LICENSE.txt previously cited
+  "the fonts-liberation Debian/Ubuntu package," less precise than it
+  should've been. Verified via each file's embedded version metadata
+  (all report "Version 2.1.5"). No rendering changes expected, same
+  official source as before, just corrected provenance.
+
+v0.1.70-75 -- UI polish era: rounded corners on selectors/popups/hint
+  bar (fill_rect_rounded(), CORNER_RADIUS); 5th theme "Adventure" (BMO-
+  inspired); Library empty-state message wrap fix at max Font Size;
+  Theme +/- added to the Library menu.
+
+v0.1.65-69 -- Performance/reliability era: crash-safe image disk cache;
+  CPU throttle for background image decode; fixed prerender progress
+  bar falsely restarting after a crash; _page_text_cache raised 4->200
+  entries (fixed non-sequential scripture-jump lag); _wrapped_cache
+  added (skips repeat SDL_ttf word-wrap on page revisits).
+
+v0.1.57-64 -- JW.org/Gutenberg plugin era: JW category browsing added;
+  several JW pub codes added and live-verified (be/cf/jd/ia/jr/bt/mbs/
+  yb11-17/tracts); Gutenberg SVG-wrapped cover support added; blank-page
+  detection (data/render_issues.log + on-screen note); download screens
+  gained a spinner+elapsed-seconds instead of static "Loading..." text;
+  full-project audit completed (pyflakes clean, 20 real epubs
+  regression-tested, zero blank pages).
+
+v0.1.50-56 -- Font-size scaling era: Global Font Size setting extended
+  to ALL UI text (previously reading text only); fixed roughly a dozen
+  overflow/clipping bugs found through real on-device testing across
+  every screen (Library, Chapters, Storage, hint bar, popups,
+  text-entry, fast-scroll indicator); cache sizes increased (500MB
+  disk / 80 in-memory images); fixed a Bible chapter-navigation cursor
+  bug (selected_span wasn't tracking the actual jump target).
+
+v0.1.36-49 -- Rendering pipeline era: bold/italic rendering added
+  (StyleSpans); progressive JPEG decoding added (mini_jpeg.py v0.2.0);
+  JW paragraph-class rendering (sm/sh/si/sb/sj) added then removed
+  after it caused incorrect italic/indent/grey styling on Bible text;
+  ParaSpan formatting added (superscript/caption/box_rule); get_page()
+  gained its 6th return value; background chapter pre-parsing and a
+  single-lock image status check added (fixed a 3-8s resume lag);
+  bookmarks/resume-reading upgraded to save exact paragraph (char
+  offset) instead of just chapter.
+
+v0.1.1-35 -- Foundation era: crash-safe logging established (moved
+  excepthook install before risky imports, added threading.excepthook);
+  core EPUB parsing/rendering pipeline; bookmarks (with duplicate
+  handling, 20-per-book cap, backup/restore); Library sorting/pinning/
+  delete; fast-scroll on Chapters/Bookmarks lists; button remaps for
+  safer delete-vs-quit handling; optional downloader plugin system
+  added (Gutenberg + JW.org); HTML <table> handling fixed for Project
+  Gutenberg TOC tables; the "li vs row" unit-mismatch bug (see AI NOTES
+  above) fixed after causing images to skip/cut off during paging.
 """
 
 import ctypes
@@ -1941,13 +657,46 @@ threading.excepthook = _thread_excepthook
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from epub_engine import EpubDocument, ReaderState, TocEntry
-    from mini_jpeg import decode_jpeg, peek_jpeg_size
+    from mini_jpeg import decode_jpeg as _decode_jpeg_pure_python, peek_jpeg_size
 except Exception:
     import traceback
     _boot_log("\n--- IMPORT FAILURE (epub_engine / mini_jpeg) ---\n")
     _boot_log(traceback.format_exc())
     _boot_log("--- END ---\n")
     sys.exit(1)
+
+# v0.1.80 -- native_jpeg.py is OPTIONAL, same spirit as the downloader
+# plugins below: the app must work identically whether it's present/
+# loadable or not. It's a ctypes bridge to the system's libSDL2_image
+# (confirmed present on the RG CubeXX-H's muOS build at /usr/lib --
+# Kaleb found it via SFTP file browsing), used to decode JPEGs at real C
+# speed instead of mini_jpeg.py's pure-Python decoder. See native_jpeg.py's
+# own module docstring for the full story (this is the actual fix for the
+# image-decode freeze bug, not just a speed optimization -- a C decode
+# doesn't hold Python's GIL the whole time the way mini_jpeg.py's decode
+# loop does). mini_jpeg.py is NOT being removed: if native_jpeg fails to
+# load OR fails to decode a specific file for any reason, decode_jpeg()
+# below falls straight back to the pure-Python path, per-call, silently.
+try:
+    import native_jpeg
+except Exception:
+    native_jpeg = None
+
+
+def decode_jpeg(jpeg_bytes, scale_n=4):
+    """Drop-in replacement for mini_jpeg.decode_jpeg() with the identical
+    (rgb_bytes, w, h) contract. Tries the native libSDL2_image path first
+    (fast, doesn't hold the GIL); falls back to the pure-Python decoder
+    on any failure -- missing library, decode error, anything. This
+    function is what every other call site in this file uses; neither
+    ImageLoader nor anything else needs to know or care which decoder
+    actually ran."""
+    if native_jpeg is not None:
+        try:
+            return native_jpeg.decode_jpeg_native(jpeg_bytes, scale_n=scale_n)
+        except Exception as e:
+            _boot_log(f"native_jpeg decode failed, falling back to mini_jpeg: {e}\n")
+    return _decode_jpeg_pure_python(jpeg_bytes, scale_n=scale_n)
 
 # ============================================================
 # Optional downloader plugins -- unlike epub_engine/mini_jpeg above,
@@ -2818,27 +1567,29 @@ class ImageLoader:
                                # roughly 20-32MB) -- raised from 60 v0.1.51.
                                # Unbounded before v0.1.48.
 
-    # Target size used only to PICK a decode resolution -- deliberately
-    # smaller than the actual on-screen image box (SW-40 wide, up to
-    # IMG_BOX_ROWS tall) in draw_reader(). This trades some sharpness
-    # (the decoded image gets modestly upscaled to fill the box) for real
-    # decode speed, per direct feedback that large photos were taking too
-    # long. Real numbers from a representative Watchtower issue (1200-
-    # 1800px wide source photos): at the old fixed default (scale_n=4,
-    # ~627ms per image on this dev machine -- correspondingly slower on
-    # the actual ARM handheld) every photo also paid for a separate
-    # thumb-stage decode first (~280ms) even though the full stage
-    # followed immediately after in the same worker pass. With the
-    # 480x360 target that followed, real magazine photos landed at
-    # scale_n 2-4 and skipped the thumb stage entirely (see the <= 4
-    # check in _process()), cutting per-image decode time roughly in
-    # half. Shrunk further to 480x272 per follow-up feedback that Bible
-    # story book cover images (large, often portrait/high-res source
-    # photos) were still slow -- a smaller target box pushes those covers
-    # down to a smaller scale_n too, without a visible quality hit given
-    # they're upscaled to fit the same on-screen box either way.
-    TARGET_BOX_W = 480
-    TARGET_BOX_H = 272
+    # Target size used to PICK a decode resolution. Through v0.1.79 this
+    # was deliberately smaller than the real on-screen image box
+    # specifically to keep mini_jpeg.py's pure-Python decode fast --
+    # images were decoded at well under their display size and upscaled,
+    # trading visible sharpness for speed. That tradeoff no longer makes
+    # sense: native_jpeg.py (real libSDL2_image, ~143x faster per the
+    # v0.1.80 benchmark) decodes the full JPEG regardless of this
+    # constant -- only the final SDL_BlitScaled downscale step depends on
+    # it, and that's cheap at any size.
+    #
+    # v0.1.81: exact 16:9 at the device's full native width (720x405,
+    # 720*9/16=405) -- deliberately a bit WIDER than the real on-screen
+    # box (SW-40=680), so images render with a small lossless-ish
+    # downscale at draw time instead of an upscale. Verified real impact
+    # against mwb_E_202507.epub's actual images (not estimated): most
+    # 1200x675 photos move from scale_n 4->5 (592KB->925KB decoded
+    # each); worst case at MAX_INMEMORY_IMAGES=80 goes from ~44MB to
+    # ~67MB -- comfortably inside the 1GB budget. mini_jpeg.py's
+    # fallback path honors the same constant via the same
+    # _pick_scale_n() call, so quality improves on that path too, just
+    # slower per-image as always.
+    TARGET_BOX_W = 720
+    TARGET_BOX_H = 405
 
     @staticmethod
     def _pick_scale_n(orig_w, orig_h, target_w=TARGET_BOX_W, target_h=TARGET_BOX_H):
@@ -3801,7 +2552,21 @@ class App:
         self.status_until = 0    # updated/limit-reached, delete confirmed, etc.
 
         self._visible_image_keys = set()  # images on the currently-built page
-        self.disk_cache_enabled = load_settings().get("disk_cache_enabled", True)
+        # v0.1.82: default flipped True->False. The 500MB on-disk image
+        # cache existed mainly to avoid re-paying mini_jpeg.py's slow
+        # pure-Python decode across app restarts. With native_jpeg.py
+        # confirmed instant on-device, that benefit is now negligible --
+        # what's left is real cost: SD card write wear and 500MB of
+        # storage for a cache that buys almost nothing. RAM-only
+        # (MAX_INMEMORY_IMAGES=80, ~40-70MB depending on image mix) still
+        # makes scrolling within a session instant either way. Existing
+        # installs that already have a saved "disk_cache_enabled" value
+        # keep whatever they had -- this only changes the default for
+        # people who've never touched the toggle. Still user-togglable
+        # from the Storage screen for anyone who prefers persistence
+        # (e.g. still relying on the mini_jpeg fallback on a device
+        # without libSDL2_image, where re-decode cost is real again).
+        self.disk_cache_enabled = load_settings().get("disk_cache_enabled", False)
         self.images_enabled = load_settings().get("images_enabled", True)
         self.image_loader = ImageLoader(
             IMG_CACHE_DIR,
@@ -3810,6 +2575,9 @@ class App:
             on_update=lambda: setattr(self, "dirty", True),
         )
         self._image_textures = OrderedDict()   # key -> (texture, w, h, is_full_res)
+        self._image_box_rows_cache = {}  # img_key -> IMG_BOX_ROWS or
+                                          # IMG_BOX_ROWS_PORTRAIT (v0.1.84),
+                                          # see _image_box_rows()
         self.MAX_IMAGE_TEXTURES = 24            # bounded LRU: caps GPU texture memory
         self.storage_index = 0
         self.quit_requested = False
@@ -4128,6 +2896,9 @@ class App:
         self._page_text_cache_order.clear()
         self._wrapped_cache.clear()          # v0.1.69: stale on new book
         self._wrapped_cache_order.clear()
+        self._image_box_rows_cache.clear()   # v0.1.84: img_keys are book-
+                                              # namespaced already, but no
+                                              # reason to keep growing it
         self._chapter_nav_points = self._build_chapter_nav_points()
 
     def _build_chapter_nav_points(self):
@@ -4200,7 +2971,36 @@ class App:
                     front_points.append((idx, f, anchor))
                     seen_idx.add(idx)
             front_points.sort(key=lambda p: p[0])
-            return front_points + points
+
+            # v0.1.77 fix: back matter AFTER the last chapterN point (e.g.
+            # nwt_E.epub's "Appendix A"/"Appendix B", each its own real
+            # multi-page section between Malachi and Matthew, or after
+            # Revelation) had no nav points either -- only front matter
+            # was ever prepended. Symptom Kaleb hit: R2 from Revelation 22
+            # (or from anywhere inside an appendix opened via the TOC
+            # popup) always landed on the same neighboring real chapter
+            # instead of stepping through the appendix's own pages,
+            # because bisect_right in _jump_chapter() only ever sees the
+            # points list -- any spine index not in it is invisible to
+            # L2/R2. Same fix shape as front_points: pull in TOC entries
+            # for any spine index that falls in a gap between two
+            # consecutive chapterN points (or after the very last one),
+            # so appendices/back matter get real, steppable nav points
+            # too, wherever in the spine they happen to sit.
+            covered = {p[0] for p in points} | {p[0] for p in front_points}
+            gap_points = []
+            seen_idx = set()
+            for entry in flat:
+                f = entry.href.split("#")[0] if "#" in entry.href else entry.href
+                anchor = entry.href.split("#", 1)[1] if "#" in entry.href else None
+                idx = self.doc.spine_index(f)
+                if (idx != -1 and idx not in covered and idx not in seen_idx
+                        and idx > first_chapter_idx):
+                    gap_points.append((idx, f, anchor))
+                    seen_idx.add(idx)
+            all_points = front_points + points + gap_points
+            all_points.sort(key=lambda p: p[0])
+            return all_points
 
         # fallback: flatten TOC, map each entry's target file to a spine index
         flat = flatten_toc(self.doc.toc)
@@ -4233,23 +3033,64 @@ class App:
             weekday_re = re.compile(
                 r"(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday),",
                 re.IGNORECASE)
+            # v0.1.77 fix: this used to call self.doc.get_page(fname) for
+            # EVERY spine file -- a full XML parse plus link/style/para-span
+            # walk (see EpubDocument.get_page()) -- just to peek at the
+            # first ~80 characters of plain text. On a real daily-text
+            # epub (es26_E.epub: 740 spine files) that's 740 full parses
+            # done synchronously on the main thread during open_book(),
+            # BEFORE the reader screen can render or process any input.
+            # Confirmed the actual freeze Kaleb hit: on the dev machine
+            # this full scan still only takes ~0.4s, but on the real
+            # ARM device (1GB RAM, no JIT) it ran long enough that no SDL
+            # events were pumped for the whole duration -- indistinguishable
+            # from a hang, forcing the L2+R2+SELECT hard reboot. Fix:
+            # read each file's RAW bytes (self.doc._read(), a plain
+            # zip-read + decode -- no ElementTree, no link/style walk) and
+            # strip tags with a cheap regex instead of a real parse. This
+            # is the same information (plain text of the page start) at a
+            # fraction of the cost.
+            tag_re = re.compile(r"<[^>]+>")
             daily_points = []
             for idx, fname in enumerate(self.doc.spine):
                 try:
-                    text, _links, _images, _anchors, _styles, _pspans = self.doc.get_page(fname)
+                    raw = self.doc._read(fname)
                 except Exception:
                     continue
-                # search (not match) within a slightly wider window than
-                # just the first ~40 chars -- the first day of each month
-                # has a "January" heading before the weekday line (e.g.
-                # "January\n \nThursday, January 1"), which an anchored
-                # match at position 0 would miss
-                if weekday_re.search(text[:80]):
+                # only strip the first slice of raw markup -- we only need
+                # ~80 plain-text chars, so there's no need to detag the
+                # whole file
+                snippet = tag_re.sub(" ", raw[:2000])
+                if weekday_re.search(snippet[:200]):
                     daily_points.append((idx, fname, None))
             MIN_DAILY_MATCHES = 20  # a real year's worth is ~300+; this just
                                      # rules out a stray coincidental match
             if len(daily_points) >= MIN_DAILY_MATCHES:
-                return daily_points
+                # v0.1.77 fix: front matter before the first real "day"
+                # entry (cover, title page, the Christian Life and
+                # Ministry Bible Reading Schedule, "How to Use This
+                # Booklet") had no nav points at all -- daily_points only
+                # ever contained the days themselves. Symptom Kaleb hit:
+                # R2 from the cover always jumped straight to Jan 1,
+                # permanently skipping the weekly reading schedule and
+                # how-to-use pages (they were simply invisible to
+                # _jump_chapter()'s bisect, same root cause as the NWT
+                # appendix bug above). Fix mirrors the chapterN branch's
+                # front_points logic: pull in TOC entries whose spine
+                # index falls before the first day, so front matter gets
+                # its own steppable nav points too.
+                first_day_idx = daily_points[0][0]
+                front_points = []
+                seen_idx = set()
+                for entry in flat:
+                    f = entry.href.split("#")[0] if "#" in entry.href else entry.href
+                    anchor = entry.href.split("#", 1)[1] if "#" in entry.href else None
+                    idx = self.doc.spine_index(f)
+                    if idx != -1 and idx < first_day_idx and idx not in seen_idx:
+                        front_points.append((idx, f, anchor))
+                        seen_idx.add(idx)
+                front_points.sort(key=lambda p: p[0])
+                return front_points + daily_points
 
         if toc_points:
             return toc_points
@@ -4936,23 +3777,50 @@ class App:
             return True
         return False
 
+    def _image_box_rows(self, image_span):
+        """Fixed row-reservation for one image: IMG_BOX_ROWS for
+        landscape/square images, taller IMG_BOX_ROWS_PORTRAIT for portrait
+        images (v0.1.84) -- lets Bible/book cover art use closer to the
+        full 680px content width instead of being width-shrunk to fit a
+        landscape-shaped box. Peeked once per image (JPEG header only, via
+        peek_jpeg_size -- no decode) and cached by img_key since the
+        result never changes for a given image. Falls back to the
+        landscape default on any read/parse failure so a bad image can
+        never break pagination."""
+        key = self._img_key(image_span.src)
+        cached = self._image_box_rows_cache.get(key)
+        if cached is not None:
+            return cached
+        rows = IMG_BOX_ROWS
+        try:
+            jpeg_bytes = self.doc.get_image_bytes(image_span.src)
+            dims = peek_jpeg_size(jpeg_bytes)
+            if dims and dims[1] > dims[0]:
+                rows = IMG_BOX_ROWS_PORTRAIT
+        except Exception:
+            pass
+        self._image_box_rows_cache[key] = rows
+        return rows
+
     def _rows_for_li(self, li):
-        """Visual row cost of one _lines[] entry: IMG_BOX_ROWS for an
-        image-only line, 1 for ordinary text. Mirrors the exact
-        classification draw_reader() and visible_span_indices() use, so
-        every place that walks lines agrees on how much screen space
-        each one actually takes. In text-only mode (images_enabled=False)
-        an image line renders as a single compact placeholder line
-        instead of the full box, so it only costs 1 row here too --
-        keeping this in sync with draw_reader() is what makes paging
-        never skip/cut off content (same class of bug fixed in v0.1.23)."""
+        """Visual row cost of one _lines[] entry: this image's box-row
+        reservation (see _image_box_rows()) for an image-only line, 1 for
+        ordinary text. Mirrors the exact classification draw_reader() and
+        visible_span_indices() use, so every place that walks lines agrees
+        on how much screen space each one actually takes. In text-only
+        mode (images_enabled=False) an image line renders as a single
+        compact placeholder line instead of the full box, so it only costs
+        1 row here too -- keeping this in sync with draw_reader() is what
+        makes paging never skip/cut off content (same class of bug fixed
+        in v0.1.23)."""
         if not self.images_enabled:
             return 1
         ranges = self._line_span_map[li]
         if len(ranges) == 1:
             s, e, sidx = ranges[0]
             if sidx != -1 and self._combined_spans[sidx][0] == "image" and (e - s) >= len(self._lines[li]):
-                return IMG_BOX_ROWS
+                _, i, _, _ = self._combined_spans[sidx]
+                return self._image_box_rows(self._images[i])
         return 1
 
     def page_down(self, body_rows):
@@ -4989,7 +3857,19 @@ class App:
         per-line row cost, so it lands exactly where a page_down() from
         the resulting position would return here. Fixes the same
         unit-mismatch page_down() had (old code did `scroll -=
-        body_rows`, a visual-row count subtracted from a line-index)."""
+        body_rows`, a visual-row count subtracted from a line-index).
+
+        v0.1.85 fix: was missing page_down()'s `row > 0` guard on the
+        break condition, so it wasn't symmetric. Consequence: an image
+        whose row cost alone exceeds body_rows (a real case now that
+        portrait covers use IMG_BOX_ROWS_PORTRAIT=20) would break out of
+        this loop on its very first iteration, before li ever moved --
+        self.scroll ended up unchanged, so L1 did nothing at all on that
+        image. page_down() always includes at least the first/nearest
+        item (showing an oversized one clipped rather than skipping it
+        outright, matching draw_reader()'s own row==0 exception) --
+        page_up() now does the same, so L1 and R1 behave symmetrically
+        around any image, oversized or not."""
         n = len(self._lines)
         if not n:
             return
@@ -5000,10 +3880,12 @@ class App:
         row = 0
         while li >= 0:
             cost = self._rows_for_li(li)
-            if row + cost > body_rows:
+            if row > 0 and row + cost > body_rows:
                 break
             row += cost
             li -= 1
+            if row >= body_rows:
+                break
         self.scroll = max(0, li + 1)
 
     def next_chapter(self):
@@ -5356,6 +4238,35 @@ def _hint_lines_needed(fonts):
     return needed
 
 
+def _reader_body_layout(fonts):
+    """Single source of truth for the reader screen's body layout:
+    (body_top, line_h, body_rows) in real pixels/rows for the CURRENT
+    Font Size. MUST be used by every caller that needs body_rows for the
+    reader screen.
+
+    v0.1.86 fix: draw_reader() and handle_button() used to compute
+    body_rows via two INDEPENDENT formulas that quietly disagreed --
+    handle_button()'s never subtracted body_top or footer_h at all, and
+    used hint_height()'s return value (explicitly documented as
+    pre-_sy-scaling "design units") directly against real-pixel SH
+    without scaling it. Confirmed via the real bundled font: this
+    produced a 1-2 row overcount in handle_button() at EVERY Font Size
+    (14pt through 32pt), not uniquely at 24pt -- 24pt is just where it
+    happened to line up badly for a given book's line layout. Since
+    handle_button() is what actually drives page_up()/page_down() and
+    the UP/DOWN scroll clamp, believing more rows fit on a page than
+    draw_reader() would actually draw meant scroll could be advanced
+    straight past an image the real screen never had room for --
+    "skips the image entirely" (Kaleb). Fixed by giving both callers the
+    exact same formula instead of two hand-copied ones."""
+    body_top = _sy(14)
+    footer_h = TTF.TTF_FontHeight(fonts.ui_small) + _sy(14)
+    body_h = SH - body_top - _sy(hint_height(fonts)) - footer_h
+    line_h = _sy(fonts.SIZE_STEPS[fonts.size_index] + 6)
+    body_rows = max(1, body_h // line_h)
+    return body_top, line_h, body_rows
+
+
 def hint_height(fonts):
     """Hint bar height in design units (pre-_sy scaling) -- v0.1.52:
     reserves the SAME height for the CURRENT font size regardless of what
@@ -5401,6 +4312,17 @@ IMG_BOX_ROWS = 14  # sized to actually use the FULL_N=4 decoded resolution
                     # never disagree about how much visual space an image
                     # takes -- they used to compute this independently and
                     # drift apart.
+
+IMG_BOX_ROWS_PORTRAIT = 20  # v0.1.84: taller row-reservation for
+                    # portrait-oriented images (Bible/book cover art, etc).
+                    # A portrait image scaled to fit the landscape-shaped
+                    # IMG_BOX_ROWS box got needlessly width-shrunk below the
+                    # full 680px content width just to satisfy the shorter
+                    # height budget -- Kaleb wants covers to use the full
+                    # width whenever the aspect ratio allows. Kept as a
+                    # second FIXED tier (not fully dynamic per-image) so
+                    # pagination stays deterministic -- see
+                    # App._image_box_rows().
 
 
 def _round_top_corners_to_bg(renderer, x, y, w, radius):
@@ -5525,22 +4447,7 @@ def draw_reader(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     app._ensure_page_built()
 
-    body_top = _sy(14)
-    # v0.1.59: footer_h reserves dedicated space for the progress-percent
-    # indicator BELOW the text area, subtracted from body_h before
-    # body_rows is computed. Previously the percentage was positioned at
-    # a fixed offset above the hint bar with no relationship to body_rows
-    # -- when body_h didn't divide evenly by line_h (leftover remainder
-    # smaller than the label's height, which varies with Font Size), the
-    # last line of text and the percentage ended up sharing the same
-    # vertical space (confirmed via Kaleb's on-device photo: "loyal," and
-    # "26%" overlapping). Reserving the footer up front guarantees text
-    # never lays out into where the percentage is drawn, regardless of
-    # font size or how body_h divides.
-    footer_h = TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(14)
-    body_h = SH - body_top - _sy(hint_height(app.fonts)) - footer_h
-    line_h = _sy(app.fonts.SIZE_STEPS[app.fonts.size_index] + 6)
-    body_rows = max(1, body_h // line_h)
+    body_top, line_h, body_rows = _reader_body_layout(app.fonts)
 
     visible_spans = app.visible_span_indices(body_rows)
     if visible_spans and app.selected_span not in visible_spans:
@@ -5578,31 +4485,49 @@ def draw_reader(renderer, app):
                 row += 1
                 li += 1
                 continue
+            _, i, _, _ = app._combined_spans[img_span_idx]
+            image_span = app._images[i]
+            box_rows = app._image_box_rows(image_span)
             # If this image wouldn't fully fit in what's left of the
             # screen, stop the page HERE instead of drawing it and
             # letting it overflow past the bottom (previously: an image
             # near the bottom of a page rendered cropped -- "half the
-            # image" -- because nothing checked whether IMG_BOX_ROWS
-            # would fit before drawing). row==0 means it's the very
-            # first thing on this page, so draw it regardless (an image
-            # taller than the whole body is a degenerate case, but still
-            # better shown-clipped than never shown at all).
-            if row > 0 and row + IMG_BOX_ROWS > body_rows:
+            # image" -- because nothing checked whether its box would fit
+            # before drawing). row==0 means it's the very first thing on
+            # this page, so draw it regardless (an image taller than the
+            # whole body is a degenerate case, but still better
+            # shown-clipped than never shown at all).
+            if row > 0 and row + box_rows > body_rows:
                 break
-            _, i, _, _ = app._combined_spans[img_span_idx]
-            image_span = app._images[i]
-            box_h = line_h * IMG_BOX_ROWS
+            box_h = line_h * box_rows
             box_w = SW - _sx(40)
             entry = app.get_image_texture(renderer, image_span)
             is_selected = (img_span_idx == app.selected_span)
             border_color = COL_LINK_SEL if is_selected else COL_DIM
+            # v0.1.83 fix: the image used to be scaled to fit the FULL
+            # box_w x box_h, while the selection border below is drawn
+            # INSET from that box (the panel is inset by pad_y=_sy(4) on
+            # each side, border a couple px outside the panel). Most JW
+            # photos are close to 16:9 -- the same ratio as
+            # ImageLoader.TARGET_BOX_W/H -- so at many font sizes the
+            # scaled image's height (dh) landed right at or past box_h,
+            # visibly overlapping/crossing the border line instead of
+            # sitting cleanly inside it (confirmed by Kaleb across
+            # "Enjoy Life Forever"/"Courage" at multiple font sizes).
+            # Fix: scale against the SAME inset region the panel/border
+            # actually occupy, so there's always a real margin between
+            # the image edge and the border, at any font size.
+            pad_x, pad_y = _sx(4), _sy(4)
+            avail_w = box_w - 2 * pad_x
+            avail_h = box_h - 2 * pad_y
             if entry and entry != "error":
                 tex, iw, ih, is_full, _buf = entry
-                # scale to fit box; allow upscale for small thumbnails so layout is stable
-                scale = min(box_w / iw, box_h / ih) if iw and ih else 1.0
+                # scale to fit the inset box; allow upscale for small
+                # thumbnails so layout is stable
+                scale = min(avail_w / iw, avail_h / ih) if iw and ih else 1.0
                 dw, dh = int(iw * scale), int(ih * scale)
-                dx = _sx(20) + (box_w - dw) // 2
-                dy = y + (box_h - dh) // 2
+                dx = _sx(20) + pad_x + (avail_w - dw) // 2
+                dy = y + pad_y + (avail_h - dh) // 2
                 dst = Rect(dx, dy, dw, dh)
                 SDL.SDL_RenderCopy(renderer, tex, None, ctypes.byref(dst))
                 if not is_full:
@@ -5623,7 +4548,7 @@ def draw_reader(renderer, app):
                                             border_color.b, 255)
                 br = Rect(_sx(18), y + _sy(2), box_w + _sx(4), box_h - _sy(4))
                 SDL.SDL_RenderDrawRect(renderer, ctypes.byref(br))
-            row += IMG_BOX_ROWS
+            row += box_rows
             li += 1
             continue
 
@@ -6042,9 +4967,12 @@ def draw_storage(renderer, app):
             fill_rect_rounded(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_BG if armed else (COL_ACCENT if idx == app.storage_index else COL_TEXT)
         label = action
-        if action == "Pre-render Book Images" and app._prerender_active:
-            done, total, scanning = app.prerender_progress()
-            label = f"Cancel Pre-render (scanning... {total} found)" if scanning                 else f"Cancel Pre-render ({done}/{total})"
+        if action == "Pre-render Book Images":
+            if native_jpeg is not None and native_jpeg.available:
+                label = "Pre-render Book Images (not needed -- native decode active)"
+            elif app._prerender_active:
+                done, total, scanning = app.prerender_progress()
+                label = f"Cancel Pre-render (scanning... {total} found)" if scanning                     else f"Cancel Pre-render ({done}/{total})"
         if armed:
             label = "Press A again to confirm, or B to cancel"
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, action_max_w),
@@ -6061,6 +4989,24 @@ def draw_storage(renderer, app):
 # Main loop
 # ============================================================
 def main():
+    # v0.1.79: CPython's default GIL switch interval (5ms) turned out not
+    # to be tight enough on the real ARM device -- Kaleb confirmed a real
+    # background-decode stall (image loading, and worse, whole-book
+    # pre-render) still froze ALL input for several seconds even after
+    # the v0.1.78 cooperative time.sleep(0) yields added inside
+    # mini_jpeg.py's hot loops. Those cooperative yields only offer the
+    # GIL up at convenient points; they don't change how urgently
+    # CPython actually forces a handoff between offers, which is what
+    # setswitchinterval controls. Dropping it to 1ms (from the 5ms
+    # default) makes the interpreter force that handoff five times more
+    # often, giving the main thread's SDL_PollEvent/render loop far more
+    # regular chances to run even while the decode thread is continuously
+    # CPU-bound between yield points. This is a global interpreter
+    # setting (affects all threads, not just image decode) but the cost
+    # is a small constant amount of extra thread-switch bookkeeping --
+    # negligible next to a multi-hundred-millisecond JPEG decode.
+    sys.setswitchinterval(0.001)
+
     if SDL.SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK) != 0:
         _boot_log(f"SDL_Init failed: {SDL.SDL_GetError()}\n")
         sys.exit(1)
@@ -6112,6 +5058,27 @@ def main():
                     ("padding2", ctypes.c_ubyte)]
 
     ev_buf = (ctypes.c_byte * 56)()
+    SDL.SDL_GetTicks.restype = ctypes.c_uint32
+
+    # v0.1.79: input avalanche fix. During a long background-decode
+    # stall (see mini_jpeg.py / ImageLoader notes), SDL still queues
+    # every button press that happens while the app can't get back to
+    # its event loop -- confirmed by Kaleb: mashing B during a hang,
+    # thinking it wasn't registering, then having ALL of those presses
+    # fire back-to-back the instant it recovered, backing out of the
+    # reader -> library -> clean out of the app in one frame. The inner
+    # `while True: poll_event()` loop below already drains the whole
+    # queue before the next redraw, with no way to tell "just pressed"
+    # apart from "queued 2 seconds ago" -- so it acted on all of them as
+    # if they'd just happened. Every SDL button/key/hat event carries its
+    # own timestamp (SDL_GetTicks() at the moment it was generated), so
+    # any event older than STALE_INPUT_MS versus *now* almost certainly
+    # queued up during a stall rather than being a deliberate rapid
+    # button mash -- drop it instead of acting on it. Doesn't touch
+    # legitimate fast double-taps (350ms is generous for that) and
+    # doesn't fix the underlying stall itself, but stops one stall from
+    # cascading into an accidental app exit.
+    STALE_INPUT_MS = 350
 
     def poll_event():
         if SDL.SDL_PollEvent(ctypes.byref(ev_buf)) == 0:
@@ -6126,12 +5093,14 @@ def main():
                 break
             etype, raw = res
             btn = None
+            ev_timestamp = None
 
             if etype == SDL_QUIT_EV:
                 running = False
                 break
             elif etype == SDL_KEYDOWN_EV:
                 kev = ctypes.cast(raw, ctypes.POINTER(SDL_KeyboardEvent))[0]
+                ev_timestamp = kev.timestamp
                 k = kev.keysym_sym
                 if k == SDLK_ESCAPE: running = False
                 elif k == SDLK_UP: btn = "UP"
@@ -6145,6 +5114,7 @@ def main():
                 elif k == SDLK_MINUS: btn = "L"
             elif etype == SDL_JOYHATMOTION_EV:
                 hev = ctypes.cast(raw, ctypes.POINTER(SDL_JoyHatEvent))[0]
+                ev_timestamp = hev.timestamp
                 hv = hev.value
                 if hv & SDL_HAT_UP: btn = "UP"
                 elif hv & SDL_HAT_DOWN: btn = "DOWN"
@@ -6152,6 +5122,7 @@ def main():
                 elif hv & SDL_HAT_RIGHT: btn = "RIGHT"
             elif etype == SDL_JOYBUTTONDOWN_EV:
                 bev = ctypes.cast(raw, ctypes.POINTER(SDL_JoyButtonEvent))[0]
+                ev_timestamp = bev.timestamp
                 b = bev.button
                 if b == JOY_A: btn = "A"
                 elif b == JOY_B: btn = "B"
@@ -6164,9 +5135,15 @@ def main():
                 elif b == JOY_START: btn = "START"
                 elif b == JOY_BACK: btn = "SELECT"
 
+            if btn and ev_timestamp is not None:
+                # v0.1.79: uint32-wraparound-safe "how old is this event"
+                age_ms = (SDL.SDL_GetTicks() - ev_timestamp) & 0xFFFFFFFF
+                if age_ms > STALE_INPUT_MS:
+                    btn = None  # drop it -- queued during a stall, not a live press
+
             if btn:
                 app.dirty = True
-                handle_button(app, btn, SH - hint_height(app.fonts))
+                handle_button(app, btn)
                 if app.quit_requested:
                     running = False
                     break
@@ -6184,6 +5161,29 @@ def main():
             need_redraw = True
 
         if need_redraw:
+            # v0.1.83 fix: clear dirty BEFORE drawing, not after. The old
+            # order (draw, then app.dirty=False) raced with the ImageLoader
+            # worker thread's on_update() callback (setattr(self,"dirty",
+            # True), fired the instant a background decode lands -- see
+            # ImageLoader._worker_loop()). With native_jpeg's near-instant
+            # decode, a VISIBLE-priority image can finish decoding WHILE
+            # this exact frame is still being drawn (the frame started out
+            # drawing the "Loading image..." placeholder, unaware the
+            # result would land a moment later on another thread). If
+            # on_update() set dirty=True mid-draw, the old `app.dirty =
+            # False` at the end of this block silently clobbered it, and
+            # has_pending_image_updates() no longer reported anything
+            # pending (the decode was already done) -- so the render loop
+            # went idle with the completed image never actually painted,
+            # requiring an unrelated button press (which force-sets
+            # dirty=True) to finally show it. Root cause of "first cover
+            # image doesn't appear until L1/R1/dpad" (Kaleb) -- present
+            # with mini_jpeg too but rare there; native's speed makes the
+            # race land almost every time. Fix: snapshot-and-clear BEFORE
+            # drawing, so any dirty=True set mid-draw by the worker thread
+            # survives into the next loop iteration -- worst case one
+            # harmless extra redraw.
+            app.dirty = False
             if app.screen == SCREEN_LIBRARY:
                 draw_library(renderer, app)
             elif app.screen == SCREEN_READER:
@@ -6208,7 +5208,6 @@ def main():
                 draw_download_browse(renderer, app)
 
             SDL.SDL_RenderPresent(renderer)
-            app.dirty = False
             time.sleep(0.016)
         else:
             # nothing to draw -- sleep longer to save CPU/battery while idle
@@ -6219,9 +5218,12 @@ def main():
     SDL.SDL_Quit()
 
 
-def handle_button(app, btn, body_h_px):
-    line_h = _sy(app.fonts.SIZE_STEPS[app.fonts.size_index] + 6)
-    body_rows = max(1, body_h_px // line_h)
+def handle_button(app, btn, body_h_px=None):
+    # body_h_px param kept for call-site compatibility but no longer used
+    # -- v0.1.86: replaced with _reader_body_layout(), the same formula
+    # draw_reader() uses, so the two can never disagree about body_rows
+    # again. See _reader_body_layout()'s docstring for the bug this fixes.
+    _body_top, line_h, body_rows = _reader_body_layout(app.fonts)
 
     if app.screen == SCREEN_LIBRARY:
         n = len(app.books)
@@ -6708,11 +5710,22 @@ def handle_button(app, btn, body_h_px):
                 state = "OFF (text-only)" if not app.images_enabled else "ON"
                 app.set_status(f"Images: {state}")
             elif action == "Pre-render Book Images":
-                # Non-destructive and instantly reversible (just enqueues
-                # background decode work), so no confirm needed -- but
-                # toggles: a second press while active cancels instead of
-                # restarting.
-                if app._prerender_active:
+                # v0.1.82: confirmed on-device (Kaleb: "full native
+                # instantaneous image rendering") that native_jpeg.py's
+                # real libSDL2_image decode is fast enough that
+                # pre-warming the cache ahead of time has nothing
+                # meaningful left to buy -- the whole reason this feature
+                # existed was to front-load mini_jpeg.py's slow decode so
+                # it wasn't happening while someone was trying to read.
+                # Kept as a real, working feature for the mini_jpeg
+                # fallback path (a device/build without libSDL2_image
+                # still benefits from it), but a no-op with an
+                # explanatory message when native decode is already
+                # doing the job -- avoids pointless CPU/disk-cache-write
+                # work for zero real benefit on the common fast path.
+                if native_jpeg is not None and native_jpeg.available:
+                    app.set_status("Not needed -- native fast image decode is already active")
+                elif app._prerender_active:
                     app.cancel_prerender()
                     app.set_status("Pre-render cancelled")
                 elif app.doc is None:
