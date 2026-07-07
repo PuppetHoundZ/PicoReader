@@ -68,6 +68,9 @@ class LinkSpan:
     target_file: str
     target_anchor: str | None
     kind: str
+    href: str = ""  # v0.1.98: raw href, only populated for kind="external"
+                    # (internal links already navigate via target_file/
+                    # target_anchor and don't need it).
 
 
 @dataclass
@@ -344,6 +347,10 @@ class EpubDocument:
         para_spans: list[ParaSpan] = []
         anchor_offsets: dict[str, int] = {}
         cursor = [0]
+        last_image_end = [None, 0]  # v0.1.93: [text_parts index, cursor pos]
+                                     # right after the most recent image's
+                                     # own trailing "\n" -- see the img
+                                     # handler in walk() for why
 
         STYLE_TAGS = {"strong": "bold", "b": "bold", "em": "italic", "i": "italic"}
         # h2/ol added v0.1.42: h2 for be_E subheadings; ol so ordered-list
@@ -416,10 +423,38 @@ class EpubDocument:
                     alt = (elem.get("alt") or "").strip()
                     base_dir = posixpath.dirname(file_path)
                     resolved = posixpath.normpath(posixpath.join(base_dir, src))
+                    # v0.1.93 fix: two images back-to-back (each commonly
+                    # wrapped in its own <div><figure>, e.g. a thin chapter-
+                    # header banner immediately followed by a full photo --
+                    # Courage/Enjoy Life Forever) picked up a full BLANK
+                    # LINE of gap from the block-tag-boundary/whitespace
+                    # machinery below (maybe_newline() + emit_text()'s
+                    # tail-whitespace collapsing) even though the source
+                    # XHTML has nothing but incidental indentation between
+                    # them -- no caption, no real text. That wasted 2 rows
+                    # of page budget with zero visual content, which only
+                    # became visible as the second image getting pushed to
+                    # the next page once larger Font Sizes shrank the
+                    # per-page row budget (Kaleb, 28pt/32pt on Courage).
+                    # Matches JW Library's own rendering (Kaleb's reference
+                    # screenshot) of no gap between back-to-back images.
+                    # Deliberately narrow: only triggers when EVERYTHING
+                    # since the immediately preceding image was pure
+                    # whitespace (no real text/caption in between) -- any
+                    # actual content between two images is left completely
+                    # untouched, and this has zero effect on ordinary
+                    # paragraph-to-paragraph spacing elsewhere.
+                    if last_image_end[0] is not None:
+                        since = "".join(text_parts[last_image_end[0]:])
+                        if since.strip() == "":
+                            del text_parts[last_image_end[0]:]
+                            cursor[0] = last_image_end[1]
                     img_start = cursor[0]
                     emit("[IMG]")
                     images.append(ImageSpan(start=img_start, end=cursor[0], src=resolved, alt=alt))
                     emit("\n")
+                    last_image_end[0] = len(text_parts)
+                    last_image_end[1] = cursor[0]
                 return
 
             # SVG <image> (v0.1.56): newer Project Gutenberg "ebookmaker"
@@ -567,11 +602,22 @@ class EpubDocument:
                 target_file, target_anchor = self.resolve_href(href, file_path)
                 epub_type = (elem.get("{http://www.idpf.org/2007/ops}type")
                              or elem.get("epub:type"))
-                kind = "noteref" if epub_type == "noteref" else "internal"
+                # v0.1.98: external http(s) links (e.g. a "Watch the video"
+                # link to jw.org from inside a publication) used to
+                # resolve_href() to (None, None) and get lumped in as
+                # "internal" -- selectable/highlighted like any other link,
+                # but follow_selected() only acts when target_file is set,
+                # so pressing A on one silently did nothing. Give them their
+                # own kind and keep the raw href so the reader can actually
+                # do something with it.
+                if href and (href.startswith("http://") or href.startswith("https://")):
+                    kind = "external"
+                else:
+                    kind = "noteref" if epub_type == "noteref" else "internal"
                 links.append(LinkSpan(
                     start=link_start, end=cursor[0],
                     target_file=target_file, target_anchor=target_anchor,
-                    kind=kind,
+                    kind=kind, href=(href if kind == "external" else ""),
                 ))
 
             if is_row_of_records:

@@ -61,6 +61,12 @@ PLUGIN CONTRACT (see main.py's plugin-loading code for how this is used):
 No pip dependencies -- stdlib urllib only, matching the rest of PicoReader.
 This is important: the target device (Anbernic RG CubeXX-H, muOS) has no
 pip available. Every plugin must be self-contained pure Python stdlib.
+
+CATEGORIES (v2): Adds a JW-library-style category picker (SUPPORTS_CATEGORIES,
+same main.py mechanism as jw_fetch.py) sourced from Project Gutenberg's own
+"Main Categories" page, plus a literal "Top 100" category equivalent to PG's
+"Frequently Downloaded" list. See the "Category catalog" section below for
+the full mapping and an important caveat about live verification.
 """
 
 import json
@@ -84,6 +90,16 @@ PLUGIN_NAME = "Project Gutenberg"
 # be pointless there, so it doesn't declare SUPPORTS_SEARCH.
 SUPPORTS_SEARCH = True
 
+# SUPPORTS_CATEGORIES tells main.py to show the same category-picker screen
+# it already built for jw_fetch.py (see that file's SUPPORTS_CATEGORIES
+# comment) before the browse list. main.py's category-picker code is fully
+# generic -- it just reads plugin.CATEGORIES and calls
+# list_items(query=..., page=..., category=...) -- so this plugin needed NO
+# main.py changes, only the additions in this file.
+# Search (Y) still works as normal, scoped to whichever category is open,
+# exactly like jw_fetch.py.
+SUPPORTS_CATEGORIES = True
+
 # ---------------------------------------------------------------------------
 # API configuration
 # ---------------------------------------------------------------------------
@@ -105,6 +121,81 @@ REQUEST_TIMEOUT = 15
 # understand traffic patterns. "personal, non-commercial" is accurate and
 # relevant to Gutenberg's usage policy.
 USER_AGENT = "PicoReader/1.0 (muOS EPUB reader; personal, non-commercial)"
+
+# ---------------------------------------------------------------------------
+# Category catalog
+# ---------------------------------------------------------------------------
+#
+# Source: Project Gutenberg's own "Main Categories" page
+# (https://www.gutenberg.org/ebooks/categories), fetched live 2026-07-04 --
+# these are PG's real bookshelf groupings, not invented. "Frequently
+# Downloaded" (https://www.gutenberg.org/browse/scores/top) is PG's own name
+# for its top-100-by-downloads list; Gutendex's default sort order (no
+# filters applied) IS download-count-descending per Gutendex's own docs, so
+# CATEGORY_TOP100 below needs no `topic` filter at all -- it's a direct
+# equivalent, not an approximation.
+#
+# For every other category, Gutendex has one real filter that fits:
+# `topic=` -- "a case-insensitive key-phrase search in books' bookshelves or
+# subjects" (Gutendex docs). It's a substring match, not an exact-name
+# lookup, so CATEGORY_TOPIC below uses short plain keywords rather than
+# PG's full punctuated display labels (e.g. "Mystery" rather than "Crime,
+# Thrillers & Mystery") -- full labels with commas/ampersands are less
+# likely to substring-match real subject/bookshelf text.
+#
+# IMPORTANT -- NOT YET LIVE-VERIFIED: unlike every pub code in jw_fetch.py,
+# these topic keywords could NOT be tested against the real Gutendex API
+# from this session (gutendex.com is blocked by this sandbox's egress
+# allowlist, and web_fetch is blocked by gutendex.com's robots.txt). If any
+# category comes back empty on-device, tell Claude which one so the keyword
+# can be adjusted -- don't assume the category is genuinely empty.
+CATEGORY_TOP100 = "Top 100 (Most Downloaded)"
+CATEGORY_ADVENTURE = "Adventure"
+CATEGORY_CLASSICS = "Classics"
+CATEGORY_SCIFI_FANTASY = "Science Fiction & Fantasy"
+CATEGORY_MYSTERY = "Crime, Thrillers & Mystery"
+CATEGORY_ROMANCE = "Romance"
+CATEGORY_HUMOR = "Humour"
+CATEGORY_MYTHOLOGY = "Mythology, Legends & Folklore"
+CATEGORY_POETRY = "Poetry"
+CATEGORY_PLAYS = "Plays & Drama"
+CATEGORY_SHORT_STORIES = "Short Stories"
+CATEGORY_CHILDRENS = "Children & Young Adult"
+CATEGORY_HISTORY = "History"
+CATEGORY_BIOGRAPHIES = "Biographies"
+CATEGORY_PHILOSOPHY_RELIGION = "Philosophy & Religion"
+CATEGORY_SCIENCE = "Science & Technology"
+CATEGORY_TRAVEL = "Travel Writing"
+
+CATEGORIES = [
+    CATEGORY_TOP100, CATEGORY_ADVENTURE, CATEGORY_CLASSICS,
+    CATEGORY_SCIFI_FANTASY, CATEGORY_MYSTERY, CATEGORY_ROMANCE,
+    CATEGORY_HUMOR, CATEGORY_MYTHOLOGY, CATEGORY_POETRY, CATEGORY_PLAYS,
+    CATEGORY_SHORT_STORIES, CATEGORY_CHILDRENS, CATEGORY_HISTORY,
+    CATEGORY_BIOGRAPHIES, CATEGORY_PHILOSOPHY_RELIGION, CATEGORY_SCIENCE,
+    CATEGORY_TRAVEL,
+]
+
+# Maps each category (except CATEGORY_TOP100, which uses no filter) to the
+# short keyword passed as Gutendex's `topic=` param.
+CATEGORY_TOPIC = {
+    CATEGORY_ADVENTURE:            "Adventure",
+    CATEGORY_CLASSICS:             "Classic",
+    CATEGORY_SCIFI_FANTASY:        "Science Fiction",
+    CATEGORY_MYSTERY:              "Mystery",
+    CATEGORY_ROMANCE:              "Romance",
+    CATEGORY_HUMOR:                "Humor",
+    CATEGORY_MYTHOLOGY:            "Mythology",
+    CATEGORY_POETRY:               "Poetry",
+    CATEGORY_PLAYS:                "Drama",
+    CATEGORY_SHORT_STORIES:        "Short Stories",
+    CATEGORY_CHILDRENS:            "Children",
+    CATEGORY_HISTORY:              "History",
+    CATEGORY_BIOGRAPHIES:          "Biography",
+    CATEGORY_PHILOSOPHY_RELIGION:  "Philosophy",
+    CATEGORY_SCIENCE:              "Science",
+    CATEGORY_TRAVEL:               "Travel",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -189,15 +280,23 @@ def _book_to_item(book):
 # Required plugin functions
 # ---------------------------------------------------------------------------
 
-def list_items(query=None, page=1):
-    """Browse popular books or search by title/author.
+def list_items(query=None, page=1, category=None):
+    """Browse popular books, optionally scoped to a category, and/or
+    search by title/author.
 
     Called by main.py whenever the download browse screen needs data:
-    - On first open (query=None, page=1): returns the most-downloaded books
-      on Gutenberg -- a good default browse experience, no typing needed.
+    - On first open with no category (query=None, page=1, category=None):
+      returns the most-downloaded books on Gutenberg -- a good default
+      browse experience, no typing needed.
+    - After picking a category (see CATEGORIES/CATEGORY_TOPIC above):
+      CATEGORY_TOP100 applies no extra filter (Gutendex's default sort IS
+      download-count order, so it's already PG's own "Frequently
+      Downloaded" list). Every other category adds Gutendex's `topic=`
+      filter using the matching keyword from CATEGORY_TOPIC.
     - After a Y-button search (query="some words"): passes the search string
       to Gutendex's `search` param, which matches both title and author
-      fields, case-insensitively.
+      fields, case-insensitively. This still combines with an open category,
+      same as jw_fetch.py's per-category search.
     - On L/R page turn (page > 1): fetches the next/previous page.
 
     Returns (items, has_next, error):
@@ -213,6 +312,9 @@ def list_items(query=None, page=1):
     params = {"page": str(page)}
     if query:
         params["search"] = query  # Gutendex search: case-insensitive, title+author
+    topic = CATEGORY_TOPIC.get(category) if category else None
+    if topic:
+        params["topic"] = topic  # case-insensitive substring match on bookshelf/subject
     url = API_BASE + "?" + urllib.parse.urlencode(params)
     try:
         data = _get_json(url)

@@ -2,7 +2,12 @@
 """
 PicoReader for muOS (Anbernic RG CubeXX-H, 720x720)
 
-*** THIS IS THE PUGLIC BUILD --.
+*** THIS IS THE PERSONAL BUILD -- INCLUDES jw_fetch.py ***
+jw_fetch.py is a PRIVATE downloader plugin (JW.org publications) and
+must NEVER be published to the public GitHub repo. This build is for
+Kaleb's own device only. For the public/GitHub-safe build (identical
+otherwise, jw_fetch.py simply not included), see the separate release
+build's main.py header.
 
 Companion app to Pico8FavsSorter -- same conventions: raw ctypes SDL2,
 no external deps, hint bar, controller-first navigation.
@@ -274,10 +279,541 @@ page)->(items,has_next,err), download(item,dest_dir)->(ok,msg,path).
 See gutenberg_fetch.py's docstring for the full contract.
 
 ===========================================================================
-Version: 0.1.86
+Version: 0.1.93
 
 Changelog (recent versions in detail; earlier work grouped by theme --
 see git history for full narrative detail on any specific older fix):
+
+v0.1.93 -- Kaleb noticed a thin chapter-header banner image immediately
+  followed by a regular photo (Courage/Enjoy Life Forever) pushed that
+  second image to the next page once Font Size went above 24pt, and
+  asked whether we were adding a line that shouldn't be there or if it
+  was just how the epub was encoded. Checked the real Courage book's
+  raw XHTML directly (downloaded fresh from jw.org): the source has
+  NOTHING but incidental indentation whitespace between the two images'
+  wrapping <div><figure> tags -- no caption, no real text. Our own
+  parser was the one adding the gap: emit_text()'s tail-whitespace
+  collapsing + maybe_newline()'s block-tag-boundary logic (both existing,
+  load-bearing machinery -- this is also what produces the normal
+  blank-line gap between an ordinary heading and its paragraph) stacked
+  up into a full blank line of pure whitespace between the two images,
+  costing 2 rows of page budget with zero visual content. Confirmed via
+  Kaleb's screenshot that JW Library itself renders back-to-back images
+  with NO gap at all, not a reduced one -- so the fix (already applied
+  in epub_engine.py's img handler via last_image_end tracking) is
+  deliberately narrow: it only fires when EVERYTHING since the
+  immediately preceding image was pure whitespace, truncating that
+  back to a single clean newline. Verified directly against the real
+  Courage chapter (image-to-image gap: "[IMG]\n[IMG]", zero blank
+  lines) while confirming the ordinary heading-to-paragraph gap
+  elsewhere in the SAME page is completely unaffected (still has its
+  normal single blank line) -- this has zero effect on regular
+  paragraph-to-paragraph spacing anywhere else in the app. Since this
+  only ever REDUCES wasted row budget (never adds any), it can't
+  introduce a new skip; the existing image-skip protections
+  (page_down()/page_up()/draw_reader()'s matching `row > 0 and row +
+  cost > body_rows` guards, v0.1.85/v0.1.86/v0.1.87) are all untouched
+  and still in place.
+
+v0.1.92 -- Kaleb: "Categories don't load on Gutenberg." Not a code bug --
+  gutenberg_fetch.py in the working bundle was a STALE copy from the
+  original muxapp upload at the start of this session, predating the
+  17-category picker (SUPPORTS_CATEGORIES, CATEGORIES, Gutendex `topic=`
+  filtering) that already existed in project knowledge, the
+  authoritative source. Every fix this session landed in main.py/
+  jw_fetch.py/native_jpeg.py, but gutenberg_fetch.py was never touched or
+  re-synced, so it silently kept shipping the pre-categories version in
+  every .muxapp bundle. Replaced with the project-knowledge version
+  (122-line diff, purely additive: SUPPORTS_CATEGORIES=True, 17
+  CATEGORIES, CATEGORY_TOPIC keyword mapping, list_items() gaining a
+  category= param). Verified the plugin contract main.py actually
+  depends on (SUPPORTS_CATEGORIES/CATEGORIES attributes,
+  list_items(query=, page=, category=) signature) matches exactly, so
+  the category picker (and the v0.1.88 L/R jump-10 fix, which already
+  reads plugin.CATEGORIES generically) needs no main.py changes at all.
+  Live-tested the Gutendex request URL construction; the actual API
+  response came back 403 Forbidden from this sandbox specifically
+  (confirmed with two different User-Agent strings, so it's Gutendex's
+  own bot-protection rejecting the sandbox's IP, not a header/code
+  issue) -- ordinary on-device network access should not hit this.
+
+v0.1.109 -- Kaleb asked to add "the Jesus... way, the truth, the light"
+movie episodes as a category. Confirmed the actual title is "The Good
+News According to Jesus" (the "way, the truth, the life" phrasing is
+John 14:6, associated with Jesus generally, not a literal series
+title) -- found via the same VideoOnDemand > Series category tree
+already explored for Governing Body Updates (key: SeriesGoodNews).
+Live-verified: 6 episodes as of this writing (pub "gnj"), Episode 1
+literally titled "The True Light of the World" -- strong match for
+what Kaleb described. Refactored list_broadcast_items() into a shared
+_list_mediator_category_items() helper first (same media-list-to-item
+-list conversion, just pointed at a different category key each time)
+rather than duplicating that logic a second time -- new
+list_good_news_items() and the existing list_broadcast_items() both
+call it now. New Library menu entry "The Good News According to
+Jesus", same JW_VIDEO_SUPPORTED guard and dl_is_video=True reuse as
+the other three video-browse openers. Small, slow-growing catalog (a
+few episodes a year) -- no limit needed, returns all of them.
+
+v0.1.108 -- Kaleb asked to rename "Watch Videos (JW)" to "Enjoy Life
+Forever Book Videos" for clarity, once it came up that this menu
+entry is actually a single fixed catalog (pub "lffv") -- the video
+companion series for the "Enjoy Life Forever!" Bible course brochure,
+not a general "browse all JW videos" feature. Renamed everywhere the
+literal string appeared (menu list, hide-guard, click handler, two
+comments) -- no behavior changed, still calls
+open_video_downloader("lffv") the same as before.
+
+v0.1.107 -- Kaleb asked about a Governing Body Updates category after
+v0.1.106's JW Broadcasting feature. These aren't in the Video Library
+category tree at all (checked VideoOnDemand's full subcategory list --
+14 top-level categories, none for GB updates, and one level deeper
+under Our Organization/Programs and Events -- still nothing) -- they're
+published as NEWS RELEASES instead (jw.org/en/news/region/global/...).
+Confirmed the general news RSS feed (NEWS_RSS, new constant) does
+carry them, title format "NEWS RELEASES | <year> Governing Body Update
+#N". Kaleb tested two real links along the way: a docid+_VIDEO finder
+link resolved correctly through the existing v0.1.104 docid path
+(confirmed matches "2026 Governing Body Update #4"); a plain docid
+finder link with no _VIDEO suffix correctly did NOT try to resolve as
+a video (GETPUBMEDIALINKS 404s for that docid -- it's a plain article,
+correctly falls to the flash-URL fallback instead).
+
+New check_new_gb_updates(): fetches NEWS_RSS, keeps items titled
+"Governing Body Update", then fetches each matching article page
+directly and extracts its docid from the GETPUBMEDIALINKS URL jw.org
+embeds in the page for its own media player (onurl="...GETPUBMEDIALINKS
+?docid=NNNN...") -- confirmed this is a clean, unique target (the same
+page also has unrelated docid= links in the footer for Copyright/Terms/
+Privacy, so the regex specifically requires the GETPUBMEDIALINKS
+prefix to avoid those). Each docid resolves through the existing
+_resolve_docid_video() -- same function in-text docid video links
+already use, no new resolution logic needed. Live-verified end to end:
+correctly found and resolved "2026 Governing Body Update #4". New
+Library menu entry "Check Governing Body Updates", same
+JW_VIDEO_SUPPORTED guard and dl_is_video=True reuse as the other two
+video-browse openers.
+
+v0.1.106 -- Built the "check for new videos" feature Kaleb asked about,
+once he confirmed jwpubs.org (my earlier lead) isn't an official jw.org
+site and should be dropped -- correctly so, staying jw.org-only per
+standing rule. No dedicated official video RSS feed exists (confirmed:
+the general WHATS_NEW_RSS feed doesn't surface videos in a real
+snapshot checked), so per Kaleb's direction this polls a specific video
+category directly instead: JW Broadcasting monthly programs. Found the
+real mechanism by fetching the "JW Broadcasting" nav link on jw.org
+directly -- it's a client-side route (#en/categories/VODStudio), and
+the static HTML has zero video listing, confirming the real list loads
+from jw.org's own "mediator" API (b.jw-cdn.org/apis/mediator/v1/
+categories/E/StudioMonthlyPrograms) -- same jw-cdn.org domain as the
+existing GETPUBMEDIALINKS API, still jw.org's own infrastructure, not
+a third party. Live-verified: 65 real programs, newest-first, each
+with a naturalKey (e.g. "pub-jwb-139_E_1_VIDEO") and a flat per-quality
+"files" list -- actually simpler to use than GETPUBMEDIALINKS since
+each entry already IS one specific video (no track-grouping needed).
+New list_broadcast_items() builds items in the exact same shape
+list_video_items() already produces, so start_download()/
+download_video() needed zero changes -- confirmed neither reads
+item["track"] for anything, so the naturalKey string there (instead of
+an int) is completely safe. New Library menu entry "Check JW
+Broadcasting" (hidden if JW_VIDEO_SUPPORTED is false, same guard as
+"Enjoy Life Forever Book Videos") opens the same browse/download screen showing the
+12 newest programs with dates in the subtitle.
+
+v0.1.105 -- Kaleb asked about a "check for new videos" RSS plugin idea;
+while researching official jw.org RSS options he pulled the live
+What's New feed and uploaded it. That surfaced a real, separate bug:
+WHATS_NEW_RSS (used by check_new_issues() for Watchtower/Awake!/Meeting
+Workbook current-issue checking) had gone dead -- jw.org silently
+renamed the feed from .../WhatsNewArticles/feed.xml to
+.../WhatsNewWebArticles/feed.xml. Confirmed directly: old URL now 404s,
+new URL (matching what Kaleb's file showed) is a real 200. Since
+check_new_issues() always falls back to current_issue_guess() on any
+failure (by design, so a feed hiccup never crashes anything), this had
+been silently failing with no visible error -- just quietly reverting
+to guessed issue codes instead of the real current ones. Fixed the URL
+and live-verified against the real feed: correctly resolved mwb ->
+202611 (Nov-Dec 2026) and w -> 202609 (September 2026).
+
+Separately: the "new videos" feature itself is still pending -- the
+What's New feed doesn't surface videos as their own category (none
+appeared in the real snapshot checked), so it's not a reliable trigger
+for that. The jwpubs.org RSS Subscription Library tool explicitly
+supports a dedicated video/media feed but is JS-driven (dropdowns +
+Continue button), so its generated URL can't be extracted by a plain
+fetch -- waiting on Kaleb to generate one and paste back the real URL
+before building this properly instead of guessing at it.
+
+v0.1.104 -- Kaleb asked to test lff_E.epub the same way. Scanned it: 430
+video links across 14 pub families (much bigger book than Courage's 43).
+12 failed to parse, revealing 2 more real formats beyond what wcg_E.epub
+had shown:
+(1) "pub-ivfa1_x_VIDEO" -- track is the literal letter "x", not a
+number. Confirmed live these are all single-video pubs (e.g. pub=ivfa1
+has exactly one track regardless), so "x" just means "there's only one,
+don't disambiguate" -- resolve_video_link() now takes the first/only
+item instead of matching a track number when track=="x".
+(2) "docid-1112024020_1_VIDEO&ts=00:04:45-00:16:18" -- a completely
+different addressing scheme, by docid instead of pub code. Confirmed
+live the API accepts docid= as its own top-level param (separate from
+pub=) and returns a self-contained file list for that one video; the
+trailing ts=HH:MM:SS-HH:MM:SS is a play-range within the video, not a
+separate file, so the whole video downloads same as any other link.
+New _resolve_docid_video() handles this path.
+parse_video_link() now returns (kind, pub_or_docid, issue, track)
+instead of (pub, issue, track) to carry this distinction --
+main.py's follow_selected() updated to match. Re-verified all 430
+links parse correctly, and live-tested one of each new case end to
+end: the docid link resolved to "2024 Governing Body Update #7", the
+x-track link to "Jehovah's Witnesses -- Faith in Action, Part 1: Out
+of Darkness". Combined with v0.1.103's Courage-book scan, this is now
+2 full real books' worth of real-world link coverage (473 links, 0
+unresolved).
+
+v0.1.103 -- Kaleb asked whether we know all the video link formats, and
+whether the real Courage book could be pre-emptively scanned for others
+instead of waiting to hit them one at a time. Downloaded wcg_E.epub
+again and scanned every chapter: 43 real jw.org video links across 11
+distinct pub-code families (jwb, jwb-###, jwbai, jwbvs, jwbcov,
+jwbcov##, wcgv, pk, pkon, lffv, nwtsv). 3 of the 43 failed to parse --
+all "jwb-102"/"jwb-106"/"jwb-099" style links, where the pub code
+itself contains a HYPHEN (JW Broadcasting's numbered-episode style,
+distinct from the plain "jwb"+issue monthly style already handled).
+The regex's character class didn't include "-". Fixed, then
+re-verified all 43 links parse correctly AND (grouped into 23 unique
+pub/issue combos to avoid hammering the API 43 times) all resolve live
+against the real GETPUBMEDIALINKS endpoint with zero failures --
+titles matched exactly (e.g. "Imitate Their Faith--Abraham, Part 1"
+for jwb-102 track 7). This is the most thorough real-world check this
+feature has had; reasonably confident the known formats are covered,
+though a different publication could always surface another variant.
+
+v0.1.102 -- Kaleb wants books moved out of PicoReader's own app folder
+and into muOS's shared ROMS/Book Reader content folder (the folder
+muos.dev documents as the existing "Book Reader" system, currently
+served by the third-party mReader core -- https://muos.dev/systems/
+misc/bookreader). This is step 1 of a larger plan to eventually
+register PicoReader as an alternative core for that same system
+(separate, bigger effort, on hold for now per Kaleb -- see the
+"emulator"/"assign" research notes from that discussion, not yet
+implemented). LIBRARY_DIR now comes from a new find_books_dir(),
+modeled directly on jw_fetch.py's existing find_movies_dir() (same
+SD1/SD2-aware candidate-path pattern already proven for ROMS/movies).
+No migration of existing bookmarks/progress from the old app-local
+library/ folder -- Kaleb confirmed OK starting fresh (personal/testing
+device only). Worth flagging for later: bookmarks are keyed by the
+book's full file path (load_bookmarks/save_bookmarks), so if a future
+folder move ever needs to preserve someone's real reading history,
+that needs an actual migration step (rewrite matching bookmarks.json
+keys to the new path), not just a constant change like this one.
+
+v0.1.101 -- Two bugs from Kaleb's real on-device screenshots of the
+Courage book (wcg_E.epub):
+(1) "Some of the videos won't load." Screenshot showed
+"lank=pub-jwbai_201507_1_VIDEO" -- a monthly-broadcast format
+(pub + 6-digit YYYYMM issue + track) the v0.1.98 regex never handled
+(it only matched pub+track, e.g. "pub-lffv_11_VIDEO"), so these
+silently fell through to the plain-URL flash instead of downloading.
+Confirmed live against the real API: pub=jwbai with no issue -> 400
+Bad Request; pub=jwbai&issue=201507 -> resolves track 1 to "Choose a
+Career With an Eternal Future", matching Kaleb's screenshot exactly.
+parse_video_link()'s regex now optionally captures the 6-digit issue,
+and list_video_items()/resolve_video_link() thread it through to the
+API call.
+(2) "The toast hint for the download doesn't text wrap at larger font
+sizes." True -- the status_msg toast (used for both the video-download
+progress and the plain-URL fallback added in v0.1.98) was always a
+single render_text() call with no wrapping; a long URL just ran off the
+right edge, and since ui_small grows with reader Font Size, less of the
+URL was visible the larger the Font Size got. New _status_msg_lines()/
+_draw_status_bar() helpers wrap it across as many lines as needed
+(reusing the existing _wrap_hint_text_unbounded() the hint bar already
+uses) and replace 4 independent single-line call sites across
+draw_library()/draw_reader()/draw_download_browse()/the pre-render
+settings screen -- so a future tweak can't drift out of sync between
+them the way 4 hand-copied blocks could. Removed the now-unnecessary
+manual truncation in follow_selected() since wrapping supersedes it.
+
+v0.1.100 -- Kaleb reported the Courage book's chapter banner didn't span
+the full 680px content width at 18pt/21pt Font Size, but did at 32pt
+(real on-device screenshots). Downloaded the actual wcg_E.epub directly
+(https://cfp2.jw-cdn.org/a/0ddc04/3/o/wcg_E.epub) and confirmed the real
+banner is 1200x85px. Root cause: _image_box_rows()'s
+`rows = ceil(natural_h/line_h)` didn't account for the pad_y inset
+subtracted from the box afterward in draw_reader() -- at 18pt/21pt the
+rounding-up margin was smaller than that 8px inset, so avail_h dipped
+BELOW natural_h and height became the accidental binding constraint in
+get_image_texture's `scale = min(avail_w/iw, avail_h/ih)`, shrinking the
+banner instead of filling the width it was designed to. Verified with
+the real numbers before and after: 18pt was avail_h=40 vs natural_h=47.6
+(shrinks to 564/672px) -- now avail_h=64 vs 47.6 (full 672px). Checked
+all 7 Font Size steps (14-32pt) after the fix: full width at every one.
+Fix: rows now includes the same pad_y inset (`ceil((natural_h + 2*
+IMG_PAD_Y) / line_h)`), and IMG_PAD_Y is a new shared module constant
+(was two independently hand-copied "4"s in _image_box_rows() and
+draw_reader() -- now one, so they can't drift apart again). This is a
+strict superset of v0.1.99's fix (still applies, still correct) --
+today's bug was a separate, previously-undiscovered edge case in the
+same function, only visible with a REAL banner's aspect ratio, not any
+of the synthetic ratios checked before.
+
+v0.1.99 -- Kaleb asked to "bug check everything" after v0.1.97/v0.1.98
+shipped. Re-checked v0.1.97 against the actual pagination code and found
+it was incomplete: draw_reader()'s `row += box_rows` is what decides
+when text resumes, and box_rows still came from
+`max(MIN_IMG_BOX_ROWS=3, computed_rows)` -- v0.1.97's top-align/border-
+hug change only repositioned the image/border WITHIN that reserved
+space, it never touched the reservation itself. So the actual "big gap
+before text continues" bug reported for thin banners was NOT fixed by
+v0.1.97 -- only the border framing got tidier. Real fix: lowered
+MIN_IMG_BOX_ROWS from 3 to 1. ceil(natural_h/line_h) already guarantees
+>=1 row for any image with real height, so the floor of 3 was the only
+thing forcing 2 dead extra rows onto every thin banner. Also re-verified
+the v0.1.98 link/video code line-by-line (JW_PLUGIN/JW_VIDEO_SUPPORTED
+globals, threading pattern, _link_video_downloading guard) -- no
+further issues found there.
+
+v0.1.98 -- Kaleb asked to make in-text links actually tappable/
+actionable (specifically: video links in the Courage/wcg book and in
+lffi_E.epub that appeared to do nothing on A). Root cause found in
+epub_engine.py: resolve_href() already special-cased http(s) hrefs to
+return (None, None), and every <a> was tagged "internal"/"noteref"
+regardless -- so external links WERE selectable/highlighted (rendered
+via the generic kind=="link" combined-span check) but
+App.follow_selected() only acted `if link.target_file:`, which is never
+true for an external link. Pressing A on one was a silent no-op.
+LinkSpan gained an `href` field and a new kind="external" to fix that.
+
+Checked real uploaded epubs before assuming a link format: JW video
+links have a distinct, parseable pattern -- confirmed against
+lffi_E.epub -- "finder?lank=pub-lffv_11_VIDEO&wtlocale=E" (pub code +
+track number + literal _VIDEO suffix), vs. plain content links like
+"finder?docid=1011214&category=...". jw_fetch.py gained
+parse_video_link() (regex-only, no network) and resolve_video_link()
+(one GETPUBMEDIALINKS call via the existing list_video_items(), now
+also returning each item's track number so it can be matched). Live-
+verified end-to-end against the real API: lank=pub-lffv_11_VIDEO
+correctly resolves to "Never Give Up Hope!" with a real
+cfp2.jw-cdn.org download URL.
+
+On A: if the link matches a video pattern, resolve+download it straight
+to ROMS/movies in a background thread -- reusing the EXACT same
+pattern start_download() already uses for the Storage-screen video
+browser (JW_PLUGIN.find_movies_dir()/download_video(), status_msg
+toast, "Exit PicoReader..." success message), just triggered from an
+in-text link instead of the browse list. A new _link_video_downloading
+flag guards against double-triggering if A is mashed while one
+resolves. Any other external link (e.g. a finder?docid=... content
+page, which isn't a video) falls back to flashing the
+(width-truncated) URL via status_msg so it's at least visible instead
+of looking dead.
+
+v0.1.97 -- Kaleb reported thin chapter-banner images (Section 1 Timeline
+strip, Courage/wcg chapter headers) left a big empty gap before text
+resumed. Root cause: MIN_IMG_BOX_ROWS=3 floors a thin banner's reserved
+box well above its real height, and the image was drawn CENTERED inside
+that box -- splitting the leftover space above AND below the banner, so
+text still didn't resume until after all of it. Fix: draw the image
+top-aligned in its box instead (dy = y + pad_y, no more centering), and
+extended the v0.1.96 border-hug logic to also hug HEIGHT when an image
+is width-filled but far shorter than its box (mirrors the existing
+width-hug for portrait images). box_w/box_h/box_rows -- what
+_image_box_rows()/pagination/scroll depend on -- are untouched; only
+where the image/border draw inside that reserved space changed, so this
+can't desync paging. Portrait/landscape images (already filling their
+box in one dimension) are visually unaffected; only width-filled,
+height-short images (banners) now sit flush at the top with a tight
+border instead of floating in a tall empty box.
+
+v0.1.96 -- Kaleb asked to tighten the selection highlight around
+portrait images (previously spanned the full page width even though
+the picture itself, being height-limited, ends up much narrower --
+confirmed via real portrait images from the Courage/wcg epub, e.g. a
+1200x2135 cover ends up ~315-355px wide inside a 680px-wide box at
+every Font Size). Explicitly re-verified this can't reintroduce the
+v0.1.83 border/image desync bug: box_w/box_h (what _image_box_rows()
+and all pagination/scroll math depend on) are UNTOUCHED -- only the
+border rect's own width/x-position tighten, computed from the same
+dw/dh already used to draw the picture, so the border can never end up
+smaller than the actual image. Landscape/square images (not height-
+limited) draw an identical full-width border to before -- verified
+numerically across all 3 orientations x all 7 Font Sizes that the
+border always fully contains the picture with zero overlap.
+
+v0.1.95 -- Kaleb (on Default theme) said the image/link selection
+highlight felt too intrusive/bright. THEMES[0]["link_sel"] changed from
+a saturated pure yellow (255,210,90) to a muted warm gold (222,178,108)
+-- same hue family so a selected image/link still reads clearly, just
+softer/less neon. Other 4 themes untouched (Dim Warm/Deep Amber/Red
+Shift were already progressively dimmer by design; Adventure is
+Kaleb's separate requested palette).
+
+v0.1.94 -- Two fixes to v0.1.93's video download list per Kaleb: (1)
+"(With Audio Descriptions)" entries are real separate tracks in the API
+(own track number/file), not a flag on the main track -- filtered out
+entirely (case-insensitive substring match on title) since Kaleb doesn't
+want them cluttering the list; live-verified this drops the lffv catalog
+from 153 to 91 real videos. (2) filename now includes the resolution
+label, e.g. "Never Give Up Hope! (480p).mp4", so the quality is visible
+directly in ROMS/movies without opening the file.
+
+v0.1.93 -- Wired the v0.1.92 video-download backend into the UI: Library
+Menu gets a "Enjoy Life Forever Book Videos" entry (hidden if jw_fetch.py is absent
+or lacks list_video_items -- same pattern as "Download Books" hiding
+when no plugin is loaded). Reuses SCREEN_DOWNLOAD_BROWSE/
+draw_download_browse() as-is for the video list (title/subtitle/
+downloading-state already draw generically) rather than building a
+parallel screen -- app.dl_is_video is the only new piece of state,
+branching start_download() (saves to find_movies_dir() instead of
+LIBRARY_DIR, no refresh_library() on success) and the B-back handler
+(returns straight to SCREEN_LIBRARY_MENU instead of the EPUB category/
+source-picker chain). On success the status bar reads: "downloaded.
+Exit PicoReader and open ROM Collection -> Movies to watch it." --
+matches muOS's real navigation path (Kaleb corrected an earlier draft
+that said "Applications -> Media Player -> movies", which was wrong).
+Verified end-to-end against the real jw.org API (not just AST-parse):
+installed libsdl2-ttf/libsdl2-image in the sandbox to get a genuine
+`import main` pass, then simulated open_video_downloader("lffv") live
+(153 tracks resolved) and download_video() on a real file (downloaded
+byte count matched the API's reported filesize exactly).
+
+v0.1.92 -- Added video download backend to jw_fetch.py: list_video_items(pub)
+looks up a video pub code (e.g. "lffv") via GETPUBMEDIALINKS with
+fileformat=MP4, groups the response by track number (each track repeats
+once per resolution -- confirmed against a real response), and picks
+480p per track (Kaleb confirmed 480p plays fine on the RG CubeXX-H via
+CTupe and fits the 720x720 screen; VIDEO_LABEL_FALLBACK covers tracks
+missing 480p). Videos save under the REAL title (sanitized via
+_sanitize_video_filename(), not the cryptic pub-code CDN filename) into
+find_movies_dir() -- muOS's native Media Player content folder
+(ROMS/movies), SD1/SD2-aware like mux_launch.sh itself never hardcodes
+a single storage path. Deliberately NOT wired into an in-app player:
+mpv can't read PicoReader's raw SDL_Joystick input directly (would need
+bundling gptokeyb2 + libinterpose, confirmed via CTupe's real source),
+so this hands off to muOS's own native Media Player system instead --
+zero bundled binaries, real muOS controller mapping via its own
+SETUP_APP, at the cost of a manual "exit to watch" step.
+
+v0.1.91 -- Kaleb asked whether some covers looking "blocky" vs. "crisp"
+  was just inconsistent source epub image quality, or a real pipeline
+  issue worth checking. Both, it turns out. Confirmed via web search
+  (wiki.libsdl.org/SDL2/SDL_SoftStretchLinear, discourse.libsdl.org
+  commit history) that native_jpeg.py's downscale step
+  (SDL_UpperBlitScaled) uses SDL2's classic SDL_SoftStretch under the
+  hood, which is NEAREST-NEIGHBOR with no filtering at all --
+  SDL_SoftStretchLinear (bilinear, SDL 2.0.16+) is a separate, newer
+  function. Since native_jpeg.py always decodes the FULL JPEG at native
+  resolution first and only the final downscale depends on scale_n (see
+  TARGET_BOX_W/H's v0.1.81 note), an image with much higher native
+  resolution than the target box needs a bigger downscale ratio, and
+  nearest-neighbor's aliasing gets more visible the bigger that ratio
+  is -- exactly matching "some covers crisp (small ratio), some blocky
+  (large ratio)".
+  Switched the downscale step to SDL_SoftStretchLinear where available
+  (SDL 2.0.16+, checked at init; falls back to the old nearest-neighbor
+  blit otherwise so this never breaks on an older muOS SDL2 build).
+  Requires converting to/from a 32bpp format around the stretch (that
+  function needs same-format 32bpp surfaces) -- output stays tight
+  RGB24, so no contract change for main.py.
+  Measured the actual improvement two ways before shipping, not just
+  assumed it: an adversarial worst-case high-frequency checkerboard
+  pattern showed only a ~0.01-0.1% aliasing reduction (2-tap bilinear
+  can't help when detail is at exactly the sampling frequency -- also
+  tried a mipmap-style successive-halving chain, no better); but a
+  realistic gradient+text image (much closer to an actual book cover)
+  showed a genuine 50-65% reduction in edge/aliasing energy at the same
+  downscale ratios a large cover would need. So: real, measurable
+  improvement for actual cover art, but not a magic fix -- a properly
+  area-averaged (e.g. Lanczos-quality) resize would still measurably
+  beat SDL's bilinear stretch, and getting that would mean bypassing
+  SDL2_image for a raw libjpeg DCT-scaled decode (more invasive, not
+  done here). Also confirmed independently: embedded cover resolution
+  genuinely varies epub-to-epub -- that part of what Kaleb's seeing is
+  real, not a decode artifact.
+
+v0.1.90 -- Kaleb asked whether the Watchtower/Awake!/Workbook "current
+  month, guess" entries account for skipped months. Checked: "w" (Study
+  Watchtower) is confirmed genuinely monthly with zero gaps, so no
+  correction needed there. "mwb" already had _mwb_valid_issue() rounding
+  down to the nearest real bi-monthly issue. But "wp" (Public
+  Watchtower, now annual with an irregular per-year month -- see
+  WP_ANNUAL_ISSUES) and "g" (Awake!, now roughly once a year with no
+  derivable month at all -- see AWAKE_BACK_ISSUES) both fell straight
+  through to the raw calendar-month guess with NO correction --
+  producing a "(this month, guess)" entry pointing at a month that
+  isn't a real issue almost all year for both. Added _wp_valid_issue()
+  (mirrors _mwb_valid_issue()'s "round down to the nearest real issue,"
+  reusing the exact same era rules generate_wp_back_issues() already
+  models) and _g_valid_issue() (no formula exists for Awake!'s
+  irregular month, so it just returns the newest confirmed
+  AWAKE_BACK_ISSUES entry). Also fixed the same two unadjusted-guess
+  bugs in list_items()'s back-issue dedup logic (was comparing against
+  the raw guess instead of the corrected one, so a corrected step-3
+  entry and a back-issue-list entry for the same real issue could have
+  shown up as two separate rows instead of being recognized as the same
+  issue). Verified all three correction functions against real
+  boundary dates spanning every era (bi-monthly/tri-annual/annual for
+  wp, several full years for mwb) -- all snapped to the right real
+  issue, including the Dec-of-a-just-published-year edge case.
+
+v0.1.89 -- Kaleb noticed the JW plugin's RSS "scan for recent
+  publications" feature seemed to have disappeared. It hadn't actually
+  been removed: jw_fetch.check_new_issues() (RSS-based latest-issue
+  detection) still ran on every list_items() call, but its only UI
+  entry point was the old flat category=None view -- which became
+  unreachable once SUPPORTS_CATEGORIES routing made open_downloader()
+  always send this plugin straight to the category picker first.
+  Restored a real entry point instead of reverting that routing:
+  jw_fetch.CATEGORY_WHATS_NEW ("What's New (RSS)") is now a genuine
+  first entry in CATEGORIES, and list_items() special-cases it to
+  return ONLY the RSS-detected "(new)" issues, across every category,
+  skipping the static-publications/guessed-periodical/back-issue steps
+  entirely -- so it stays a short, purpose-built "what's actually new"
+  list rather than the old full flat catalog. Verified the new code
+  path directly (mocked check_new_issues() with sample new-issue data,
+  and again with an empty list) -- both return the right shape, and the
+  browse screen now shows a specific "No new publications detected via
+  RSS right now" message instead of the generic "No results." when this
+  category comes back empty.
+
+v0.1.88 -- Kaleb: scrolling Gutenberg/JW category and browse lists one
+  item at a time got tedious once these became full scrollable lists
+  (some, like a JW back-issue category, land as a single 20-30+ item
+  page with no server-side next/prev at all). Chose to reuse L/R rather
+  than add a new toggle or button: SCREEN_DOWNLOAD_BROWSE's L/R already
+  called dl_prev_page()/dl_next_page() when the plugin paginates
+  server-side, but did nothing at all on a single-page list -- now they
+  fall back to a local ~10-item jump in that case, so the same two
+  buttons always do something useful. SCREEN_DOWNLOAD_CATEGORIES (no
+  server pagination at all) gets the same local ~10-item jump on L/R,
+  previously unmapped there. Both list-drawing functions already
+  auto-center their visible window on the current index every frame, so
+  no separate scroll-position state was needed. Library's L/R stayed
+  Font Size -/+ (Kaleb's own v0.1.55 request) -- its book list is
+  normally much shorter than a download list, so left alone for now.
+
+v0.1.87 -- Reworked image sizing from Kaleb's two observations: (1) tall
+  portrait covers still ran past the hint bar at small Font Sizes (the
+  v0.1.84 fixed 20-row portrait tier could exceed body_rows once Font
+  Size shrank body_rows below 20), and (2) thin chapter-header banner
+  images (Courage/Enjoy Life Forever) were forced into the full 14-row
+  box, wasting most of it as blank padding. Replaced the two-tier
+  IMG_BOX_ROWS/IMG_BOX_ROWS_PORTRAIT system with fully dynamic per-image
+  sizing: width always locked to the full content width, height derived
+  from the image's own aspect ratio, rounded UP to the next whole text
+  line (so surrounding text always resumes at a line boundary -- no
+  sub-line remainder), and capped at body_rows so no single image can
+  ever claim more than one full screen of the viewable text area above
+  the hint bar. New App._image_dims() caches the (w,h) header peek
+  (unchanging per image); App._image_box_rows() computes the row count
+  fresh each call since it now depends on line_h/body_rows (Font Size).
+  _rows_for_li()/page_down()/page_up()/visible_span_indices() all
+  updated to take line_h alongside body_rows. Verified the row math
+  against realistic image dimensions (thin banner, 16:9 photo, portrait
+  cover, extreme-tall cover) across three Font Size line_h/body_rows
+  pairs -- thin banners now get a compact ~3-4 row box, 16:9 photos
+  scale proportionally, and portrait covers of any height cap cleanly at
+  body_rows instead of overrunning the hint bar.
 
 v0.1.86 -- Kaleb reported images getting skipped entirely with L1/R1 and
   slow d-pad scrolling, worst at 24pt. Root cause: draw_reader() (what's
@@ -712,11 +1248,60 @@ for _plugin_mod_name in ("gutenberg_fetch", "jw_fetch"):
         _boot_log(f"optional plugin '{_plugin_mod_name}' not loaded (this is fine if the "
                    f"file isn't present): {sys.exc_info()[1]}\n")
 
+# v0.1.90: direct reference to jw_fetch specifically (not just "any
+# plugin in DOWNLOAD_PLUGINS") for the video-download feature, since
+# video support is JW-specific (gutenberg_fetch has no videos) and only
+# exists if jw_fetch has the v0.1.90 list_video_items()/download_video()
+# functions -- older jw_fetch.py builds won't have them, so this checks
+# for the attribute rather than assuming any jw_fetch import supports it.
+JW_PLUGIN = next((m for m in DOWNLOAD_PLUGINS if m.__name__ == "jw_fetch"), None)
+JW_VIDEO_SUPPORTED = bool(JW_PLUGIN and hasattr(JW_PLUGIN, "list_video_items"))
+
 # ============================================================
 # Paths
 # ============================================================
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-LIBRARY_DIR = os.environ.get("EPUB_LIBRARY_DIR", os.path.join(APP_DIR, "library"))
+
+
+def find_books_dir():
+    """v0.1.102: SD1/SD2-aware location for muOS's shared 'Book Reader'
+    content folder -- same principle/candidates as jw_fetch.py's
+    find_movies_dir() for ROMS/movies. muos.dev documents "Book Reader"
+    as an existing muOS system (https://muos.dev/systems/misc/bookreader,
+    currently served by the third-party mReader core) with its own
+    ROMS/Book Reader content folder. Sharing that folder -- rather than
+    keeping books inside PicoReader's own app directory -- is what would
+    let PicoReader register as an alternative core for the SAME system
+    later, and just generally puts books where the rest of muOS's
+    content already lives. Checks both real muOS mount points and
+    returns the first that exists; falls back to creating the SD1 path
+    if neither exists yet, so a fresh setup still works.
+
+    Kaleb confirmed OK losing existing bookmarks/reading-progress for
+    this move (personal library, testing device only) -- so unlike
+    find_movies_dir() there's no old-location migration here, just a
+    straight switch. If that ever matters for someone else's setup:
+    bookmarks are keyed by the book's full file path (see
+    load_bookmarks/save_bookmarks), so moving this folder orphans any
+    progress recorded under the old path -- worth a real migration step
+    (rewrite matching bookmarks.json keys) rather than silent data loss
+    if a future move needs to preserve reading history."""
+    candidates = [
+        "/mnt/sdcard/ROMS/Book Reader",
+        "/mnt/mmc/ROMS/Book Reader",
+    ]
+    for path in candidates:
+        if os.path.isdir(path):
+            return path
+    fallback = candidates[0]
+    try:
+        os.makedirs(fallback, exist_ok=True)
+    except OSError:
+        pass
+    return fallback
+
+
+LIBRARY_DIR = os.environ.get("EPUB_LIBRARY_DIR", find_books_dir())
 DATA_DIR = os.path.join(APP_DIR, "data")
 BOOKMARKS_PATH = os.path.join(DATA_DIR, "bookmarks.json")
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
@@ -947,7 +1532,7 @@ THEMES = [
     {
         "name": "Default",
         "bg": (18, 18, 22), "panel": (28, 28, 34), "text": (225, 225, 230),
-        "dim": (140, 140, 150), "link": (61, 125, 118), "link_sel": (255, 210, 90),
+        "dim": (140, 140, 150), "link": (61, 125, 118), "link_sel": (222, 178, 108),
         "hint_bg": (10, 10, 13), "hint_text": (180, 180, 190),
         "accent": (95, 168, 156), "menu_sel_bg": (45, 45, 55), "warning": (230, 90, 90),
     },
@@ -2428,7 +3013,10 @@ SCREEN_TEXT_ENTRY = "text_entry"              # generic D-pad letter-grid
 
 LIBRARY_MENU_ITEMS = ["Sort: Title A-Z", "Sort: Author A-Z", "Sort: Last Read",
                        "Sort: Recently Added", "Theme +", "Theme -",
-                       "Download Books", "Storage", "Back"]
+                       "Download Books", "Enjoy Life Forever Book Videos",
+                       "Check JW Broadcasting", "Check Governing Body Updates",
+                       "The Good News According to Jesus",
+                       "Storage", "Back"]
 
 # Ragged rows are fine -- UP/DOWN/LEFT/RIGHT navigation clamps to each
 # row's own length dynamically, no fixed grid width assumed. Letters,
@@ -2542,9 +3130,18 @@ class App:
                                        # "Loading... (Ns)" spinner (v0.1.62)
         self.dl_load_error = None
         self._dl_downloading_idx = None  # index currently mid-download, or None
+        self.dl_is_video = False  # v0.1.90: True while SCREEN_DOWNLOAD_BROWSE is
+                                   # showing a video catalog (jw_fetch videos)
+                                   # rather than an EPUB catalog -- start_download()
+                                   # and the B-back handler both branch on this
+                                   # instead of duplicating the whole browse screen.
 
         self.status_msg = None   # brief on-screen feedback (bookmark saved/
         self.status_until = 0    # updated/limit-reached, delete confirmed, etc.
+        self._link_video_downloading = False  # v0.1.98: guards against
+                                   # double-triggering a video download if A
+                                   # is mashed on the same in-text video link
+                                   # while one is already resolving/downloading.
 
         self._visible_image_keys = set()  # images on the currently-built page
         # v0.1.82: default flipped True->False. The 500MB on-disk image
@@ -2570,9 +3167,8 @@ class App:
             on_update=lambda: setattr(self, "dirty", True),
         )
         self._image_textures = OrderedDict()   # key -> (texture, w, h, is_full_res)
-        self._image_box_rows_cache = {}  # img_key -> IMG_BOX_ROWS or
-                                          # IMG_BOX_ROWS_PORTRAIT (v0.1.84),
-                                          # see _image_box_rows()
+        self._image_dims_cache = {}   # img_key -> (w,h) or (0,0)/None if
+                                       # unreadable -- see App._image_dims()
         self.MAX_IMAGE_TEXTURES = 24            # bounded LRU: caps GPU texture memory
         self.storage_index = 0
         self.quit_requested = False
@@ -2715,6 +3311,7 @@ class App:
         other network/decode call in this app."""
         self.dl_plugin = plugin
         self.dl_category = None
+        self.dl_is_video = False  # v0.1.90: this is the EPUB browse path
         if getattr(plugin, "SUPPORTS_CATEGORIES", False) and getattr(plugin, "CATEGORIES", None):
             self.dl_cat_index = 0
             self.screen = SCREEN_DOWNLOAD_CATEGORIES
@@ -2728,10 +3325,115 @@ class App:
         self.screen = SCREEN_DOWNLOAD_BROWSE
         self._load_dl_page()
 
+    def open_video_downloader(self, pub):
+        """v0.1.90: opens SCREEN_DOWNLOAD_BROWSE showing jw_fetch's video
+        catalog for `pub` (e.g. "lffv") instead of an EPUB catalog.
+        Reuses the exact same browse screen/draw code as open_downloader()
+        -- dl_is_video is the only thing that changes behavior (in
+        start_download() and the B-back handler), so there's no
+        duplicated screen to keep in sync."""
+        self.dl_plugin = JW_PLUGIN
+        self.dl_is_video = True
+        self.dl_category = None
+        self.dl_items = []
+        self.dl_index = 0
+        self.dl_page = 1
+        self.dl_query = None
+        self.dl_has_next = False
+        self.dl_load_error = None
+        self.dl_loading = True
+        self.dl_loading_start = time.time()
+        self.screen = SCREEN_DOWNLOAD_BROWSE
+
+        def _do_load():
+            try:
+                items, err = JW_PLUGIN.list_video_items(pub)
+            except Exception as e:
+                items, err = [], str(e)
+            if self.dl_is_video:  # guard: person didn't back out meanwhile
+                self.dl_items = items
+                self.dl_load_error = err
+                self.dl_index = 0
+                self.dl_loading = False
+                self.dirty = True  # see _load_dl_page's class-wide note on this
+
+        threading.Thread(target=_do_load, daemon=True).start()
+
+        threading.Thread(target=_do_load, daemon=True).start()
+
+    def open_gb_update_downloader(self):
+        """v0.1.107: opens SCREEN_DOWNLOAD_BROWSE showing recent Governing
+        Body Update videos (found via the news RSS feed, not the Video
+        Library category tree -- see jw_fetch.check_new_gb_updates()'s
+        docstring for why). Same dl_is_video=True reuse as the other two
+        video-browse openers."""
+        self.dl_plugin = JW_PLUGIN
+        self.dl_is_video = True
+        self.dl_category = None
+        self.dl_items = []
+        self.dl_index = 0
+        self.dl_page = 1
+        self.dl_query = None
+        self.dl_has_next = False
+        self.dl_load_error = None
+        self.dl_loading = True
+        self.dl_loading_start = time.time()
+        self.screen = SCREEN_DOWNLOAD_BROWSE
+
+        def _do_load():
+            try:
+                items, err = JW_PLUGIN.check_new_gb_updates()
+            except Exception as e:
+                items, err = [], str(e)
+            if self.dl_is_video:  # guard: person didn't back out meanwhile
+                self.dl_items = items
+                self.dl_load_error = err
+                self.dl_index = 0
+                self.dl_loading = False
+                self.dirty = True
+
+        threading.Thread(target=_do_load, daemon=True).start()
+
+
+
+    def open_good_news_downloader(self):
+        """v0.1.109: opens SCREEN_DOWNLOAD_BROWSE showing "The Good News
+        According to Jesus" episodes (SeriesGoodNews category -- a
+        small, slow-growing dramatized series about Jesus's life, 6
+        episodes as of this writing). Same dl_is_video=True reuse as
+        the other video-browse openers."""
+        self.dl_plugin = JW_PLUGIN
+        self.dl_is_video = True
+        self.dl_category = None
+        self.dl_items = []
+        self.dl_index = 0
+        self.dl_page = 1
+        self.dl_query = None
+        self.dl_has_next = False
+        self.dl_load_error = None
+        self.dl_loading = True
+        self.dl_loading_start = time.time()
+        self.screen = SCREEN_DOWNLOAD_BROWSE
+
+        def _do_load():
+            try:
+                items, err = JW_PLUGIN.list_good_news_items()
+            except Exception as e:
+                items, err = [], str(e)
+            if self.dl_is_video:  # guard: person didn't back out meanwhile
+                self.dl_items = items
+                self.dl_load_error = err
+                self.dl_index = 0
+                self.dl_loading = False
+                self.dirty = True
+
+        threading.Thread(target=_do_load, daemon=True).start()
+
     def open_category(self, category):
         """Opens the browse screen scoped to one category (see
         jw_fetch.CATEGORIES) -- same loading pattern as open_downloader()."""
         self.dl_category = category
+        self.dl_is_video = False  # v0.1.90: this is the EPUB browse path
         self.dl_items = []
         self.dl_index = 0
         self.dl_page = 1
@@ -2814,6 +3516,35 @@ class App:
         item = self.dl_items[idx]
         plugin = self.dl_plugin
         self._dl_downloading_idx = idx
+
+        if self.dl_is_video:
+            # v0.1.90: video path -- saves into muOS's native Media Player
+            # content folder (ROMS/movies) instead of LIBRARY_DIR, and
+            # does NOT call refresh_library() on success (it's not an
+            # EPUB). Deliberately hands off to muOS's own native player
+            # rather than launching mpv in-process -- see the v0.1.90
+            # changelog entry for why (mpv can't read PicoReader's raw
+            # SDL_Joystick input without bundling gptokeyb2, confirmed
+            # via CTupe's real source; muOS's native Media Player already
+            # gives correct controls for free via its own SETUP_APP).
+            self.set_status(f'Downloading "{item["title"]}"...', duration=60)
+
+            def _do_video_download():
+                try:
+                    movies_dir = JW_PLUGIN.find_movies_dir()
+                    ok, msg, _path = JW_PLUGIN.download_video(item, movies_dir)
+                except Exception as e:
+                    ok, msg = False, f"Download failed: {e}"
+                self._dl_downloading_idx = None
+                if ok:
+                    msg = (f'"{item["title"]}" downloaded. Exit PicoReader and open '
+                           f'ROM Collection -> Movies to watch it.')
+                self.set_status(msg, duration=6.0)
+                self.dirty = True
+
+            threading.Thread(target=_do_video_download, daemon=True).start()
+            return
+
         self.set_status(f'Downloading "{item["title"]}"...', duration=60)
 
         def _do_download():
@@ -2891,7 +3622,7 @@ class App:
         self._page_text_cache_order.clear()
         self._wrapped_cache.clear()          # v0.1.69: stale on new book
         self._wrapped_cache_order.clear()
-        self._image_box_rows_cache.clear()   # v0.1.84: img_keys are book-
+        self._image_dims_cache.clear()       # v0.1.84: img_keys are book-
                                               # namespaced already, but no
                                               # reason to keep growing it
         self._chapter_nav_points = self._build_chapter_nav_points()
@@ -3662,10 +4393,11 @@ class App:
 
         return lines, line_span_map, line_style_runs
 
-    def visible_span_indices(self, body_rows):
+    def visible_span_indices(self, line_h, body_rows):
         """Which link/image spans are actually visible on screen right now.
         Must walk the SAME way draw_reader() does: an image consumes
-        IMG_BOX_ROWS visual rows but is only one entry in self._lines, so a
+        several visual rows (now dynamic per its own aspect ratio, see
+        _image_box_rows()) but is only one entry in self._lines, so a
         naive 1-row-per-line loop here would disagree with what's actually
         drawn (and could offer up links for selection that aren't visible,
         or skip ones that are). Row cost comes from _rows_for_li() -- the
@@ -3681,7 +4413,7 @@ class App:
             for (_, _, sidx) in ranges:
                 if sidx != -1 and sidx not in idxs:
                     idxs.append(sidx)
-            row += self._rows_for_li(li)
+            row += self._rows_for_li(li, line_h, body_rows)
             li += 1
         return idxs
 
@@ -3757,7 +4489,56 @@ class App:
         kind, i, _, _ = self._combined_spans[self.selected_span]
         if kind == "link":
             link = self._links[i]
-            if link.target_file:
+            if link.kind == "external":
+                # v0.1.98: previously silently did nothing (target_file is
+                # None for external links, and the old code only acted
+                # when target_file was set). There's no in-app browser, so
+                # for a plain link, surface the URL via the existing
+                # status_msg toast (same one used for "Bookmark added").
+                # v0.1.98 (second pass): if it's actually a JW video link
+                # (confirmed real format via lffi_E.epub:
+                # "finder?lank=pub-lffv_11_VIDEO&wtlocale=E"), resolve and
+                # download it straight to ROMS/movies instead, reusing the
+                # exact same background-thread pattern start_download()
+                # already uses for the Storage-screen video browser.
+                kind, ident, issue, track = (JW_PLUGIN.parse_video_link(link.href)
+                                             if JW_VIDEO_SUPPORTED else (None, None, None, None))
+                if kind is not None and not self._link_video_downloading:
+                    self._link_video_downloading = True
+                    if kind == "docid":
+                        self.set_status("Resolving video...", duration=20)
+                    else:
+                        self.set_status(f"Resolving video ({ident} #{track})...", duration=20)
+
+                    def _do_link_video():
+                        try:
+                            item, err = JW_PLUGIN.resolve_video_link(link.href)
+                            if item is None:
+                                self._link_video_downloading = False
+                                self.set_status(err or "Video not found", duration=5.0)
+                                self.dirty = True
+                                return
+                            movies_dir = JW_PLUGIN.find_movies_dir()
+                            ok, msg, _path = JW_PLUGIN.download_video(item, movies_dir)
+                        except Exception as e:
+                            ok, msg = False, f"Download failed: {e}"
+                        self._link_video_downloading = False
+                        if ok:
+                            msg = (f'"{item["title"]}" downloaded. Exit PicoReader '
+                                   f'and open ROM Collection -> Movies to watch it.')
+                        self.set_status(msg, duration=6.0)
+                        self.dirty = True
+
+                    threading.Thread(target=_do_link_video, daemon=True).start()
+                else:
+                    # Not a recognized video link (e.g. a "finder?docid=..."
+                    # page link with no video) -- nothing to auto-resolve,
+                    # so just show the URL. v0.1.101: the status bar now
+                    # wraps long messages across multiple lines on its own
+                    # (_draw_status_bar/_status_msg_lines), so the full
+                    # URL is shown instead of being cut short with "...".
+                    self.set_status(link.href, duration=6.0)
+            elif link.target_file:
                 self._scroll_stack.append(self.scroll)
                 self.state.follow_link(link)
                 self.scroll = 0
@@ -3772,32 +4553,74 @@ class App:
             return True
         return False
 
-    def _image_box_rows(self, image_span):
-        """Fixed row-reservation for one image: IMG_BOX_ROWS for
-        landscape/square images, taller IMG_BOX_ROWS_PORTRAIT for portrait
-        images (v0.1.84) -- lets Bible/book cover art use closer to the
-        full 680px content width instead of being width-shrunk to fit a
-        landscape-shaped box. Peeked once per image (JPEG header only, via
-        peek_jpeg_size -- no decode) and cached by img_key since the
-        result never changes for a given image. Falls back to the
-        landscape default on any read/parse failure so a bad image can
-        never break pagination."""
+    def _image_dims(self, image_span):
+        """Cached natural (width, height) from the image's JPEG header --
+        peek_jpeg_size() only, no decode. Returns None if unreadable.
+        Cached by img_key since the header never changes for a given
+        image (unlike box row count, which now depends on the current
+        Font Size too -- see _image_box_rows())."""
         key = self._img_key(image_span.src)
-        cached = self._image_box_rows_cache.get(key)
+        cached = self._image_dims_cache.get(key)
         if cached is not None:
-            return cached
-        rows = IMG_BOX_ROWS
+            return cached if cached != (0, 0) else None
+        dims = None
         try:
             jpeg_bytes = self.doc.get_image_bytes(image_span.src)
             dims = peek_jpeg_size(jpeg_bytes)
-            if dims and dims[1] > dims[0]:
-                rows = IMG_BOX_ROWS_PORTRAIT
         except Exception:
             pass
-        self._image_box_rows_cache[key] = rows
-        return rows
+        self._image_dims_cache[key] = dims if dims else (0, 0)
+        return dims
 
-    def _rows_for_li(self, li):
+    def _image_box_rows(self, image_span, line_h, body_rows):
+        """Row-reservation for one image (v0.1.87): width is always
+        locked to the full content width (matches get_image_texture's
+        drawing math), height is fully dynamic per the image's own
+        aspect ratio -- rounded UP to the next whole text line so
+        surrounding text always resumes cleanly at a line boundary
+        instead of a sub-line remainder (Kaleb: "snap to each respective
+        text line"), and capped at body_rows so no single image can ever
+        claim more than one full screen of the viewable text area above
+        the hint bar (Kaleb: "cap at the max aspect ratio of the
+        viewable text on screen"). Replaces the old two-tier
+        IMG_BOX_ROWS/IMG_BOX_ROWS_PORTRAIT split from v0.1.84 -- that
+        fixed portrait covers being width-shrunk, but (a) still let a
+        20-row portrait box run past the hint bar at small Font Sizes
+        where body_rows < 20, and (b) forced thin chapter-header banner
+        images (Courage/Enjoy Life Forever) into a full 14-row box far
+        taller than they need. Depends on line_h/body_rows (which vary
+        with Font Size), so -- unlike the old cache -- nothing here is
+        cached across Font Size changes; only the cheap, unchanging
+        (width, height) header peek is (_image_dims_cache).
+
+        v0.1.100 fix: Kaleb found the real Courage book's chapter banner
+        (confirmed 1200x85px from the actual wcg_E.epub) didn't span the
+        full 680px content width at 18pt/21pt, but did at 32pt. Root
+        cause -- rows was `ceil(natural_h/line_h)`, which doesn't account
+        for the pad_y inset (draw_reader's IMG_PAD_Y) subtracted from the
+        box AFTER this runs. At 18pt/21pt the rounding-up margin was
+        smaller than that 8px inset, so avail_h dipped BELOW natural_h and
+        height became the accidental binding constraint in
+        get_image_texture's `scale = min(avail_w/iw, avail_h/ih)` -- the
+        banner scaled down to stay inside a too-short box instead of
+        filling the width it was designed to. Verified with the exact
+        real numbers: 18pt gave avail_h=40 vs natural_h=47.6 (shrinks to
+        564px); 32pt gave avail_h=68 vs 47.6 (fits, full 672px). Fix:
+        add the same 2*IMG_PAD_Y back into the rows calculation so
+        avail_h can never fall below natural_h at ANY Font Size --
+        width is then always the binding (or exactly-equal) constraint,
+        matching what box_w was already designed to guarantee."""
+        dims = self._image_dims(image_span)
+        if not dims or not dims[0] or not dims[1]:
+            return min(IMG_BOX_ROWS, body_rows)  # fallback: unreadable header
+        iw, ih = dims
+        avail_w = (SW - _sx(40)) - 2 * _sx(4)  # matches get_image_texture's inset
+        natural_h = ih * (avail_w / iw)
+        rows = math.ceil((natural_h + 2 * IMG_PAD_Y) / line_h)
+        rows = max(MIN_IMG_BOX_ROWS, rows)
+        return min(rows, body_rows)
+
+    def _rows_for_li(self, li, line_h, body_rows):
         """Visual row cost of one _lines[] entry: this image's box-row
         reservation (see _image_box_rows()) for an image-only line, 1 for
         ordinary text. Mirrors the exact classification draw_reader() and
@@ -3815,17 +4638,17 @@ class App:
             s, e, sidx = ranges[0]
             if sidx != -1 and self._combined_spans[sidx][0] == "image" and (e - s) >= len(self._lines[li]):
                 _, i, _, _ = self._combined_spans[sidx]
-                return self._image_box_rows(self._images[i])
+                return self._image_box_rows(self._images[i], line_h, body_rows)
         return 1
 
-    def page_down(self, body_rows):
+    def page_down(self, line_h, body_rows):
         """Advance to the next screenful. Walks li-by-li accumulating the
-        REAL per-line visual-row cost (an image line costs IMG_BOX_ROWS,
-        not 1) instead of the old `scroll += body_rows`, which added a
-        visual-row count directly onto self.scroll even though scroll is
-        a _lines[] index -- any image on the page threw that off,
-        sometimes over-advancing past an image entirely (skipping it),
-        sometimes under-advancing so the same image reappeared. Also
+        REAL per-line visual-row cost (dynamic per image now, see
+        _image_box_rows()) instead of the old `scroll += body_rows`, which
+        added a visual-row count directly onto self.scroll even though
+        scroll is a _lines[] index -- any image on the page threw that
+        off, sometimes over-advancing past an image entirely (skipping
+        it), sometimes under-advancing so the same image reappeared. Also
         stops BEFORE an image that wouldn't fully fit in the remaining
         space on this screen, matching the same rule now in
         draw_reader(), so a page turn never lands you on a screen that
@@ -3837,7 +4660,7 @@ class App:
         li = self.scroll
         row = 0
         while li < n:
-            cost = self._rows_for_li(li)
+            cost = self._rows_for_li(li, line_h, body_rows)
             if row > 0 and row + cost > body_rows:
                 break
             row += cost
@@ -3846,7 +4669,7 @@ class App:
                 break
         self.scroll = min(li, max(0, n - 1))
 
-    def page_up(self, body_rows):
+    def page_up(self, line_h, body_rows):
         """Backward counterpart to page_down() -- walks li's downward
         from just before the current scroll, accumulating the same
         per-line row cost, so it lands exactly where a page_down() from
@@ -3856,9 +4679,8 @@ class App:
 
         v0.1.85 fix: was missing page_down()'s `row > 0` guard on the
         break condition, so it wasn't symmetric. Consequence: an image
-        whose row cost alone exceeds body_rows (a real case now that
-        portrait covers use IMG_BOX_ROWS_PORTRAIT=20) would break out of
-        this loop on its very first iteration, before li ever moved --
+        whose row cost alone exceeds body_rows would break out of this
+        loop on its very first iteration, before li ever moved --
         self.scroll ended up unchanged, so L1 did nothing at all on that
         image. page_down() always includes at least the first/nearest
         item (showing an oversized one clipped rather than skipping it
@@ -3874,7 +4696,7 @@ class App:
             return
         row = 0
         while li >= 0:
-            cost = self._rows_for_li(li)
+            cost = self._rows_for_li(li, line_h, body_rows)
             if row > 0 and row + cost > body_rows:
                 break
             row += cost
@@ -4288,6 +5110,38 @@ def hint_height(fonts):
     return line_h_design * lines + HINT_H_BASE * 0.35
 
 
+def _status_msg_lines(fonts, msg):
+    """v0.1.101: wrap a long status/toast message (e.g. a jw.org link URL)
+    across multiple lines instead of overflowing off the right edge.
+    Kaleb: "the toast hint for the download doesn't text wrap at larger
+    font sizes" -- ui_small grows with reader Font Size (see
+    _status_bar_h's own comment below), so a URL that fit on one line at
+    14pt increasingly doesn't at 32pt, and a single render_text() call
+    was never going to wrap on its own regardless of size. Short
+    messages ("Bookmark added") just come back as a single-item list,
+    unaffected."""
+    return _wrap_hint_text_unbounded(fonts.ui_small, msg, SW - _sx(28))
+
+
+def _draw_status_bar(renderer, fonts, msg, color, bottom_y):
+    """v0.1.101: draws a (possibly multi-line) status/toast bar whose
+    bottom edge sits at bottom_y (e.g. just above the hint bar), growing
+    UPWARD as needed for extra lines instead of a single fixed-height
+    bar. Replaces 3 near-identical single-line call sites in
+    draw_reader()/draw_library()/draw_download_browse() that each
+    independently called _status_bar_h() + one render_text() -- keeping
+    this in one place means a future tweak can't drift out of sync
+    between the three screens the way three hand-copied blocks could."""
+    lines = _status_msg_lines(fonts, msg)
+    line_h = TTF.TTF_FontHeight(fonts.ui_small) + _sy(6)
+    bar_h = max(_status_bar_h(fonts), line_h * len(lines) + _sy(10))
+    fill_rect(renderer, 0, bottom_y - bar_h, SW, bar_h, COL_PANEL)
+    for i, line in enumerate(lines):
+        render_text(renderer, fonts.ui_small, line, color,
+                     _sx(14), bottom_y - bar_h + _sy(6) + i * line_h)
+    return bar_h
+
+
 def _status_bar_h(fonts):
     """Height of the transient status-message bar (e.g. 'Font size: 32pt
     (largest)') -- v0.1.54. Was a fixed _sy(30)/_sy(22) pair sized for the
@@ -4299,25 +5153,38 @@ def _status_bar_h(fonts):
     return _row_h(fonts.ui_small, pad=10)
 
 
-IMG_BOX_ROWS = 14  # sized to actually use the FULL_N=4 decoded resolution
-                    # (was 6 -- that shrank a typical 1200x600 photo to ~48%
-                    # of its decoded size, wasting more than half the decode
-                    # work). Shared at module level so visible_span_indices()
-                    # (link-selection scope) and draw_reader() (actual pixels)
-                    # never disagree about how much visual space an image
-                    # takes -- they used to compute this independently and
-                    # drift apart.
+IMG_BOX_ROWS = 14  # v0.1.87: no longer the normal-case box size (that's
+                    # fully dynamic now, see App._image_box_rows()) -- kept
+                    # only as the fallback for an image whose header can't
+                    # be read/peeked, so a bad image still can't break
+                    # pagination.
 
-IMG_BOX_ROWS_PORTRAIT = 20  # v0.1.84: taller row-reservation for
-                    # portrait-oriented images (Bible/book cover art, etc).
-                    # A portrait image scaled to fit the landscape-shaped
-                    # IMG_BOX_ROWS box got needlessly width-shrunk below the
-                    # full 680px content width just to satisfy the shorter
-                    # height budget -- Kaleb wants covers to use the full
-                    # width whenever the aspect ratio allows. Kept as a
-                    # second FIXED tier (not fully dynamic per-image) so
-                    # pagination stays deterministic -- see
-                    # App._image_box_rows().
+IMG_PAD_Y = 4  # v0.1.100: the inset draw_reader() insets an image box by on
+               # top/bottom (pad_y = _sy(IMG_PAD_Y) there) -- pulled out as
+               # a shared constant so _image_box_rows()'s row math (which
+               # needs to know this same inset to guarantee avail_h never
+               # drops below natural_h) can't silently drift out of sync
+               # with the actual draw-time inset the way two independently
+               # hand-copied "4"s could.
+
+MIN_IMG_BOX_ROWS = 1  # v0.1.99: was 3 (v0.1.87). BUG FOUND during Kaleb's
+                    # "bug check everything" request: v0.1.97's top-align/
+                    # border-hug change only repositioned the image/border
+                    # WITHIN the reserved box -- it never touched box_rows
+                    # itself, and row += box_rows (draw_reader) is what
+                    # actually decides when text resumes. So the floor of
+                    # 3 was still forcing thin banners (Section 1 Timeline,
+                    # Courage/Enjoy Life Forever headers) to reserve 3 full
+                    # text-line-heights before text continued, regardless
+                    # of how the image was drawn inside that space -- the
+                    # v0.1.97 fix was cosmetic only and did NOT fix the
+                    # reported bug. ceil(natural_h/line_h) in
+                    # _image_box_rows() already guarantees >=1 for any
+                    # image with real height, so this floor is now just a
+                    # defensive minimum (e.g. a malformed header reporting
+                    # near-zero height), not a forced 3-row pad. Combined
+                    # with v0.1.97's top-align, a thin banner now reserves
+                    # ~1 line of space and the image sits flush at its top.
 
 
 def _round_top_corners_to_bg(renderer, x, y, w, radius):
@@ -4427,10 +5294,8 @@ def draw_library(renderer, app):
                         _sx(24), top + ei * empty_line_h)
 
     if app.status_msg and time.time() < app.status_until:
-        _sb_h = _status_bar_h(app.fonts)
-        fill_rect(renderer, 0, SH - _sy(hint_height(app.fonts)) - _sy(_sb_h), SW, _sy(_sb_h), COL_PANEL)
-        render_text(renderer, app.fonts.ui_small, app.status_msg, COL_WARNING,
-                    _sx(14), SH - _sy(hint_height(app.fonts)) - _sy(_sb_h) + _sy(6))
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_WARNING,
+                          SH - _sy(hint_height(app.fonts)))
 
     lib_hint = "A Open  Y Sort  X Pin  SELECT Delete  L/R Font Size  START Menu  B Quit"
     if DOWNLOAD_PLUGINS:
@@ -4444,7 +5309,7 @@ def draw_reader(renderer, app):
 
     body_top, line_h, body_rows = _reader_body_layout(app.fonts)
 
-    visible_spans = app.visible_span_indices(body_rows)
+    visible_spans = app.visible_span_indices(line_h, body_rows)
     if visible_spans and app.selected_span not in visible_spans:
         app.selected_span = visible_spans[0]
 
@@ -4482,7 +5347,7 @@ def draw_reader(renderer, app):
                 continue
             _, i, _, _ = app._combined_spans[img_span_idx]
             image_span = app._images[i]
-            box_rows = app._image_box_rows(image_span)
+            box_rows = app._image_box_rows(image_span, line_h, body_rows)
             # If this image wouldn't fully fit in what's left of the
             # screen, stop the page HERE instead of drawing it and
             # letting it overflow past the bottom (previously: an image
@@ -4512,7 +5377,7 @@ def draw_reader(renderer, app):
             # Fix: scale against the SAME inset region the panel/border
             # actually occupy, so there's always a real margin between
             # the image edge and the border, at any font size.
-            pad_x, pad_y = _sx(4), _sy(4)
+            pad_x, pad_y = _sx(4), _sy(IMG_PAD_Y)
             avail_w = box_w - 2 * pad_x
             avail_h = box_h - 2 * pad_y
             if entry and entry != "error":
@@ -4522,12 +5387,56 @@ def draw_reader(renderer, app):
                 scale = min(avail_w / iw, avail_h / ih) if iw and ih else 1.0
                 dw, dh = int(iw * scale), int(ih * scale)
                 dx = _sx(20) + pad_x + (avail_w - dw) // 2
-                dy = y + pad_y + (avail_h - dh) // 2
+                # v0.1.97: top-align instead of vertically centering. A thin
+                # banner (Courage/Enjoy Life Forever chapter-header strips)
+                # keeps a much taller box than its own height needs (see
+                # MIN_IMG_BOX_ROWS), and centering split that leftover space
+                # above AND below the image -- so text still didn't resume
+                # until after all that dead space (Kaleb: "before text
+                # continues"). Top-aligning puts all the leftover space
+                # below the image instead, and the border-hugging logic
+                # right below shrinks the visible box to match, so the
+                # gap before the next line shrinks to just the normal
+                # image/text spacing. box_h/box_rows (pagination) are
+                # untouched -- only where the image/border draw INSIDE
+                # that reserved space changes.
+                dy = y + pad_y
                 dst = Rect(dx, dy, dw, dh)
                 SDL.SDL_RenderCopy(renderer, tex, None, ctypes.byref(dst))
                 if not is_full:
                     render_text(renderer, app.fonts.ui_small, "improving...", COL_DIM,
                                 dx, dy + dh + _sy(2))
+                # v0.1.96: for a portrait/height-limited image (scaled down
+                # because of avail_h, not avail_w -- confirmed via real
+                # test images from the Courage epub that this always
+                # leaves real leftover horizontal space, never a rounding
+                # sliver), hug the selection border to the actual drawn
+                # picture width instead of the full page width, so the
+                # highlight doesn't surround a lot of empty side margin.
+                # ONLY the border rect changes here -- box_w/box_h (what
+                # _image_box_rows()/pagination/scroll actually use) are
+                # untouched, so this can't desync page-turn/scroll math
+                # from what's drawn. That exact desync (border drawn
+                # against a different box than the one row-math assumed)
+                # is the v0.1.83 bug class this is deliberately avoiding.
+                if dh >= avail_h - 1 and dw < avail_w:
+                    border_w = dw + 2 * pad_x
+                    border_dx = dx - pad_x
+                else:
+                    border_w = box_w
+                    border_dx = _sx(18)
+                # v0.1.97: mirror the above, but for HEIGHT -- a thin
+                # banner is width-filled (dw ~= avail_w) but far shorter
+                # than avail_h. Hug the border to the image's actual
+                # height (now top-aligned via dy above) instead of the
+                # full box_h, so the selection/panel box doesn't visually
+                # surround a lot of empty space under a thin banner.
+                if dw >= avail_w - 1 and dh < avail_h - 1:
+                    border_h = dh + 2 * pad_y
+                    border_dy = y
+                else:
+                    border_h = box_h - _sy(4)
+                    border_dy = y + _sy(2)
             else:
                 fill_rect_rounded(renderer, _sx(20), y + _sy(4), box_w, box_h - _sy(8), COL_PANEL)
                 if entry == "error":
@@ -4538,10 +5447,14 @@ def draw_reader(renderer, app):
                         else "Loading image..."
                 render_text(renderer, app.fonts.ui_small, msg, COL_DIM,
                             _sx(30), y + box_h // 2 - _sy(8))
+                border_w = box_w
+                border_dx = _sx(18)
+                border_h = box_h - _sy(4)
+                border_dy = y + _sy(2)
             if is_selected:
                 SDL.SDL_SetRenderDrawColor(renderer, border_color.r, border_color.g,
                                             border_color.b, 255)
-                br = Rect(_sx(18), y + _sy(2), box_w + _sx(4), box_h - _sy(4))
+                br = Rect(border_dx, border_dy, border_w + _sx(4), border_h)
                 SDL.SDL_RenderDrawRect(renderer, ctypes.byref(br))
             row += box_rows
             li += 1
@@ -4605,10 +5518,8 @@ def draw_reader(renderer, app):
                     SW - label_w - _sx(14), footer_top + _sy(6))
 
     if app.status_msg and time.time() < app.status_until:
-        _sb_h = _status_bar_h(app.fonts)
-        fill_rect(renderer, 0, SH - _sy(hint_height(app.fonts)) - _sy(_sb_h), SW, _sy(_sb_h), COL_PANEL)
-        render_text(renderer, app.fonts.ui_small, app.status_msg, COL_ACCENT,
-                    _sx(14), SH - _sy(hint_height(app.fonts)) - _sy(_sb_h) + _sy(6))
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)))
 
     draw_hint(renderer, app.fonts,
               "D-PAD Select/Scroll  A Follow  B Back  L/R Page  L2/R2 Chapter  Y Fast x10  X Menu  START Bookmark")
@@ -4752,7 +5663,7 @@ def draw_download_categories(renderer, app):
             fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.dl_cat_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, cat, color, _sx(24), y + _sy(10))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Jump 10   A Open   B Back")
 
 
 def draw_download_sources(renderer, app):
@@ -4777,7 +5688,7 @@ def draw_download_sources(renderer, app):
 
 def draw_download_browse(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
-    name = getattr(app.dl_plugin, "PLUGIN_NAME", "Download") if app.dl_plugin else "Download"
+    name = "JW Videos" if app.dl_is_video else (getattr(app.dl_plugin, "PLUGIN_NAME", "Download") if app.dl_plugin else "Download")
     title = f"{name.upper()}"
     if app.dl_category:
         title += f" -- {app.dl_category}"
@@ -4807,7 +5718,10 @@ def draw_download_browse(renderer, app):
         render_text(renderer, app.fonts.ui_small, str(app.dl_load_error)[:70], COL_DIM,
                     _sx(24), top + title_h + _sy(6))
     elif not app.dl_items:
-        render_text(renderer, app.fonts.ui_body, "No results.", COL_DIM, _sx(24), top)
+        whats_new = getattr(app.dl_plugin, "CATEGORY_WHATS_NEW", None)
+        msg = ("No new publications detected via RSS right now."
+               if whats_new and app.dl_category == whats_new else "No results.")
+        render_text(renderer, app.fonts.ui_body, msg, COL_DIM, _sx(24), top)
     else:
         visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
         start = max(0, app.dl_index - visible // 2)
@@ -4828,14 +5742,16 @@ def draw_download_browse(renderer, app):
                         _sx(24), y + title_h + _sy(10))
 
     if app.status_msg and time.time() < app.status_until:
-        _sb_h = _status_bar_h(app.fonts)
-        fill_rect(renderer, 0, SH - _sy(hint_height(app.fonts)) - _sy(_sb_h), SW, _sy(_sb_h), COL_PANEL)
-        render_text(renderer, app.fonts.ui_small, app.status_msg, COL_ACCENT,
-                    _sx(14), SH - _sy(hint_height(app.fonts)) - _sy(_sb_h) + _sy(6))
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)))
 
     hint = "UP/DOWN Select   A Download   B Back"
     if app.dl_has_next or app.dl_page > 1:
         hint = "UP/DOWN Select   L/R Page   A Download   B Back"
+    elif app.dl_items:
+        # v0.1.88: no server-side pages to flip through, but L/R still do
+        # something useful here -- jump 10 items locally -- so say so.
+        hint = "UP/DOWN Select   L/R Jump 10   A Download   B Back"
     if getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
         hint = hint.replace("B Back", "Y Search   B Back")
     elif getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
@@ -4864,6 +5780,14 @@ def draw_library_menu(renderer, app):
             label = item + "  *"  # mark the currently-active sort mode
         if item == "Download Books" and not DOWNLOAD_PLUGINS:
             continue  # hide entirely if no downloader plugin is present
+        if item == "Enjoy Life Forever Book Videos" and not JW_VIDEO_SUPPORTED:
+            continue  # hide entirely if jw_fetch (or its video support) isn't present
+        if item == "Check JW Broadcasting" and not JW_VIDEO_SUPPORTED:
+            continue  # same guard -- reuses the same plugin/video support
+        if item == "Check Governing Body Updates" and not JW_VIDEO_SUPPORTED:
+            continue  # same guard again
+        if item == "The Good News According to Jesus" and not JW_VIDEO_SUPPORTED:
+            continue  # same guard again
         if i == app.lib_menu_index:
             fill_rect_rounded(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.lib_menu_index else COL_TEXT
@@ -4975,7 +5899,9 @@ def draw_storage(renderer, app):
 
     if app.status_msg and time.time() < app.status_until:
         msg_y = top + min(visible, n_items) * row_h + _sy(20)
-        render_text(renderer, app.fonts.ui_small, app.status_msg, COL_ACCENT, _sx(20), msg_y)
+        line_h = TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(6)
+        for i, line in enumerate(_status_msg_lines(app.fonts, app.status_msg)):
+            render_text(renderer, app.fonts.ui_small, line, COL_ACCENT, _sx(20), msg_y + i * line_h)
 
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
 
@@ -5327,6 +6253,19 @@ def handle_button(app, btn, body_h_px=None):
                 else:
                     app.dl_source_index = 0
                     app.screen = SCREEN_DOWNLOAD_SOURCES
+            elif choice == "Enjoy Life Forever Book Videos" and JW_VIDEO_SUPPORTED:
+                # v0.1.90: only one video catalog confirmed so far ("lffv" --
+                # Enjoy Life Forever videos). If more video pubs get
+                # confirmed live later, this becomes a small picker list
+                # instead of a hardcoded single pub -- deliberately not
+                # over-built for a hypothetical second catalog yet.
+                app.open_video_downloader("lffv")
+            elif choice == "Check JW Broadcasting" and JW_VIDEO_SUPPORTED:
+                app.open_broadcast_downloader()
+            elif choice == "Check Governing Body Updates" and JW_VIDEO_SUPPORTED:
+                app.open_gb_update_downloader()
+            elif choice == "The Good News According to Jesus" and JW_VIDEO_SUPPORTED:
+                app.open_good_news_downloader()
             elif choice == "Storage":
                 app.storage_index = 0
                 app._storage_confirm_idx = None
@@ -5348,6 +6287,15 @@ def handle_button(app, btn, body_h_px=None):
         n = len(categories)
         if btn == "UP": app.dl_cat_index = (app.dl_cat_index - 1) % n if n else 0
         elif btn == "DOWN": app.dl_cat_index = (app.dl_cat_index + 1) % n if n else 0
+        elif btn == "R" and n:
+            # v0.1.88: jump ~10 items at a time -- Kaleb's request, since
+            # some plugins' CATEGORIES lists (JW back-issue categories,
+            # Gutenberg's 17-entry picker) are long enough that one-at-a-
+            # time UP/DOWN got tedious once these became full scrollable
+            # lists instead of the old paged browsing.
+            app.dl_cat_index = min(app.dl_cat_index + 10, n - 1)
+        elif btn == "L" and n:
+            app.dl_cat_index = max(app.dl_cat_index - 10, 0)
         elif btn == "B":
             if len(DOWNLOAD_PLUGINS) > 1:
                 app.screen = SCREEN_DOWNLOAD_SOURCES
@@ -5360,16 +6308,31 @@ def handle_button(app, btn, body_h_px=None):
         n = len(app.dl_items)
         if btn == "UP": app.dl_index = (app.dl_index - 1) % n if n else 0
         elif btn == "DOWN": app.dl_index = (app.dl_index + 1) % n if n else 0
-        elif btn == "R" and app.dl_has_next: app.dl_next_page()
-        elif btn == "L" and app.dl_page > 1: app.dl_prev_page()
-        elif btn == "Y" and getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
+        elif btn == "R":
+            # v0.1.88: R already meant "next page" when the plugin paginates
+            # server-side (has_next=True). Some lists -- e.g. a JW back-
+            # issue category, or a Gutenberg category -- come back as one
+            # single page with no next/prev at all, so R used to just do
+            # nothing there even though the list itself can be 20-30+ items.
+            # Falls back to a local ~10-item jump in that case, so the same
+            # button always does something useful on every list screen.
+            if app.dl_has_next:
+                app.dl_next_page()
+            elif n:
+                app.dl_index = min(app.dl_index + 10, n - 1)
+        elif btn == "L":
+            if app.dl_page > 1:
+                app.dl_prev_page()
+            elif n:
+                app.dl_index = max(app.dl_index - 10, 0)
+        elif btn == "Y" and not app.dl_is_video and getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
             def _on_search_confirm(app, value):
                 app.screen = SCREEN_DOWNLOAD_BROWSE
                 app.start_search(value)
             app.open_text_entry("Search " + getattr(app.dl_plugin, "PLUGIN_NAME", ""),
                                  app.dl_query or "", _on_search_confirm, SCREEN_DOWNLOAD_BROWSE,
                                  hint="Search by title or author  (case-insensitive)")
-        elif btn == "Y" and getattr(app.dl_plugin, "SUPPORTS_CATEGORIES", False):
+        elif btn == "Y" and not app.dl_is_video and getattr(app.dl_plugin, "SUPPORTS_CATEGORIES", False):
             # Same search entry as SUPPORTS_SEARCH above, but scoped to the
             # currently-open category via start_search() -> _load_dl_page(),
             # which already threads self.dl_category through.
@@ -5380,7 +6343,7 @@ def handle_button(app, btn, body_h_px=None):
             app.open_text_entry(f"Search {cat_label}", app.dl_query or "",
                                  _on_cat_search_confirm, SCREEN_DOWNLOAD_BROWSE,
                                  hint="Search by title  (case-insensitive)")
-        elif btn == "Y" and getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
+        elif btn == "Y" and not app.dl_is_video and getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
             def _on_code_validate(app, value):
                 parts = value.strip().split()
                 code = parts[0] if parts else ""
@@ -5403,7 +6366,14 @@ def handle_button(app, btn, body_h_px=None):
                                  None, SCREEN_DOWNLOAD_BROWSE, on_validate=_on_code_validate,
                                  hint=getattr(app.dl_plugin, "MANUAL_CODE_HINT", ""))
         elif btn == "B":
-            if app.dl_category is not None:
+            if app.dl_is_video:
+                # v0.1.90: video browse was opened directly from the Library
+                # Menu (no category/source picker in between -- see
+                # open_video_downloader()), so B goes straight back there
+                # rather than into the EPUB category/source-picker logic below.
+                app.dl_is_video = False
+                app.screen = SCREEN_LIBRARY_MENU
+            elif app.dl_category is not None:
                 app.screen = SCREEN_DOWNLOAD_CATEGORIES
             elif len(DOWNLOAD_PLUGINS) > 1:
                 app.screen = SCREEN_DOWNLOAD_SOURCES
@@ -5458,7 +6428,7 @@ def handle_button(app, btn, body_h_px=None):
 
     elif app.screen == SCREEN_READER:
         app._ensure_page_built()
-        visible_spans = app.visible_span_indices(body_rows)
+        visible_spans = app.visible_span_indices(line_h, body_rows)
         step = 10 if app.fast_scroll else 1
         if btn == "UP":
             if app.selected_span > 0 and visible_spans and app.selected_span in visible_spans:
@@ -5497,9 +6467,9 @@ def handle_button(app, btn, body_h_px=None):
                 app.save_progress()
                 app.screen = SCREEN_LIBRARY
         elif btn == "L":
-            app.page_up(body_rows)
+            app.page_up(line_h, body_rows)
         elif btn == "R":
-            app.page_down(body_rows)
+            app.page_down(line_h, body_rows)
         elif btn == "L2":
             app.prev_chapter()
         elif btn == "R2":

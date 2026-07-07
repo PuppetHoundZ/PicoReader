@@ -50,8 +50,13 @@ import ctypes.util
 available = False
 _SDL = None
 _IMG = None
+_have_linear_stretch = False  # SDL_SoftStretchLinear -- SDL 2.0.16+ only,
+                               # see decode_jpeg_native()'s v0.1.91 note
 
 SDL_PIXELFORMAT_RGB24 = 0x17101803  # confirmed via SDL_GetPixelFormatName()
+SDL_PIXELFORMAT_ARGB8888 = 0x16362004  # confirmed against SDL2 pixels.h --
+                                        # see decode_jpeg_native()'s v0.1.91
+                                        # note for why this is needed
 IMG_INIT_JPG = 0x00000001
 
 
@@ -122,7 +127,7 @@ def _init():
     multiple times; only does real work once. Never raises -- sets
     `available` True/False and logs the reason via the caller's own
     logging (main.py's _boot_log), passed in to avoid a circular import."""
-    global available, _SDL, _IMG
+    global available, _SDL, _IMG, _have_linear_stretch
     if _SDL is not None:
         return  # already attempted (success or failure)
 
@@ -146,6 +151,21 @@ def _init():
                                              _SurfPtr, ctypes.POINTER(_SDL_Rect)]
         sdl.SDL_ConvertSurfaceFormat.restype = _SurfPtr
         sdl.SDL_ConvertSurfaceFormat.argtypes = [_SurfPtr, ctypes.c_uint32, ctypes.c_uint32]
+
+        # SDL_SoftStretchLinear (SDL 2.0.16+) does genuine bilinear-filtered
+        # scaling; SDL_UpperBlitScaled's classic path is nearest-neighbor
+        # (SDL_SoftStretch) with no filtering at all -- see decode_jpeg_
+        # native()'s v0.1.91 note. Optional: older muOS SDL2 builds may not
+        # have it, so this is allowed to fail without disabling native
+        # decode entirely -- just falls back to the old nearest-neighbor
+        # blit for the downscale step.
+        try:
+            sdl.SDL_SoftStretchLinear.restype = ctypes.c_int
+            sdl.SDL_SoftStretchLinear.argtypes = [_SurfPtr, ctypes.POINTER(_SDL_Rect),
+                                                    _SurfPtr, ctypes.POINTER(_SDL_Rect)]
+            _have_linear_stretch = True
+        except AttributeError:
+            _have_linear_stretch = False
 
         img.IMG_Init.restype = ctypes.c_int
         img.IMG_Init.argtypes = [ctypes.c_int]
@@ -214,12 +234,47 @@ def decode_jpeg_native(jpeg_bytes, scale_n=4):
             # which decoder actually produced the bytes.
             out_w = max(1, (src_w * scale_n + 7) // 8)
             out_h = max(1, (src_h * scale_n + 7) // 8)
-            dst = _SDL.SDL_CreateRGBSurfaceWithFormat(0, out_w, out_h, 24, SDL_PIXELFORMAT_RGB24)
-            if not dst:
-                raise RuntimeError(f"SDL_CreateRGBSurfaceWithFormat failed: {_SDL.SDL_GetError()}")
-            if _SDL.SDL_UpperBlitScaled(surf, None, dst, None) != 0:
-                _SDL.SDL_FreeSurface(dst)
-                raise RuntimeError(f"SDL_UpperBlitScaled failed: {_SDL.SDL_GetError()}")
+            # v0.1.91: SDL_UpperBlitScaled uses SDL2's classic SDL_SoftStretch
+            # under the hood, which is NEAREST-NEIGHBOR with no filtering at
+            # all (confirmed against the SDL2 wiki/changelog -- SDL_Soft
+            # StretchLinear, added in 2.0.16, is the first bilinear-filtered
+            # option). That's fine for a mild downscale, but for a large
+            # cover/photo being reduced a lot (small scale_n), nearest-
+            # neighbor throws away most source pixels instead of blending
+            # them, producing visible blockiness -- exactly Kaleb's report
+            # that some covers look "crisp" (small downscale ratio, artifact
+            # not visible) and others "blocky" (large downscale ratio, same
+            # artifact very visible). SDL_SoftStretchLinear requires two
+            # SAME-FORMAT 32bpp surfaces, so this path converts to ARGB8888
+            # for the stretch, then converts back to RGB24 to keep this
+            # function's existing output contract (tight RGB24) unchanged
+            # for every caller. Falls back to the old nearest-neighbor path
+            # if SDL_SoftStretchLinear isn't available on this muOS's SDL2
+            # build (see _have_linear_stretch).
+            if _have_linear_stretch:
+                src32 = _SDL.SDL_ConvertSurfaceFormat(surf, SDL_PIXELFORMAT_ARGB8888, 0)
+                if not src32:
+                    raise RuntimeError(f"SDL_ConvertSurfaceFormat (ARGB8888) failed: {_SDL.SDL_GetError()}")
+                dst32 = _SDL.SDL_CreateRGBSurfaceWithFormat(0, out_w, out_h, 32, SDL_PIXELFORMAT_ARGB8888)
+                if not dst32:
+                    _SDL.SDL_FreeSurface(src32)
+                    raise RuntimeError(f"SDL_CreateRGBSurfaceWithFormat (ARGB8888) failed: {_SDL.SDL_GetError()}")
+                stretch_ok = _SDL.SDL_SoftStretchLinear(src32, None, dst32, None) == 0
+                _SDL.SDL_FreeSurface(src32)
+                if not stretch_ok:
+                    _SDL.SDL_FreeSurface(dst32)
+                    raise RuntimeError(f"SDL_SoftStretchLinear failed: {_SDL.SDL_GetError()}")
+                dst = _SDL.SDL_ConvertSurfaceFormat(dst32, SDL_PIXELFORMAT_RGB24, 0)
+                _SDL.SDL_FreeSurface(dst32)
+                if not dst:
+                    raise RuntimeError(f"SDL_ConvertSurfaceFormat (RGB24) failed: {_SDL.SDL_GetError()}")
+            else:
+                dst = _SDL.SDL_CreateRGBSurfaceWithFormat(0, out_w, out_h, 24, SDL_PIXELFORMAT_RGB24)
+                if not dst:
+                    raise RuntimeError(f"SDL_CreateRGBSurfaceWithFormat failed: {_SDL.SDL_GetError()}")
+                if _SDL.SDL_UpperBlitScaled(surf, None, dst, None) != 0:
+                    _SDL.SDL_FreeSurface(dst)
+                    raise RuntimeError(f"SDL_UpperBlitScaled failed: {_SDL.SDL_GetError()}")
             final = dst
             owns_final = True
 
