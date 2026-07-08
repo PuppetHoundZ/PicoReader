@@ -24,14 +24,21 @@ another muOS app for the same device.
   footnotes, and internal links — not just simple text files.
 - **Shows images**, including progressive JPEGs, using a JPEG decoder
   built from scratch for this project (there's no PIL/Pillow on-device
-  to do this for us).
+  to do this for us), with a much faster native decode path used
+  automatically when the device has `libSDL2_image` available.
 - **Adjustable text size** that applies everywhere — the book text,
   menus, and every list on screen — not just the reading area.
 - **Bookmarks and "resume reading"** that return you to the exact spot
   you left off, down to the paragraph.
 - **A full table of contents / chapter browser**, plus quick
   next/previous chapter buttons.
-- **A built-in image cache** you can manage from a Storage screen,
+- **Library organization** — pin favorites, mark books Finished/
+  Unfinished with a filter to match, sort by title/author/last read/
+  recently added, and a "Continue Reading" shortcut that jumps straight
+  into your most recently read book. There's also an optional "Open
+  Last Book on Launch" toggle if you'd rather skip the Library screen
+  entirely and land right back in your book on startup.
+- **A built-in image cache** you can manage from the Settings screen,
   including a RAM-only mode if you'd rather not write to disk at all.
 - **Optional book downloaders** — browse and download books right on
   the device (see below).
@@ -43,7 +50,7 @@ guessing. The basics:
 
 | Button | While reading | In the Library |
 |---|---|---|
-| D-PAD | Scroll / move between links | Move selection |
+| D-PAD | Scroll / move between links | Move selection (LEFT/RIGHT jump 10) |
 | A | Follow a link / confirm | Open the selected book |
 | B | Go back | Quit |
 | L / R | Previous / next page | Font size smaller / larger |
@@ -51,7 +58,14 @@ guessing. The basics:
 | Y | Toggle fast-scroll | Change sort order |
 | X | Open the menu | Pin a book |
 | START | Add a bookmark here | Open the Library menu |
-| SELECT | -- | Delete a book (press twice to confirm) |
+| SELECT | -- | Mark the book Finished / Unfinished |
+
+Book delete lives in the Library menu (START → Delete Book) rather than
+on a bare button — it always targets whichever book was highlighted
+when you opened the menu, and needs a second press to confirm. The
+Library menu also has sort/filter shortcuts, theme switching, and the
+Settings screen (image cache, RAM-only mode, Continue Reading /
+Open Last Book on Launch, and more).
 
 ## Downloading books on-device
 
@@ -81,7 +95,8 @@ downloaded release.
 |---|---|
 | `main.py` | The app itself — UI, controls, state, image handling |
 | `epub_engine.py` | Parses EPUB files (no external libraries needed) |
-| `mini_jpeg.py` | Decodes JPEG images, including progressive JPEGs |
+| `mini_jpeg.py` | Decodes JPEG images, including progressive JPEGs, in pure Python |
+| `native_jpeg.py` | Optional ctypes bridge to the device's own `libSDL2_image` for much faster JPEG decoding — used automatically when available, with `mini_jpeg.py` as the automatic fallback |
 | `mux_launch.sh` | Tells muOS how to launch the app |
 | `gutenberg_fetch.py` | The built-in Project Gutenberg downloader |
 | `PLUGIN_TEMPLATE.py` | Starting point for writing your own downloader |

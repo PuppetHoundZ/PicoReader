@@ -2,12 +2,16 @@
 """
 PicoReader for muOS (Anbernic RG CubeXX-H, 720x720)
 
-*** THIS IS THE PERSONAL BUILD -- INCLUDES jw_fetch.py ***
-jw_fetch.py is a PRIVATE downloader plugin (JW.org publications) and
-must NEVER be published to the public GitHub repo. This build is for
-Kaleb's own device only. For the public/GitHub-safe build (identical
-otherwise, jw_fetch.py simply not included), see the separate release
-build's main.py header.
+*** THIS IS THE PUBLIC/GITHUB RELEASE BUILD -- jw_fetch.py NOT included ***
+jw_fetch.py is a private downloader plugin (JW.org publications) kept
+out of this build and the public repo entirely. Everything else is
+identical to the personal build. The plugin loader below (DOWNLOAD_
+PLUGINS) already handles jw_fetch.py's absence gracefully -- it's a
+defensive try/except import, so Library/Settings simply don't show a
+JW-specific "Download Books" entry or video-download support, with no
+crash and no broken menu item. gutenberg_fetch.py (Project Gutenberg,
+public-domain books) still works exactly as normal. Want your own
+source? See PLUGIN_TEMPLATE.py for the plugin contract.
 
 Companion app to Pico8FavsSorter -- same conventions: raw ctypes SDL2,
 no external deps, hint bar, controller-first navigation.
