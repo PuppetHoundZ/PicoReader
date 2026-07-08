@@ -21,7 +21,8 @@ Screens:
 
 Controls:
   D-PAD UP/DOWN     scroll / move link selection
-  D-PAD LEFT/RIGHT  cycle link selection left/right on same line
+  D-PAD LEFT/RIGHT  cycle link selection left/right on same line (reader);
+                    (Library) quick-scroll, jump 10 rows (v0.1.110)
   A                 follow selected link / confirm menu selection
   B                 go back (link history) / close menu / back to library;
                     (Library) quit the app -- moved here from SELECT in
@@ -64,7 +65,31 @@ project back up. This describes the CURRENT build only. Full version
 history has been condensed below the standing rules; don't go looking
 for a longer historical changelog elsewhere, this is the whole thing.
 
-CURRENT STATE (v0.1.82):
+CURRENT STATE (v0.1.115 -- see changelog for detail; this paragraph
+covers the still-accurate architecture/theme/JW-plugin description
+below, updated only where recent versions changed behavior: video
+browsing -- Enjoy Life Forever, JW Broadcasting, Governing Body
+Updates, The Good News According to Jesus -- is now one "Videos"
+category reached via Download Books > JW, not four separate Library
+Menu entries; "Check JW Broadcasting" no longer crashes (missing
+open_broadcast_downloader() method added); video screens have working
+Y-search; Library D-pad LEFT/RIGHT quick-scrolls by 10 rows; the real
+fix for "cover image blank until a page turn" landed in v0.1.111 --
+leading blank lines before an image (stray whitespace HTML leaves
+around a block-level <img>) no longer defeat the "first thing on the
+page" exemption in draw_reader()/page_down()/page_up() -- v0.1.110's
+eager-decode-request change was NOT the actual fix, see that entry's
+correction below; v0.1.113 bumped CAP_MARGIN_ROWS to 3 (a small safety
+margin so a capped oversized image leaves room for a short trailing
+caption/title heading on the same screen); v0.1.114 fixed a real
+offset-drift bug where wrapped multi-line paragraphs could push
+_line_abs_offsets out of sync with the true text position, causing
+random normal paragraphs to be misclassified as box_rule divider
+lines (small + dim) the further into a page they appeared; v0.1.115
+found and fixed three more instances of that same offset-drift shape --
+bookmark/resume-reading save+restore and named-anchor/chapter/TOC
+jumps could all land a few lines short of the real target for the
+same underlying reason):
 
 UI: 5 color themes (Default, Dim Warm, Deep Amber, Red Shift, Adventure)
 via THEMES list + apply_theme(index) -- rebinds module-level COL_*
@@ -336,6 +361,339 @@ v0.1.92 -- Kaleb: "Categories don't load on Gutenberg." Not a code bug --
   (confirmed with two different User-Agent strings, so it's Gutendex's
   own bot-protection rejecting the sandbox's IP, not a header/code
   issue) -- ordinary on-device network access should not hit this.
+
+v0.1.123 -- "Storage" renamed to "Settings" everywhere user-facing
+  (Kaleb's request) -- the screen heading, both menu entries that open
+  it (Library Menu and the in-reader popup Menu), and both matching
+  "elif choice == ..." handlers all updated together (internal names --
+  SCREEN_STORAGE, STORAGE_ACTIONS, storage_index, draw_storage -- left
+  alone, purely cosmetic label change, zero functional risk). Added
+  "Toggle Open Last Book on Launch" (Kaleb's follow-up idea, building on
+  v0.1.122's Continue Reading) -- when on, skips the Library screen at
+  startup and opens straight into whichever book has the most recent
+  last-read timestamp, exact position restored, same as a normal tap.
+  Defaults OFF. Checked at the very END of App.__init__() and NOT right
+  after refresh_library() -- open_book() reads/clears
+  self._prerender_active, self._page_text_cache(_order), and
+  self._wrapped_cache, none of which exist that early in __init__ (all
+  set up further down); calling it before they exist would crash with
+  AttributeError on first launch with the toggle on. Bug-checked with an
+  11-case standalone simulation covering: toggle off (unchanged
+  behavior), nothing ever read, a valid recent book, the most-recent
+  book deleted since last session (falls through to the next-most-
+  recent EXISTING book automatically -- scan_library() only returns
+  files that currently exist, so a deleted book's stale timestamp can
+  never even be considered), every read book deleted, a corrupted EPUB
+  (fails safely, does NOT silently try a different book -- same as a
+  normal tap on a corrupted book), and an empty-spine book. All 11
+  passed. Falls back to the Library screen in every failure case, per
+  Kaleb's explicit "fall back to library always."
+
+v0.1.122 -- Four small Library features, all Kaleb's ideas from a
+  minimalist-features brainstorm (approved: Library list #1-3, #5, #6;
+  declined: #4 reading-time estimate, #7 auto-bookmark-every-chapter).
+  All text goes through the existing _fit_text()/item_max_w truncation
+  every other Library/menu row already uses, so nothing new can overflow
+  at any Font Size -- verified with a real book's spine (Walk
+  Courageously, 137 files) plus a standalone logic simulation (relative-
+  time buckets, progress-pct math, state machine) since SDL2_ttf isn't
+  available in the dev sandbox.
+  (1) Progress % next to title -- _get_progress_pct() approximates
+  whole-book % from spine position of the last-read file (the reader's
+  own "62%" readout is PER-CHAPTER, not available for a book that isn't
+  open -- this is a deliberately coarser but honest whole-book estimate).
+  Cached per book path in self._progress_cache, cleared on every
+  refresh_library() rescan so a deleted/replaced book can't show stale %.
+  (2) Relative last-read time ("2d ago") via new _relative_time() --
+  shown only when sorted by Last Read, same scoping as the existing
+  Author-sort byline suffix.
+  (3) "Clear All Finished" bulk action in the Library Menu, same two-
+  press confirm pattern as Delete Book (new _menu_clear_finished_armed
+  state) -- only clears the marks, never touches book files.
+  (5) "Continue Reading" Library Menu shortcut -- jumps straight into
+  whichever book has the most recent last-read timestamp via the same
+  open_book()/get_last_position() path a normal tap uses. Searches
+  self._all_books (unfiltered) so it always finds the real most-
+  recently-read book regardless of the active Filter. Shared
+  most_recent_book() helper keeps the handler and the menu's dynamic
+  label ("Continue: <title>") from ever disagreeing.
+  (6) "Pre-render Book Images" hidden from the Storage menu entirely
+  when native_jpeg decode is active (the common case -- it's always a
+  no-op there since v0.1.82). UP/DOWN on that screen now skips over the
+  hidden row so it can never be silently selected; the hide-check runs
+  BEFORE any drawing (unlike the pre-existing "Download Books" hide in
+  the Library Menu, which draws its highlight box first) so a landed-on
+  hidden row can't paint a blank highlighted rect. Underlying prerender
+  code is fully untouched -- still real and reachable for a device/build
+  without libSDL2_image, where mini_jpeg.py's slower decode genuinely
+  benefits from pre-warming.
+
+v0.1.121 -- Two changes from continued spacing audit on real meeting
+  workbooks (Kaleb's request). (1) CAP_MARGIN_ROWS was a flat 3 rows
+  regardless of Font Size -- confirmed via real numbers that a fully-
+  capped image (e.g. a portrait workbook cover, 1200x1543) left EXACTLY
+  3 rows for trailing content at every single Font Size step, 14pt
+  through 32pt, even though body_rows itself ranges 16-28 over that
+  same span. Traced to a real case: mwb_E_202505's cover page
+  (202025160.xhtml) pushes its copyright line and cover-picture caption
+  onto a second, nearly-empty screen because only 3 rows were left after
+  the title on screen 1 -- Kaleb's "one line text pages" report. Now
+  _cap_margin_rows() scales at 20% of body_rows, floored at 3 -- 32pt
+  (already the tightest, and the size Kaleb specifically tuned to 3 in
+  v0.1.112/113) is completely unchanged; 14pt goes from 3 to 6 rows of
+  trailing headroom. (2) Reverted v0.1.120's screen-reader-text hiding
+  (the "Your answer" fill-in-the-blank labels) -- Kaleb wants that text
+  visible at all times, not hidden or conditional on the images toggle.
+  Full regression re-run across all 8 books (5,665 files): 0 crashes, 0
+  remaining blank-line runs, 0 broken image spans, 0 broken anchors.
+
+v0.1.119 -- Library hint bar clipping (Kaleb's screenshot: "SELECT
+  Delete...START M" -- "START Menu" cut off mid-word, "B Quit" missing
+  entirely). Root cause: _HINT_CALIBRATION_TEXTS's Library string was
+  missing "LEFT/RIGHT Jump 10" -- added to the real lib_hint string back
+  in v0.1.110 (quick-scroll) but never mirrored into the calibration
+  text the comment right above it says to keep in sync. _hint_pt() and
+  _hint_lines_needed() both calibrate off that text, so both
+  undercounted how much space the REAL (longer) hint needed --
+  confirmed via simulation using the bundled font's actual glyph
+  widths: at 14-16pt the old calibration fit in 1 line while the real
+  hint needs 2, so the real hint's overflow words got force-packed onto
+  that single insufficient line (v0.1.61's "never drop words" fallback)
+  and ran off the right edge instead of wrapping to a second line.
+  Fixed by syncing the calibration string to match the real hint
+  exactly.
+
+v0.1.118 -- Collapsed multi-blank-line gaps (Kaleb's report + Awake! July
+  2015 cover article screenshots). Root cause found in epub_engine.py's
+  get_page(): nested block-tag transitions (e.g. </header> closing while
+  <div class="bodyTxt"><div class="section"><div class="pGroup"> all open
+  before the first real <p>) each independently emit their own blank
+  line via maybe_newline(), and incidental XML pretty-printing whitespace
+  between sibling tags gets emitted as its own " " blank line by
+  emit_text() -- neither mechanism deduped against the other, so a
+  transition crossing several nested containers with nothing but
+  whitespace in between stacked up 2-4 blank lines where one was
+  intended. Confirmed exactly this on the real Awake! cover article: the
+  </header>-to-first-paragraph transition alone produced 4 blank lines,
+  the "unhappy man" image was followed by 2 blank lines before the COVER
+  SUBJECT caption, and every <ul><li> boundary in the Anja/Delina/Gregory
+  bullet list doubled to 2 blank lines instead of 1. Added
+  collapse_blank_line_runs() -- collapses any run of 2+ consecutive
+  whitespace-only lines down to exactly 1, remapping every image/link/
+  style/para-span/anchor offset to match (safe since no span/anchor is
+  ever placed inside pure whitespace). Regression-tested across all 8
+  books on hand (5,665 spine files total, including the full NWT Bible
+  and Bible Insight volumes): 0 crashes, 0 remaining blank-line runs, 0
+  broken image spans, 0 broken anchors.
+
+v0.1.117 -- Finished/Unfinished marker + Filter (Kaleb's request). SELECT
+  on the Library screen now toggles a manual "book finished" checkmark
+  (shown as a prefix, same idea as X's pin heart) instead of book-delete
+  -- delete moved into the Library Menu (START) as "Delete Book",
+  targeting whichever book was highlighted when START was pressed, same
+  two-press confirm as before. Library Menu also gained "Filter: Cycle"
+  (All / Unfinished / Finished, shown next to Sort: on the Library
+  screen); filter is applied before sort, same pinned-float-to-top
+  behavior as always. New finished.json alongside pinned.json (same
+  load/save/stale-purge-on-delete pattern). self.books is now always
+  derived from self._all_books (the raw disk scan) via the single
+  _apply_library_view() -- every action that can change filter
+  membership, sort, pin, or finished status goes through it so a
+  filtered view can't silently get out of sync. Simulated the full
+  state machine (mark finished, cycle filter, unmark while filtered,
+  pin+finished+filter together, index clamping when a book vanishes
+  from the current filtered view) since SDL2_ttf isn't available in
+  the dev sandbox to run the app directly.
+
+v0.1.116 -- Small-Font-Size line spacing bump. Kaleb asked whether
+  paragraph/line spacing had any issues at largest Font Size; measured
+  actual glyph height directly off the bundled Liberation Sans metrics
+  vs. the old flat "+6px" line leading and confirmed leading shrank as
+  a % of line height the larger the font got (~24% extra at 14pt vs.
+  ~3% at 32pt) -- but Kaleb confirmed the tight packing at large Font
+  Size is wanted (fits more text on screen) and asked to leave that
+  alone, and only wanted "a tad" more room at the smaller end. Bumped
+  leading from +6 to +8 for the three smallest SIZE_STEPS (14/16/18pt
+  -> now ~26-37% extra); 21pt and up unchanged. Single source of truth
+  is still _reader_body_layout() so both callers (draw_reader() and
+  handle_button()'s scroll/pagination) stay in sync automatically.
+
+v0.1.115 -- Kaleb asked to audit for other bugs of the same shape as
+  v0.1.114's. Found three, all the identical root cause (rebuilding a
+  character offset via `len(line) + 1` per line, which drifts once any
+  wrapped multi-line paragraph is involved):
+  (1) ReaderState._current_char_offset() -- used by bookmark_here() and
+  save_progress() to record exactly where you are. Simplified to just
+  read self._line_abs_offsets[scroll] directly (already correct, see
+  v0.1.114) instead of rebuilding it a different, buggy way.
+  (2) The current_char_off restore path in _ensure_page_built()
+  (resuming a book / jumping to a bookmark) -- rebuilt its own
+  `running` total to search for the target line. Replaced with a
+  direct scan of line_abs_starts (the same true per-line offsets
+  v0.1.114 introduced) for the last line whose start is <= the saved
+  offset.
+  (3) The current_anchor restore path (chapter/TOC/cross-reference
+  jumps) -- same bug, same fix. This one was a genuine cross-system
+  mismatch even before v0.1.114 existed: anchor offsets come from
+  epub_engine.py's real text parsing (never drifted), but the search
+  loop that located them WAS drifted -- so a chapter/verse jump could
+  land a few lines off whenever wrapped paragraphs preceded the anchor
+  in that file, worse for anchors deeper into long documents (NWT
+  chapters were the most exposed case).
+  Combined effect: bookmarks and resume-reading could restore a few
+  lines short of the actual saved spot (worse the deeper into a
+  chapter), and named-anchor jumps (chapter grids, cross-references)
+  could land short of the real target for the same reason -- both
+  quietly "close enough to not obviously look wrong," which is
+  presumably why neither had been reported before this audit.
+  Audited the rest of the file for the same shape (any other place
+  reconstructing an offset from line lengths instead of using
+  line_abs_starts/_line_abs_offsets directly) -- found nothing else;
+  the only remaining `len(line)+1`-style hits are in comments
+  describing this fix, and the draw_hint() line-height loop, which
+  has nothing to do with character offsets.
+
+v0.1.114 -- THE REAL FIX for "text randomly renders small/grey"
+  (Kaleb, g_E_201507.epub's malaria article: "If you are planning to
+  visit a land where malaria is endemic..." rendered like a box_rule
+  divider line -- small, dim -- despite the markup showing it's a
+  normal bold paragraph, and draw_reader()'s own StyleSpan/ParaSpan
+  data for it showing only a correct bold=True StyleSpan, nothing
+  box_rule-like). Root cause confirmed empirically, not guessed:
+  self._line_abs_offsets (used by draw_reader()'s para_kind lookup to
+  find which ParaSpan, if any, covers a given line) was recomputed in
+  _ensure_page_built() via `running += len(ln) + 1` per line -- correct
+  for a line that ends a real paragraph (one actual "\n"), but wrong
+  for a wrapped sub-line inside a multi-line paragraph, which is
+  followed by a SPACE in the real text, not a newline. That per-line
+  assumption drifted the running offset further from the true value
+  with every wrapped paragraph on the page, and the drift accumulates
+  for the rest of the document. Verified directly: by the time the
+  page reached this paragraph, the recomputed offset was 2332 -- 75
+  characters short of the true 2407 -- which happened to fall inside
+  the immediately preceding box_rule ParaSpan's actual range
+  (2372-2404), so the para_kind lookup wrongly matched "box_rule" and
+  rendered it in fonts.small + COL_DIM.
+  Fixed at the source: _wrap() already computes the TRUE abs_start for
+  every line (used for line_span_map/line_style_runs) -- it just never
+  returned it. Now it does (added line_abs_starts as a 4th return
+  value, cached alongside the other three in _wrapped_cache), and
+  _ensure_page_built() assigns it directly as self._line_abs_offsets
+  instead of recomputing it a different, buggy way. No longer possible
+  for these two to drift out of sync.
+
+v0.1.113 -- Bumped CAP_MARGIN_ROWS from 2 to 3 (v0.1.112) per Kaleb's
+  request, for more headroom on two-line wrapped headings at larger
+  Font Size steps.
+
+v0.1.112 -- Kaleb asked whether a 2-3 row safety margin on capped
+  oversized images would let trailing captions/titles show alongside
+  them. Confirmed a real case first (rather than adding this blind):
+  g_E_201507.epub's article title page (102015240.xhtml) reuses its
+  cover art as a banner image, immediately followed by a real <h1>
+  heading ("Are You in Control of Your Life?") -- not baked into the
+  art, genuine separate markup, confirmed by re-checking the actual
+  epub after Kaleb pushed back on an earlier wrong claim that it was
+  just image artwork. With the banner capped at the FULL body_rows
+  (zero rows to spare), that heading had nowhere to go but the next
+  screen entirely (Kaleb's photos: image fills screen at "100%",
+  heading alone at "200%"). Added CAP_MARGIN_ROWS=2, applied in
+  _image_box_rows()'s final cap (min(rows, body_rows - CAP_MARGIN_ROWS)
+  instead of min(rows, body_rows)) -- only changes anything for images
+  that were ALREADY being capped to fit the screen; an image that
+  already fits comfortably on its own is untouched, since min() only
+  ever shrinks toward the smaller value. Single change point --
+  _image_box_rows() is the one function draw_reader()/page_down()/
+  page_up()/visible_span_indices() all already funnel through, so the
+  margin applies consistently everywhere without touching those
+  functions individually.
+
+v0.1.111 -- THE REAL FIX for "cover image blank until a page turn"
+  (Kaleb, tested live against g_E_201507.epub -- the v0.1.110 eager-
+  decode-request fix from last session did NOT fix this; it was
+  chasing the wrong root cause). Confirmed directly: EpubDocument.
+  get_page() on this book's cover.xhtml returns the text " \n [IMG]\n
+  \n " (the stray whitespace HTML leaves around a block-level <img> --
+  e.g. <div id="cover-image">\n<img .../>\n</div> -- becomes literal
+  text nodes). _wrap() splits on "\n" and emits a REAL blank "" entry
+  for every whitespace-only paragraph, so this page's _lines end up as
+  ["", "[IMG]", "", ""] -- a genuine blank line sitting BEFORE the
+  image line, not just leftover whitespace inside it.
+  That blank line lands at row 0, pushing the actual image line to
+  row 1. draw_reader()'s "don't draw an image that would overflow past
+  the bottom of the screen" check exempted only row==0 ("the first
+  thing on the page, so draw it regardless, even oversized") -- with
+  the image now at row 1, that exemption no longer applied, and a
+  portrait cover's box_rows (up to IMG_BOX_ROWS_PORTRAIT=20) pushed
+  row+box_rows past body_rows, so the loop broke BEFORE ever drawing
+  the image. Result: the page showed nothing at all (not even a
+  "Loading image..." placeholder, since get_image_texture() was never
+  even called) until a page-turn advanced scroll past that leading
+  blank line and the image became row 0 again.
+  Fixed the actual exemption: added content_drawn, tracked through
+  draw_reader()'s line loop, true only once something NON-BLANK has
+  actually been drawn on this page -- leading blank lines no longer
+  count as "already drew something," so the image still gets its
+  row==0-equivalent treatment regardless of how many blank lines
+  precede it. Applied the identical fix (content_drawn via new
+  ReaderState._li_is_blank()) to page_down()/page_up()'s matching
+  `row > 0` exemption, which had the exact same bug and would have
+  desynced pagination from what draw_reader() now shows otherwise --
+  see _rows_for_li()'s docstring on why these must always agree.
+  Left epub_engine.py's whitespace handling alone rather than trying
+  to strip these stray text nodes at the source -- that risks
+  regressing legitimate blank-paragraph spacing elsewhere; fixing the
+  page-fit exemption to just not be fooled by blank lines is the
+  narrower, safer fix.
+
+v0.1.110 -- Multiple Kaleb bug reports fixed, and video browsing
+  reorganized (Kaleb: "the video downloader in the popup menu needs to be
+  moved into downloader section"):
+  (1) THE REAL CRASH: "Check JW Broadcasting" called
+  self.open_broadcast_downloader() (added when that menu entry was
+  wired up in v0.1.106), but that method itself was never actually
+  written -- the session that built jw_fetch.list_broadcast_items() and
+  the menu entry ended before connecting them, so selecting it raised
+  AttributeError and crashed the app. Also cleaned up a leftover
+  duplicate threading.Thread(...).start() line in open_video_downloader()
+  from the same incomplete wiring.
+  (2) Video browsing reorganized: the four separate Library Menu
+  entries (Enjoy Life Forever Book Videos, Check JW Broadcasting, Check
+  Governing Body Updates, The Good News According to Jesus) were
+  cluttering that popup and disconnected from the rest of the download
+  flow. Moved all four into the downloader itself: jw_fetch.py gains
+  CATEGORY_VIDEOS = "Videos", a pseudo-category (same precedent as
+  CATEGORY_WHATS_NEW) that shows up in the normal JW category picker;
+  selecting it opens a new small picker (SCREEN_DOWNLOAD_VIDEO_SOURCES /
+  draw_download_video_sources()) listing all four sources. Reached via
+  Library Menu > Download Books > JW > Videos. B from that picker
+  returns to the category list; B from a video browse screen now
+  returns to this picker (was: straight to the Library Menu), so
+  switching between video sources doesn't require re-navigating the
+  whole path each time.
+  (3) Y-button search on every video browse screen was silently broken:
+  the hint bar showed "Y Enter Code" (inherited from
+  JW_PLUGIN.SUPPORTS_MANUAL_CODE, checked without excluding video mode)
+  but every actual Y branch in the input handler explicitly required
+  `not app.dl_is_video` -- so Y did nothing. Added a real binding:
+  App.search_video_items(), a client-side case-insensitive title filter
+  over each source's full loaded catalog (none of the four have
+  server-side search -- each is fetched as one small complete list up
+  front). Hint now correctly says "Y Search" only in video mode.
+  (4) Library screen had no quick-scroll for long lists -- D-pad
+  LEFT/RIGHT were unused there, so added jump-10 (same convention as
+  Chapters/Bookmarks' L/R), clamped not wrapped.
+  (5) "First cover image blank until a button press": a page's images
+  were only ever request()ed for decode from inside draw_reader()'s
+  per-line get_image_texture() call -- not until the first frame was
+  already drawing. A slow first decode (cold dlopen of libSDL2_image,
+  or a large portrait cover) could still land after that frame
+  finished, and v0.1.83's mid-draw dirty-flag fix didn't cover this
+  earlier gap. Added ReaderState._request_page_images(), called from
+  _ensure_page_built() right after a page's images are parsed, so
+  decode starts before the first draw_reader() call even happens.
+  request() is idempotent, so get_image_texture()'s own request() later
+  in the same frame is a safe no-op if this one already fired.
 
 v0.1.109 -- Kaleb asked to add "the Jesus... way, the truth, the light"
 movie episodes as a category. Confirmed the actual title is "The Good
@@ -2930,6 +3288,10 @@ def scan_library():
         if fname in pinned:
             pinned.discard(fname)
             save_pinned(pinned)
+        finished = load_finished()
+        if fname in finished:
+            finished.discard(fname)
+            save_finished(finished)
 
     if cache_dirty:
         _save_library_cache(cache)
@@ -2956,6 +3318,30 @@ def save_pinned(pinned_set):
         pass
 
 
+FINISHED_PATH = os.path.join(DATA_DIR, "finished.json")
+
+
+def load_finished():
+    if os.path.exists(FINISHED_PATH):
+        try:
+            with open(FINISHED_PATH) as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+
+def save_finished(finished_set):
+    try:
+        with open(FINISHED_PATH, "w") as f:
+            json.dump(sorted(finished_set), f)
+    except Exception:
+        pass
+
+
+LIBRARY_FILTER_MODES = ["all", "unfinished", "finished"]
+LIBRARY_FILTER_LABELS = {"all": "All", "unfinished": "Unfinished", "finished": "Finished"}
+
 LIBRARY_SORT_MODES = ["title", "author", "last_read", "recent"]
 LIBRARY_SORT_LABELS = {
     "title": "Title A-Z", "author": "Author A-Z",
@@ -2966,6 +3352,33 @@ LIBRARY_SORT_LABELS = {
 def _book_last_read_ts(book):
     last = get_last_position(book["path"])
     return last.get("ts", 0) if last else 0
+
+
+def _relative_time(ts):
+    """v0.1.122: "2d ago"-style relative timestamp for the Library list
+    when sorted by Last Read (Kaleb's request). Deliberately coarse/
+    short (fits a crowded row alongside title + pin/finished markers +
+    progress %) rather than a precise duration. Returns None for ts=0
+    (never read) so callers can skip it entirely rather than showing a
+    meaningless "just now"."""
+    if not ts:
+        return None
+    delta = time.time() - ts
+    if delta < 0:
+        delta = 0  # clock skew guard -- never show a negative age
+    if delta < 60:
+        return "just now"
+    if delta < 3600:
+        return f"{int(delta // 60)}m ago"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h ago"
+    if delta < 86400 * 7:
+        return f"{int(delta // 86400)}d ago"
+    if delta < 86400 * 30:
+        return f"{int(delta // (86400 * 7))}w ago"
+    if delta < 86400 * 365:
+        return f"{int(delta // (86400 * 30))}mo ago"
+    return f"{int(delta // (86400 * 365))}y ago"
 
 
 def sort_library(books, mode, pinned):
@@ -3000,6 +3413,13 @@ SCREEN_DOWNLOAD_SOURCES = "download_sources"  # pick a plugin (only shown
                                                # if more than one is loaded)
 SCREEN_DOWNLOAD_CATEGORIES = "download_categories"  # pick a category, for
                                                # plugins with SUPPORTS_CATEGORIES
+SCREEN_DOWNLOAD_VIDEO_SOURCES = "download_video_sources"  # v0.1.110: pick
+                                               # WHICH video source, reached
+                                               # from the category picker's
+                                               # "Videos" entry (jw_fetch's
+                                               # CATEGORY_VIDEOS) -- replaces
+                                               # the four separate Library
+                                               # Menu video entries
 SCREEN_DOWNLOAD_BROWSE = "download_browse"    # browse/download from the
                                                # selected plugin
 SCREEN_LIBRARY_MENU = "library_menu"          # START on Library -- sort
@@ -3011,12 +3431,18 @@ SCREEN_TEXT_ENTRY = "text_entry"              # generic D-pad letter-grid
                                                # feature; anything needing
                                                # typed input can reuse it
 
-LIBRARY_MENU_ITEMS = ["Sort: Title A-Z", "Sort: Author A-Z", "Sort: Last Read",
-                       "Sort: Recently Added", "Theme +", "Theme -",
-                       "Download Books", "Enjoy Life Forever Book Videos",
-                       "Check JW Broadcasting", "Check Governing Body Updates",
-                       "The Good News According to Jesus",
-                       "Storage", "Back"]
+# v0.1.110: the four things that used to each be a separate Library Menu
+# entry (Enjoy Life Forever Book Videos / Check JW Broadcasting / Check
+# Governing Body Updates / The Good News According to Jesus) -- now one
+# small picker reached via Download Books > JW > Videos. Order is
+# Kaleb's original menu order.
+VIDEO_SOURCE_ITEMS = ["Enjoy Life Forever", "JW Broadcasting",
+                      "Governing Body Updates", "The Good News According to Jesus",
+                      "Back"]
+
+LIBRARY_MENU_ITEMS = ["Continue Reading", "Sort: Title A-Z", "Sort: Author A-Z", "Sort: Last Read",
+                       "Sort: Recently Added", "Filter: Cycle", "Clear All Finished", "Theme +", "Theme -",
+                       "Download Books", "Settings", "Delete Book", "Back"]
 
 # Ragged rows are fine -- UP/DOWN/LEFT/RIGHT navigation clamps to each
 # row's own length dynamically, no fixed grid width assumed. Letters,
@@ -3035,11 +3461,12 @@ TEXT_ENTRY_GRID = [
 ]
 
 MENU_ITEMS = ["Chapters", "Bookmarks", "Add Bookmark", "Font Size +", "Font Size -",
-              "Theme +", "Theme -", "Library", "Storage", "Resume"]
+              "Theme +", "Theme -", "Library", "Settings", "Resume"]
 
 STORAGE_ACTIONS = ["Clear Image Cache", "Clean Up Orphaned Bookmarks",
                     "Backup Bookmarks Now", "Restore Latest Backup",
                     "Toggle Disk Cache (RAM-only mode)", "Toggle Images (text-only mode)",
+                    "Toggle Open Last Book on Launch",
                     "Pre-render Book Images", "Back"]
 
 
@@ -3059,9 +3486,19 @@ class App:
         apply_theme(load_settings().get("theme_index", 0))
         self.screen = SCREEN_LIBRARY
         self.pinned = load_pinned()
+        self.finished = load_finished()
         self.lib_sort_mode = "title"
+        self.lib_filter_mode = "all"  # v0.1.117: All/Unfinished/Finished,
+                                       # resets each launch same as sort mode
+        self._all_books = []  # unfiltered disk scan; self.books is the
+                               # filtered+sorted view derived from this
         self.books = []
         self.lib_index = 0
+        self._progress_cache = {}  # v0.1.122: book path -> whole-book %
+                                    # complete, or None if never started;
+                                    # lazily populated by
+                                    # _get_progress_pct(), cleared in
+                                    # refresh_library()
         self.refresh_library()
 
         self.doc = None
@@ -3082,7 +3519,20 @@ class App:
         self.toc_index = 0
         self.bookmarks_index = 0
         self._bookmark_delete_confirm_idx = None  # armed-for-delete row, or None
-        self._lib_delete_confirm_idx = None  # armed-for-delete row on Library screen, or None
+        # v0.1.117: book delete moved from a direct SELECT press on the
+        # Library screen into the Library Menu (START), to free SELECT up
+        # for the new Finished/Unfinished toggle. The target book is
+        # captured when START is pressed (whichever row was highlighted),
+        # and _menu_delete_armed is the same "press again to confirm"
+        # pattern the old _lib_delete_confirm_idx used, just scoped to
+        # the menu instead of the list.
+        self._menu_delete_target = None
+        self._menu_delete_armed = False
+        # v0.1.122: same two-press confirm pattern as _menu_delete_armed,
+        # for the new bulk "Clear All Finished" action (Kaleb's request
+        # #3) -- clearing potentially many books' Finished marks at once
+        # gets the same accidental-press protection a single delete does.
+        self._menu_clear_finished_armed = False
         self.storage_index = 0
         self._storage_confirm_idx = None  # armed-for-confirm row on Storage screen, or None
         self._storage_return_screen = SCREEN_READER  # where Storage's Back
@@ -3130,6 +3580,8 @@ class App:
                                        # "Loading... (Ns)" spinner (v0.1.62)
         self.dl_load_error = None
         self._dl_downloading_idx = None  # index currently mid-download, or None
+        self._dl_video_all_items = []  # v0.1.110: unfiltered video catalog, see search_video_items()
+        self.video_source_index = 0    # v0.1.110: selection on SCREEN_DOWNLOAD_VIDEO_SOURCES
         self.dl_is_video = False  # v0.1.90: True while SCREEN_DOWNLOAD_BROWSE is
                                    # showing a video catalog (jw_fetch videos)
                                    # rather than an EPUB catalog -- start_download()
@@ -3160,6 +3612,11 @@ class App:
         # without libSDL2_image, where re-decode cost is real again).
         self.disk_cache_enabled = load_settings().get("disk_cache_enabled", False)
         self.images_enabled = load_settings().get("images_enabled", True)
+        # v0.1.123: "Open Last Book on Launch" (Kaleb's request, built on
+        # top of the existing Continue Reading feature) -- defaults OFF
+        # since it changes what screen greets you on startup, unlike the
+        # other Settings toggles which are all in-session behavior tweaks.
+        self.open_last_book_enabled = load_settings().get("open_last_book_enabled", False)
         self.image_loader = ImageLoader(
             IMG_CACHE_DIR,
             is_relevant=lambda key: key in self._visible_image_keys,
@@ -3231,10 +3688,25 @@ class App:
         # page builds. This still gives a real win for revisits (L2/R2
         # back-and-forth, or jumping back to a recently-viewed scripture)
         # without introducing an unverified threading risk.
-        self._wrapped_cache = {}           # (href, size_index) -> (lines, line_span_map, line_style_runs)
+        self._wrapped_cache = {}           # (href, size_index) -> (lines, line_span_map, line_style_runs, line_abs_starts) -- v0.1.114 added line_abs_starts
         self._wrapped_cache_order = []
         self._WRAPPED_CACHE_MAX = 200       # same bound as _page_text_cache; see v0.1.69 changelog for the combined RAM estimate
         self.dirty = True
+
+        # v0.1.123: "Open Last Book on Launch" (Kaleb's request). Must be
+        # the LAST thing __init__ does, not right after refresh_library()
+        # -- open_book() reads/clears self._prerender_active,
+        # self._page_text_cache(_order), and self._wrapped_cache, none of
+        # which exist yet that early in __init__ (they're all set up
+        # further down, same as self.doc/self.state themselves). Calling
+        # it before that point would crash with AttributeError on first
+        # launch with the toggle on. open_continue_reading() already
+        # no-ops safely (just a status message, screen stays SCREEN_
+        # LIBRARY) if nothing has ever been read, or if the last-read
+        # book was since deleted/moved -- exactly the same fallback path
+        # Kaleb confirmed he wants ("fall back to library always").
+        if self.open_last_book_enabled:
+            self.open_continue_reading()
 
     # -------- library --------
     def _img_key(self, src):
@@ -3264,9 +3736,28 @@ class App:
         return True
 
     def refresh_library(self):
-        books = scan_library()  # may purge stale pin entries for deleted books on disk
+        self._all_books = scan_library()  # may purge stale pin entries for deleted books on disk
         self.pinned = load_pinned()
-        self.books = sort_library(books, self.lib_sort_mode, self.pinned)
+        self.finished = load_finished()
+        self._progress_cache = {}  # v0.1.122: a deleted/replaced book's
+                                    # stale % must not survive a rescan
+        self._apply_library_view()
+
+    def _apply_library_view(self):
+        """Single place that turns _all_books into the displayed self.books
+        -- applies the Filter (All/Unfinished/Finished) first, then the
+        active Sort mode (which also handles pinned-float-to-top). Every
+        action that can change filter membership, sort mode, or pin/
+        finished status must go through this instead of re-sorting
+        self.books directly, or a change made while a filter is active
+        would silently sort/re-add books that shouldn't be visible."""
+        if self.lib_filter_mode == "finished":
+            filtered = [b for b in self._all_books if b["filename"] in self.finished]
+        elif self.lib_filter_mode == "unfinished":
+            filtered = [b for b in self._all_books if b["filename"] not in self.finished]
+        else:
+            filtered = self._all_books
+        self.books = sort_library(filtered, self.lib_sort_mode, self.pinned)
 
     # -------- generic text entry (v0.1.30) --------
     def open_text_entry(self, prompt, initial_value, on_confirm, return_screen, on_validate=None, hint=""):
@@ -3351,6 +3842,7 @@ class App:
             except Exception as e:
                 items, err = [], str(e)
             if self.dl_is_video:  # guard: person didn't back out meanwhile
+                self._dl_video_all_items = items
                 self.dl_items = items
                 self.dl_load_error = err
                 self.dl_index = 0
@@ -3358,6 +3850,45 @@ class App:
                 self.dirty = True  # see _load_dl_page's class-wide note on this
 
         threading.Thread(target=_do_load, daemon=True).start()
+
+    def open_broadcast_downloader(self):
+        """v0.1.110: THE MISSING METHOD -- this is the actual root cause
+        of "JW Broadcasting crashes the app" (Kaleb). The Library Menu's
+        "Check JW Broadcasting" entry called self.open_broadcast_downloader()
+        (added when that menu item was wired up), but this method itself
+        was never actually written -- the session that added
+        jw_fetch.list_broadcast_items() and the menu entry ended before
+        adding the App method connecting them, so selecting that menu
+        item raised AttributeError and crashed. Same dl_is_video=True
+        pattern as open_video_downloader()/open_gb_update_downloader()/
+        open_good_news_downloader() -- see list_broadcast_items()'s own
+        docstring in jw_fetch.py for what it returns (up to 12 most
+        recent JW Broadcasting monthly programs, newest first)."""
+        self.dl_plugin = JW_PLUGIN
+        self.dl_is_video = True
+        self.dl_category = None
+        self.dl_items = []
+        self.dl_index = 0
+        self.dl_page = 1
+        self.dl_query = None
+        self.dl_has_next = False
+        self.dl_load_error = None
+        self.dl_loading = True
+        self.dl_loading_start = time.time()
+        self.screen = SCREEN_DOWNLOAD_BROWSE
+
+        def _do_load():
+            try:
+                items, err = JW_PLUGIN.list_broadcast_items()
+            except Exception as e:
+                items, err = [], str(e)
+            if self.dl_is_video:  # guard: person didn't back out meanwhile
+                self._dl_video_all_items = items
+                self.dl_items = items
+                self.dl_load_error = err
+                self.dl_index = 0
+                self.dl_loading = False
+                self.dirty = True
 
         threading.Thread(target=_do_load, daemon=True).start()
 
@@ -3386,6 +3917,7 @@ class App:
             except Exception as e:
                 items, err = [], str(e)
             if self.dl_is_video:  # guard: person didn't back out meanwhile
+                self._dl_video_all_items = items
                 self.dl_items = items
                 self.dl_load_error = err
                 self.dl_index = 0
@@ -3393,8 +3925,6 @@ class App:
                 self.dirty = True
 
         threading.Thread(target=_do_load, daemon=True).start()
-
-
 
     def open_good_news_downloader(self):
         """v0.1.109: opens SCREEN_DOWNLOAD_BROWSE showing "The Good News
@@ -3421,6 +3951,7 @@ class App:
             except Exception as e:
                 items, err = [], str(e)
             if self.dl_is_video:  # guard: person didn't back out meanwhile
+                self._dl_video_all_items = items
                 self.dl_items = items
                 self.dl_load_error = err
                 self.dl_index = 0
@@ -3428,6 +3959,25 @@ class App:
                 self.dirty = True
 
         threading.Thread(target=_do_load, daemon=True).start()
+
+    def search_video_items(self, query):
+        """v0.1.110: client-side title search for the video browse list.
+        None of the four video sources (Enjoy Life Forever, JW
+        Broadcasting, Governing Body Updates, The Good News According to
+        Jesus) have a server-side search of their own -- each is fetched
+        as one small complete list up front -- so this just filters the
+        already-loaded self._dl_video_all_items by a case-insensitive
+        substring match on title. Empty query restores the full list."""
+        query = (query or "").strip()
+        self.dl_query = query or None
+        source = self._dl_video_all_items
+        if not query:
+            self.dl_items = source
+        else:
+            q = query.lower()
+            self.dl_items = [it for it in source if q in it.get("title", "").lower()]
+        self.dl_index = 0
+        self.dirty = True
 
     def open_category(self, category):
         """Opens the browse screen scoped to one category (see
@@ -3563,7 +4113,13 @@ class App:
     def cycle_sort_mode(self):
         idx = LIBRARY_SORT_MODES.index(self.lib_sort_mode)
         self.lib_sort_mode = LIBRARY_SORT_MODES[(idx + 1) % len(LIBRARY_SORT_MODES)]
-        self.books = sort_library(self.books, self.lib_sort_mode, self.pinned)
+        self._apply_library_view()
+        self.lib_index = 0
+
+    def cycle_filter_mode(self):
+        idx = LIBRARY_FILTER_MODES.index(self.lib_filter_mode)
+        self.lib_filter_mode = LIBRARY_FILTER_MODES[(idx + 1) % len(LIBRARY_FILTER_MODES)]
+        self._apply_library_view()
         self.lib_index = 0
 
     def toggle_pin(self, book):
@@ -3574,12 +4130,113 @@ class App:
             self.pinned.add(fname)
         save_pinned(self.pinned)
         selected_path = book["path"]
-        self.books = sort_library(self.books, self.lib_sort_mode, self.pinned)
+        self._apply_library_view()
         # keep the selection on the same book after the re-sort moves it
         for i, b in enumerate(self.books):
             if b["path"] == selected_path:
                 self.lib_index = i
                 break
+
+    def toggle_finished(self, book):
+        fname = book["filename"]
+        was_finished = fname in self.finished
+        if was_finished:
+            self.finished.discard(fname)
+        else:
+            self.finished.add(fname)
+        save_finished(self.finished)
+        selected_path = book["path"]
+        self._apply_library_view()
+        # unlike toggle_pin, this can remove the book from view entirely
+        # (e.g. marking a book Finished while the Unfinished filter is
+        # active) -- fall back to clamping the index instead of leaving
+        # lib_index stale/out of range if the book is no longer present.
+        for i, b in enumerate(self.books):
+            if b["path"] == selected_path:
+                self.lib_index = i
+                break
+        else:
+            self.lib_index = max(0, min(self.lib_index, len(self.books) - 1))
+        self.set_status("Marked Finished" if not was_finished else "Marked Unfinished")
+
+    def clear_all_finished(self):
+        """v0.1.122: bulk-clear every Finished mark at once (Kaleb's
+        request #3) -- e.g. resetting a season of workbooks instead of
+        un-marking each one individually. Only clears the marks
+        themselves, never touches any book file. Re-applies the library
+        view afterward since this can empty out the Finished filter
+        entirely (falls back to All automatically via _apply_library_view
+        picking up the now-empty self.finished, same as any other
+        finished-state change)."""
+        count = len(self.finished)
+        self.finished = set()
+        save_finished(self.finished)
+        self._apply_library_view()
+        self.lib_index = max(0, min(self.lib_index, len(self.books) - 1))
+        self.set_status(f"Cleared {count} Finished mark" + ("s" if count != 1 else ""))
+
+    def _get_progress_pct(self, book):
+        """v0.1.122: approximate whole-book read percentage for the
+        Library list (Kaleb's request). The reader's own "62%"-style
+        readout (_status line in draw_reader) is PER-CHAPTER -- how far
+        through the current spine file the scroll is -- which isn't
+        available for a book that isn't currently open. This instead
+        uses spine position: which chapter/file the last-read bookmark
+        points at, divided by the book's total spine length. Coarser
+        than the per-chapter number (a book with 3 long chapters jumps
+        in big 33% steps) but a genuinely cheap, honest approximation --
+        computing anything finer would mean fully parsing every book in
+        the library just to show a percentage.
+
+        Cached per book path in self._progress_cache (cleared on every
+        refresh_library() rescan) since EpubDocument's OPF-only parse,
+        while cheap, is still real I/O -- doing it for every book on
+        every single draw call would scale badly on a large library.
+        Returns None for a never-opened book (nothing to show)."""
+        path = book["path"]
+        if path in self._progress_cache:
+            return self._progress_cache[path]
+        last = get_last_position(path)
+        if not last or not last.get("file"):
+            self._progress_cache[path] = None
+            return None
+        pct = None
+        try:
+            doc = EpubDocument(path)
+            if doc.spine:
+                idx = doc.spine_index(last["file"])
+                if idx >= 0:
+                    denom = max(1, len(doc.spine) - 1)
+                    pct = min(100, max(0, round(100 * idx / denom)))
+        except Exception:
+            pct = None
+        self._progress_cache[path] = pct
+        return pct
+
+    def most_recent_book(self):
+        """The book with the most recent last-read timestamp across the
+        full library (self._all_books, unaffected by the active Filter),
+        or None if nothing has ever been read. Shared by
+        open_continue_reading() and draw_library_menu()'s dynamic label
+        so the two can never disagree about which book "Continue
+        Reading" points at."""
+        candidates = [(b, _book_last_read_ts(b)) for b in self._all_books]
+        candidates = [(b, ts) for b, ts in candidates if ts > 0]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda pair: pair[1])[0]
+
+    def open_continue_reading(self):
+        """v0.1.122: 'Continue Reading' Library Menu shortcut (Kaleb's
+        request) -- jumps straight into whichever book has the most
+        recent last-read timestamp, restoring exact position via the
+        same get_last_position() open_book() already uses for a normal
+        tap. No-ops with a status message if nothing has ever been read."""
+        book = self.most_recent_book()
+        if book is None:
+            self.set_status("No books read yet")
+            return
+        self.open_book(book)
 
     def open_book(self, book):
         if self._prerender_active:
@@ -3870,6 +4527,24 @@ class App:
         self._styles = styles
         self._para_spans = para_spans
         self._visible_image_keys = {self._img_key(im.src) for im in images}
+        # v0.1.110: eagerly kick off decode for THIS page's images the
+        # instant they're known, instead of waiting for draw_reader()'s
+        # per-line get_image_texture() call to request() them for the
+        # first time. Matters most for a cover-only page (single image,
+        # no text) opened cold: a slow first decode (cold dlopen of
+        # libSDL2_image, or a big portrait cover) could still land after
+        # the first frame's placeholder was already painted and dirty
+        # briefly cleared -- v0.1.83's fix closed the mid-draw race but
+        # not this earlier one, since nothing had asked for the decode
+        # yet at that point. Starting the request here, before the
+        # first draw_reader() call even happens, gives the background
+        # decode a head start and makes has_pending_image_updates()
+        # correctly report "still loading" from frame one, so the idle
+        # loop keeps redrawing until it's actually ready instead of the
+        # image only appearing after an unrelated button press forces
+        # a redraw.
+        if getattr(self, "images_enabled", True) and images:
+            self._request_page_images(images)
 
         combined = [("link", i, l.start, l.end) for i, l in enumerate(links)]
         combined += [("image", i, im.start, im.end) for i, im in enumerate(images)]
@@ -3880,22 +4555,39 @@ class App:
         wrap_key = (key, self.fonts.size_index)
         _cached_wrap = self._wrapped_cache.get(wrap_key)
         if _cached_wrap is not None:
-            lines, line_span_map, line_style_runs = _cached_wrap
+            lines, line_span_map, line_style_runs, line_abs_starts = _cached_wrap
         else:
-            lines, line_span_map, line_style_runs = self._wrap(text, combined, avail_w)
-            self._wrapped_cache_put(wrap_key, (lines, line_span_map, line_style_runs))
+            lines, line_span_map, line_style_runs, line_abs_starts = self._wrap(text, combined, avail_w)
+            self._wrapped_cache_put(wrap_key, (lines, line_span_map, line_style_runs, line_abs_starts))
         self._lines = lines
         self._line_span_map = line_span_map
         self._line_style_runs = line_style_runs
-        # Precompute cumulative absolute character offsets once (v0.1.46).
-        # draw_reader used to recompute abs offset per line via sum(...range(li)),
-        # which is O(n^2) -- severe lag on large pages (NWT chapters: 8000+ lines).
-        offs = []
-        running = 0
-        for ln in lines:
-            offs.append(running)
-            running += len(ln) + 1   # +1 for the implicit newline separator
-        self._line_abs_offsets = offs
+        # v0.1.114: THE REAL BUG behind "text randomly renders small/dim"
+        # (Kaleb, g_E_201507.epub's malaria article: "If you are planning
+        # to visit a land where malaria is endemic..." rendering small
+        # and grey like a box_rule divider, when the markup shows it's a
+        # normal bold paragraph). This used to be recomputed here via
+        # `running += len(ln) + 1` per line, treating EVERY line as if it
+        # were followed by exactly one real "\n" -- true for a line that
+        # ends an actual paragraph, but wrong for a wrapped sub-line
+        # inside a multi-line paragraph, which is followed by a SPACE in
+        # the real text, not a newline. That per-line assumption drifted
+        # the offset further off the true value with every wrapped
+        # paragraph on the page, and the drift accumulates for the rest
+        # of the document. Confirmed empirically against the real epub:
+        # by the time the page reached the "If you are planning..."
+        # paragraph, this recomputation put it at offset 2332 -- 75
+        # characters short of its TRUE offset, 2407 -- which happened to
+        # fall inside the immediately preceding box_rule ParaSpan's range
+        # (2372-2404), so draw_reader()'s para_kind lookup wrongly
+        # matched "box_rule" and rendered it in fonts.small + COL_DIM.
+        # Fixed at the source instead: _wrap() now tracks and returns the
+        # TRUE abs_start it already computes correctly for each line
+        # (used for line_span_map/line_style_runs) as line_abs_starts, so
+        # this is just assigned directly -- no separate recomputation,
+        # and no way for it to drift out of sync with the values
+        # everything else on the page already relies on.
+        self._line_abs_offsets = line_abs_starts
         self._page_cache_key = key
 
         target_char_off = None
@@ -3905,25 +4597,35 @@ class App:
             # raw character offset instead of a named anchor's offset --
             # this is what makes restore work for a spot the user merely
             # scrolled to, not just a named chapter/link target.
+            # v0.1.115: this used to rebuild a `running` total via
+            # `len(line) + 1` per line, same buggy assumption as the
+            # box_rule text-misclassification bug (v0.1.114) -- every
+            # wrapped sub-line before the target silently drifted this
+            # search further from the true position, so resuming a book
+            # or jumping to a bookmark could land a few lines off,
+            # worse the deeper into a chapter the saved position was.
+            # line_abs_starts (just computed above, correct by
+            # construction) already IS each line's true start offset in
+            # ascending order, so the target line is simply the last one
+            # whose start is still <= char_off -- no reconstruction, no
+            # drift.
             char_off = self.state.current_char_off
             target_char_off = char_off
-            running = 0
             target_line = 0
-            for li, line in enumerate(lines):
-                running += len(line) + 1
-                if running >= char_off:
+            for li, off in enumerate(line_abs_starts):
+                if off <= char_off:
                     target_line = li
+                else:
                     break
             self.scroll = max(0, target_line - 2)
         elif self.state.current_anchor and self.state.current_anchor in anchors:
             char_off = anchors[self.state.current_anchor]
             target_char_off = char_off
-            running = 0
             target_line = 0
-            for li, line in enumerate(lines):
-                running += len(line) + 1
-                if running >= char_off:
+            for li, off in enumerate(line_abs_starts):
+                if off <= char_off:
                     target_line = li
+                else:
                     break
             self.scroll = max(0, target_line - 2)
         self.state.current_anchor = None
@@ -4336,7 +5038,13 @@ class App:
         actual rendered width rather than approximating via a fixed
         character count -- character-count wrapping (using a wide
         reference character like 'M') systematically undercounts how much
-        text fits per line, wasting screen width."""
+        text fits per line, wasting screen width.
+
+        v0.1.114: also tracks and returns line_abs_starts -- the TRUE
+        absolute character offset of each returned line in the original
+        text -- instead of leaving callers to reconstruct it themselves.
+        See _ensure_page_built()'s note on why that reconstruction was
+        wrong for wrapped (multi-line) paragraphs."""
         span_ranges = [(s, e) for (_, _, s, e) in combined]
         char_span = [-1] * len(text)
         for i, (s, e) in enumerate(span_ranges):
@@ -4348,12 +5056,14 @@ class App:
         lines = []
         line_span_map = []
         line_style_runs = []
+        line_abs_starts = []
         offset = 0
         for para in text.split("\n"):
             if para.strip() == "":
                 lines.append("")
                 line_span_map.append([])
                 line_style_runs.append([(0, 0, False, False)])
+                line_abs_starts.append(offset)
                 offset += len(para) + 1
                 continue
 
@@ -4373,6 +5083,7 @@ class App:
                     lines.append(line_text)
                     line_span_map.append(self._line_spans(line_text, abs_start, char_span))
                     line_style_runs.append(self._compute_line_style_runs(line_text, abs_start))
+                    line_abs_starts.append(abs_start)
                     cur_words = [w]
                     cur_start_idx = wi
                     cur_w = w_w
@@ -4388,10 +5099,11 @@ class App:
                 lines.append(line_text)
                 line_span_map.append(self._line_spans(line_text, abs_start, char_span))
                 line_style_runs.append(self._compute_line_style_runs(line_text, abs_start))
+                line_abs_starts.append(abs_start)
 
             offset += len(para) + 1
 
-        return lines, line_span_map, line_style_runs
+        return lines, line_span_map, line_style_runs, line_abs_starts
 
     def visible_span_indices(self, line_h, body_rows):
         """Which link/image spans are actually visible on screen right now.
@@ -4416,6 +5128,31 @@ class App:
             row += self._rows_for_li(li, line_h, body_rows)
             li += 1
         return idxs
+
+    def _request_page_images(self, images):
+        """v0.1.110: kick off image_loader.request() for every image on
+        the page that isn't already decoded/decoding. The first image
+        gets PRIORITY_VISIBLE (same as get_image_texture()'s normal
+        request); the rest use PREFETCH so a multi-image page doesn't
+        starve other work. get_image_texture() still does its own
+        request() too on the frame it actually draws each image --
+        request() is a no-op if a decode for that key is already
+        pending/done (see ImageLoader.request()), so calling it twice
+        here and there is harmless, just belt-and-suspenders for the
+        first-image-on-a-cold-open race."""
+        for i, im in enumerate(images):
+            key = self._img_key(im.src)
+            if self.image_loader.get(key) is not None:
+                continue
+            priority = ImageLoader.PRIORITY_VISIBLE if i == 0 else ImageLoader.PRIORITY_PREFETCH
+            try:
+                if self.image_loader.has_full_disk_cache(key):
+                    self.image_loader.request(key, None, priority=priority)
+                else:
+                    jpeg_bytes = self.doc.get_image_bytes(im.src)
+                    self.image_loader.request(key, jpeg_bytes, priority=priority)
+            except Exception as e:
+                _boot_log(f"could not pre-request image bytes for {key}: {e}\n")
 
     def get_image_texture(self, renderer, image_span):
         key = self._img_key(image_span.src)
@@ -4618,7 +5355,15 @@ class App:
         natural_h = ih * (avail_w / iw)
         rows = math.ceil((natural_h + 2 * IMG_PAD_Y) / line_h)
         rows = max(MIN_IMG_BOX_ROWS, rows)
-        return min(rows, body_rows)
+        # v0.1.121: was a flat CAP_MARGIN_ROWS=3 regardless of body_rows;
+        # now scales with it via _cap_margin_rows() -- see that function's
+        # docstring for why (Kaleb's "one line text pages" report on a
+        # real workbook cover). Only affects images that are ALREADY
+        # being capped (rows > body_rows - margin) -- an image that
+        # already fits comfortably is completely untouched by this,
+        # since min() only ever shrinks toward whichever value is smaller.
+        capped_rows = max(MIN_IMG_BOX_ROWS, body_rows - _cap_margin_rows(body_rows))
+        return min(rows, capped_rows)
 
     def _rows_for_li(self, li, line_h, body_rows):
         """Visual row cost of one _lines[] entry: this image's box-row
@@ -4641,6 +5386,23 @@ class App:
                 return self._image_box_rows(self._images[i], line_h, body_rows)
         return 1
 
+    def _li_is_blank(self, li):
+        """True if _lines[li] contributes no visible content on its own
+        -- i.e. a whitespace-only text line, NOT an image line. Used by
+        page_down()/page_up()'s "is this really the first thing on the
+        page" exemption (v0.1.111) so it agrees with draw_reader()'s own
+        content_drawn tracking -- both need to treat leading blank lines
+        the same way, or paging and drawing disagree on where a page
+        actually starts (the exact unit-mismatch bug class these
+        functions already guard against elsewhere, see _rows_for_li()'s
+        docstring)."""
+        ranges = self._line_span_map[li]
+        if len(ranges) == 1:
+            s, e, sidx = ranges[0]
+            if sidx != -1 and self._combined_spans[sidx][0] == "image" and (e - s) >= len(self._lines[li]):
+                return False  # an image line is always real content
+        return self._lines[li].strip() == ""
+
     def page_down(self, line_h, body_rows):
         """Advance to the next screenful. Walks li-by-li accumulating the
         REAL per-line visual-row cost (dynamic per image now, see
@@ -4659,10 +5421,13 @@ class App:
             return
         li = self.scroll
         row = 0
+        content_drawn = False  # v0.1.111: see _li_is_blank()'s docstring
         while li < n:
             cost = self._rows_for_li(li, line_h, body_rows)
-            if row > 0 and row + cost > body_rows:
+            if content_drawn and row + cost > body_rows:
                 break
+            if not self._li_is_blank(li):
+                content_drawn = True
             row += cost
             li += 1
             if row >= body_rows:
@@ -4695,10 +5460,13 @@ class App:
             self.scroll = 0
             return
         row = 0
+        content_drawn = False  # v0.1.111: see _li_is_blank()'s docstring
         while li >= 0:
             cost = self._rows_for_li(li, line_h, body_rows)
-            if row > 0 and row + cost > body_rows:
+            if content_drawn and row + cost > body_rows:
                 break
+            if not self._li_is_blank(li):
+                content_drawn = True
             row += cost
             li -= 1
             if row >= body_rows:
@@ -4805,31 +5573,31 @@ class App:
         self.status_until = time.time() + duration
 
     def _current_char_offset(self):
-        """Character offset of the first line currently on screen (inverse
-        of the restore math in _ensure_page_built()) -- captured fresh at
-        bookmark/save time so it always reflects exactly where the user
-        is, independent of whether a named anchor happens to apply here.
-        Returns None if there's no page built yet (nothing to measure).
+        """Character offset of the first line currently on screen --
+        captured fresh at bookmark/save time so it always reflects
+        exactly where the user is, independent of whether a named anchor
+        happens to apply here. Returns None if there's no page built yet
+        (nothing to measure).
 
-        The +1 matters: the restore loop finds the first line whose
-        CUMULATIVE length (running >= char_off) reaches the target, and
-        cumulative-through-line-(N-1) is numerically identical to "the
-        start offset of line N" -- so capturing the bare start offset
-        made restore land one line short of the actual scroll position
-        every time (verified: 23/24 sampled positions off by exactly one
-        line before this +1). Adding 1 pushes char_off just past that
-        boundary so the same-line cumulative total is the first to
-        satisfy >=, landing on the correct line. Verified exact (0
-        mismatches) across all 72 possible scroll positions on a real
-        chapter page."""
-        if not getattr(self, "_lines", None):
+        v0.1.115: simplified to just read self._line_abs_offsets[scroll]
+        directly -- that's already each line's true start offset (see
+        v0.1.114's fix), so no reconstruction is needed at all. The old
+        version rebuilt a `running` total via `len(line) + 1` per line,
+        the exact same buggy assumption as the box_rule
+        text-misclassification bug: correct for a line ending a real
+        paragraph, wrong for a wrapped sub-line. Every wrapped paragraph
+        before self.scroll drifted the saved offset further off, so a
+        bookmark or resume-position saved deep in a chapter could
+        restore a few lines short. The restore search in
+        _ensure_page_built() was fixed the same way (v0.1.115) to look
+        for the last line whose true start is <= this value, so the two
+        halves of save/restore now agree by construction instead of
+        coincidentally cancelling out."""
+        if not getattr(self, "_lines", None) or not getattr(self, "_line_abs_offsets", None):
             return None
-        running = 0
-        for li, line in enumerate(self._lines):
-            if li >= self.scroll:
-                return running + 1
-            running += len(line) + 1
-        return running + 1
+        if self.scroll < len(self._line_abs_offsets):
+            return self._line_abs_offsets[self.scroll]
+        return self._line_abs_offsets[-1] if self._line_abs_offsets else None
 
     def bookmark_here(self):
         if not self.current_book_path or not self.state:
@@ -4867,9 +5635,16 @@ HINT_H_MAX_LINES = 3  # Absolute ceiling on hint bar lines. In practice the
 # The two longest hint strings in the app, used only to calibrate hint
 # font size (_hint_pt()) and line count (_hint_lines_needed()) per global
 # Font Size step -- NOT drawn directly. Keep in sync if a hint string grows.
+# v0.1.119: the Library one was out of sync -- "LEFT/RIGHT Jump 10" was
+# added to the real lib_hint string in v0.1.110 (quick-scroll) but never
+# added here, so _hint_pt()/_hint_lines_needed() were calibrated against
+# a shorter string than what actually gets drawn. That made both
+# undershoot the space the real hint needed, and the real hint's tail
+# got clipped mid-word ("START Menu" -> "START M", "B Quit" dropped
+# entirely) -- confirmed via Kaleb's on-device screenshot.
 _HINT_CALIBRATION_TEXTS = (
     "D-PAD Select/Scroll  A Follow  B Back  L/R Page  L2/R2 Chapter  Y Fast x10  X Menu  START Bookmark",
-    "A Open  Y Sort  X Pin  SELECT Delete  L/R Font Size  L2 Download  START Menu  B Quit",
+    "A Open  Y Sort  X Pin  LEFT/RIGHT Jump 10  SELECT Finished  L/R Font Size  L2 Download  START Menu  B Quit",
 )
 
 
@@ -5079,7 +5854,18 @@ def _reader_body_layout(fonts):
     body_top = _sy(14)
     footer_h = TTF.TTF_FontHeight(fonts.ui_small) + _sy(14)
     body_h = SH - body_top - _sy(hint_height(fonts)) - footer_h
-    line_h = _sy(fonts.SIZE_STEPS[fonts.size_index] + 6)
+    # v0.1.116: leading was a flat +6px regardless of font size, so as
+    # actual glyph height grows with size (measured directly off the
+    # bundled Liberation Sans metrics) the +6 became a shrinking
+    # fraction of line height -- ~24% extra breathing room at 14pt but
+    # only ~3% at 32pt. Kaleb confirmed the tight packing at large Font
+    # Size is wanted (fits more text on screen) and should stay as-is;
+    # only the smaller sizes needed "a tad" more room. SIZE_STEPS[0:3]
+    # are 14/16/18 -- those three get +8 instead of +6, every larger
+    # step is untouched.
+    pt = fonts.SIZE_STEPS[fonts.size_index]
+    leading = 8 if pt <= 18 else 6
+    line_h = _sy(pt + leading)
     body_rows = max(1, body_h // line_h)
     return body_top, line_h, body_rows
 
@@ -5186,6 +5972,26 @@ MIN_IMG_BOX_ROWS = 1  # v0.1.99: was 3 (v0.1.87). BUG FOUND during Kaleb's
                     # with v0.1.97's top-align, a thin banner now reserves
                     # ~1 line of space and the image sits flush at its top.
 
+MIN_CAP_MARGIN_ROWS = 3  # v0.1.113's original flat value, now used as the
+                    # floor for _cap_margin_rows() rather than a constant
+                    # used directly -- see that function's docstring.
+
+
+def _cap_margin_rows(body_rows):
+    """v0.1.121: CAP_MARGIN_ROWS was a flat 3 regardless of Font Size, so
+    a fully-capped image (e.g. a portrait meeting-workbook cover) always
+    left EXACTLY 3 rows for trailing content whether body_rows was 28
+    (14pt) or 16 (32pt) -- proportionally that's generous breathing room
+    at 32pt but barely one short heading's worth at 14pt, and confirmed
+    on a real workbook cover page (202025160.xhtml) to push everything
+    after the title (copyright line, cover-picture caption) onto a
+    second, nearly-empty page -- Kaleb's "one line text pages" report.
+    Now scales at 20% of body_rows, floored at MIN_CAP_MARGIN_ROWS (3)
+    so 32pt -- already the tightest case, and the one Kaleb specifically
+    tuned to 3 in v0.1.112/113 -- is completely unchanged; only the
+    larger body_rows counts at smaller Font Sizes get more headroom."""
+    return max(MIN_CAP_MARGIN_ROWS, round(body_rows * 0.20))
+
 
 def _round_top_corners_to_bg(renderer, x, y, w, radius):
     """"Rounds" the top-left/top-right corners of whatever was just
@@ -5244,7 +6050,10 @@ def draw_library(renderer, app):
     heading_y = _sy(16)
     render_text(renderer, app.fonts.ui_heading, "LIBRARY", COL_ACCENT, _sx(20), heading_y)
     sort_y = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(4)
-    render_text(renderer, app.fonts.ui_small, f"Sort: {LIBRARY_SORT_LABELS[app.lib_sort_mode]}",
+    sort_line = f"Sort: {LIBRARY_SORT_LABELS[app.lib_sort_mode]}"
+    if app.lib_filter_mode != "all":
+        sort_line += f"   Filter: {LIBRARY_FILTER_LABELS[app.lib_filter_mode]}"
+    render_text(renderer, app.fonts.ui_small, _fit_text(app.fonts.ui_small, sort_line, SW - _sx(40)),
                 COL_DIM, _sx(20), sort_y)
 
     row_h = _row_h(app.fonts.ui_body)
@@ -5259,18 +6068,31 @@ def draw_library(renderer, app):
             break
         book = app.books[bi]
         y = top + i * row_h
-        armed = (bi == app._lib_delete_confirm_idx)
-        if armed:
-            fill_rect(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_WARNING)
-        elif bi == app.lib_index:
+        # v0.1.117: the armed-for-delete row used to live here (SELECT on
+        # this screen) -- delete moved into the Library Menu (START), so
+        # SELECT is now the Finished/Unfinished toggle and this row is
+        # back to a plain selection highlight.
+        if bi == app.lib_index:
             fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
-        color = COL_BG if armed else (COL_ACCENT if bi == app.lib_index else COL_TEXT)
+        color = COL_ACCENT if bi == app.lib_index else COL_TEXT
         pin_prefix = "\u2665 " if book["filename"] in app.pinned else ""
-        title_line = pin_prefix + book["title"]
+        finished_prefix = "\u2713 " if book["filename"] in app.finished else ""
+        title_line = pin_prefix + finished_prefix + book["title"]
         if app.lib_sort_mode == "author" and book.get("author"):
             title_line += f"  \u2014 {book['author']}"
-        if armed:
-            title_line = "Press SELECT again to DELETE, or move to cancel"
+        # v0.1.122: progress % (Kaleb's request #1) -- shown whenever a
+        # book has been started, regardless of sort mode. Relative last-
+        # read time (#2) is scoped to the Last Read sort only, same as
+        # the author suffix is scoped to the Author sort -- showing a
+        # "3d ago" next to every row regardless of sort would be noise
+        # when the list isn't even ordered by that.
+        pct = app._get_progress_pct(book)
+        if pct is not None:
+            title_line += f"  {pct}%"
+        if app.lib_sort_mode == "last_read":
+            rel = _relative_time(_book_last_read_ts(book))
+            if rel:
+                title_line += f"  ({rel})"
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, title_line, row_max_w),
                     color, _sx(24), y + _sy(8))
 
@@ -5297,9 +6119,9 @@ def draw_library(renderer, app):
         _draw_status_bar(renderer, app.fonts, app.status_msg, COL_WARNING,
                           SH - _sy(hint_height(app.fonts)))
 
-    lib_hint = "A Open  Y Sort  X Pin  SELECT Delete  L/R Font Size  START Menu  B Quit"
+    lib_hint = "A Open  Y Sort  X Pin  LEFT/RIGHT Jump 10  SELECT Finished  L/R Font Size  START Menu  B Quit"
     if DOWNLOAD_PLUGINS:
-        lib_hint = "A Open  Y Sort  X Pin  SELECT Delete  L/R Font Size  L2 Download  START Menu  B Quit"
+        lib_hint = "A Open  Y Sort  X Pin  LEFT/RIGHT Jump 10  SELECT Finished  L/R Font Size  L2 Download  START Menu  B Quit"
     draw_hint(renderer, app.fonts, lib_hint)
 
 
@@ -5318,6 +6140,32 @@ def draw_reader(renderer, app):
     li = app.scroll   # which _lines entry we're about to draw -- advances by
                        # exactly 1 per line regardless of how many visual
                        # rows that line ends up consuming on screen
+    content_drawn = False  # v0.1.111: true once anything NON-BLANK has
+                            # actually been drawn on this page. Needed
+                            # because the "first thing on the page always
+                            # draws" exemption below used to key off
+                            # row==0 literally -- but a page can legitimately
+                            # start with one or more blank/whitespace-only
+                            # _lines[] entries (epub_engine emits a real
+                            # "" line for any whitespace-only paragraph,
+                            # e.g. the stray text nodes HTML leaves around
+                            # a block-level <img> -- confirmed via
+                            # g_E_201507.epub's cover.xhtml: get_page()
+                            # returns " \n [IMG]\n \n ", which _wrap()
+                            # splits into _lines = ["", "[IMG]", "", ""]).
+                            # With row==0 taken by that leading blank line,
+                            # the image lands at row==1, the exemption no
+                            # longer applies, and a portrait cover's
+                            # box_rows (up to IMG_BOX_ROWS_PORTRAIT=20) can
+                            # push row+box_rows past body_rows -- so the
+                            # loop broke BEFORE ever drawing the image,
+                            # leaving the page completely blank until a
+                            # page-turn advanced scroll past the blank
+                            # line (Kaleb: "renders immediately but...
+                            # cutting it off... like a text line below").
+                            # Tracking real content instead of raw row
+                            # count means any number of leading blank
+                            # lines no longer defeats the exemption.
     while row < body_rows:
         if li >= len(app._lines):
             break
@@ -5342,6 +6190,7 @@ def draw_reader(renderer, app):
                 color = COL_LINK_SEL if is_selected else COL_DIM
                 render_text(renderer, app.fonts.ui_small, "[Image hidden -- text-only mode]",
                             color, _sx(20), y)
+                content_drawn = True
                 row += 1
                 li += 1
                 continue
@@ -5353,11 +6202,14 @@ def draw_reader(renderer, app):
             # letting it overflow past the bottom (previously: an image
             # near the bottom of a page rendered cropped -- "half the
             # image" -- because nothing checked whether its box would fit
-            # before drawing). row==0 means it's the very first thing on
-            # this page, so draw it regardless (an image taller than the
-            # whole body is a degenerate case, but still better
-            # shown-clipped than never shown at all).
-            if row > 0 and row + box_rows > body_rows:
+            # before drawing). If nothing real has been drawn on this
+            # page yet (content_drawn is False -- see its definition
+            # above), this is effectively the first thing on the page
+            # even if row > 0 because of leading blank lines, so draw it
+            # regardless (an image taller than the whole body is a
+            # degenerate case, but still better shown-clipped than never
+            # shown at all).
+            if content_drawn and row + box_rows > body_rows:
                 break
             box_h = line_h * box_rows
             box_w = SW - _sx(40)
@@ -5458,6 +6310,7 @@ def draw_reader(renderer, app):
                 SDL.SDL_RenderDrawRect(renderer, ctypes.byref(br))
             row += box_rows
             li += 1
+            content_drawn = True
             continue
 
         # Determine paragraph-level formatting for this line (v0.1.42).
@@ -5475,6 +6328,7 @@ def draw_reader(renderer, app):
         # box_rule lines: draw the rule text in COL_DIM, skip normal render.
         if para_kind == "box_rule":
             render_text_cached(app, renderer, app.fonts.small, line, COL_DIM, _sx(20), y)
+            content_drawn = True
             row += 1
             li += 1
             continue
@@ -5500,6 +6354,8 @@ def draw_reader(renderer, app):
                 color = COL_LINK_SEL if sidx == app.selected_span else (
                     COL_LINK if kind == "link" else COL_ACCENT)
             x += render_text_cached(app, renderer, font, seg, color, x, y)
+        if line.strip():
+            content_drawn = True
         row += 1
         li += 1
 
@@ -5686,6 +6542,28 @@ def draw_download_sources(renderer, app):
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
 
 
+def draw_download_video_sources(renderer, app):
+    """v0.1.110: the small picker that replaced the four separate Library
+    Menu video entries -- reached via Download Books > JW > Videos (the
+    CATEGORY_VIDEOS pseudo-category). Same simple list pattern as
+    draw_download_sources() above."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, "VIDEOS", COL_ACCENT, _sx(20), heading_y)
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    n_items = len(VIDEO_SOURCE_ITEMS)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.video_source_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        y = top + (i - start) * row_h
+        if i == app.video_source_index:
+            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.video_source_index else COL_TEXT
+        render_text(renderer, app.fonts.ui_body, VIDEO_SOURCE_ITEMS[i], color, _sx(24), y + _sy(10))
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+
+
 def draw_download_browse(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     name = "JW Videos" if app.dl_is_video else (getattr(app.dl_plugin, "PLUGIN_NAME", "Download") if app.dl_plugin else "Download")
@@ -5752,7 +6630,17 @@ def draw_download_browse(renderer, app):
         # v0.1.88: no server-side pages to flip through, but L/R still do
         # something useful here -- jump 10 items locally -- so say so.
         hint = "UP/DOWN Select   L/R Jump 10   A Download   B Back"
-    if getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
+    if app.dl_is_video:
+        # v0.1.110: video mode has its own Y binding (client-side title
+        # search, see App.search_video_items()) -- unrelated to the
+        # underlying plugin's SUPPORTS_SEARCH/SUPPORTS_MANUAL_CODE flags.
+        # JW_PLUGIN declares SUPPORTS_MANUAL_CODE, which used to make this
+        # hint say "Y Enter Code" here even though Y had no effect at all
+        # in video mode (every Y branch below explicitly excluded it) --
+        # that mismatch was the actual root cause of "Y doesn't work" on
+        # every video screen.
+        hint = hint.replace("B Back", "Y Search   B Back")
+    elif getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
         hint = hint.replace("B Back", "Y Search   B Back")
     elif getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
         hint = hint.replace("B Back", "Y Enter Code   B Back")
@@ -5780,17 +6668,34 @@ def draw_library_menu(renderer, app):
             label = item + "  *"  # mark the currently-active sort mode
         if item == "Download Books" and not DOWNLOAD_PLUGINS:
             continue  # hide entirely if no downloader plugin is present
-        if item == "Enjoy Life Forever Book Videos" and not JW_VIDEO_SUPPORTED:
-            continue  # hide entirely if jw_fetch (or its video support) isn't present
-        if item == "Check JW Broadcasting" and not JW_VIDEO_SUPPORTED:
-            continue  # same guard -- reuses the same plugin/video support
-        if item == "Check Governing Body Updates" and not JW_VIDEO_SUPPORTED:
-            continue  # same guard again
-        if item == "The Good News According to Jesus" and not JW_VIDEO_SUPPORTED:
-            continue  # same guard again
-        if i == app.lib_menu_index:
+        if item == "Continue Reading":
+            recent = app.most_recent_book()
+            label = f"Continue: {recent['title']}" if recent else "Continue Reading (none yet)"
+        if item == "Filter: Cycle":
+            label = f"Filter: {LIBRARY_FILTER_LABELS[app.lib_filter_mode]}"
+        armed_delete = False
+        if item == "Delete Book":
+            if app._menu_delete_armed:
+                label = "Press A again to DELETE"
+                armed_delete = True
+            elif app._menu_delete_target:
+                label = f"Delete: {app._menu_delete_target['title']}"
+            else:
+                label = "Delete Book"
+        armed_clear = False
+        if item == "Clear All Finished":
+            n_finished = len(app.finished)
+            if app._menu_clear_finished_armed:
+                label = f"Press A again to clear {n_finished} mark" + ("s" if n_finished != 1 else "")
+                armed_clear = True
+            else:
+                label = f"Clear All Finished ({n_finished})"
+        armed_warning = armed_delete or armed_clear
+        if armed_warning:
+            fill_rect_rounded(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_WARNING)
+        elif i == app.lib_menu_index:
             fill_rect_rounded(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
-        color = COL_ACCENT if i == app.lib_menu_index else COL_TEXT
+        color = COL_BG if armed_warning else (COL_ACCENT if i == app.lib_menu_index else COL_TEXT)
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
                     color, SW - overlay_w + _sx(20), y + _sy(8))
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
@@ -5824,7 +6729,7 @@ def draw_bookmarks(renderer, app):
 
 def draw_storage(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
-    render_text(renderer, app.fonts.ui_heading, "STORAGE", COL_ACCENT, _sx(20), _sy(16))
+    render_text(renderer, app.fonts.ui_heading, "SETTINGS", COL_ACCENT, _sx(20), _sy(16))
 
     cache_size = format_bytes(image_cache_size_bytes())
     orphan_count = len(orphaned_bookmark_book_paths())
@@ -5846,6 +6751,7 @@ def draw_storage(renderer, app):
         f"Orphaned bookmark sets: {orphan_count} deleted book(s)",
         f"Disk cache: {cache_state}",
         f"Images: {'ON' if app.images_enabled else 'OFF (text-only)'}",
+        f"Open Last Book on Launch: {'ON' if app.open_last_book_enabled else 'OFF'}",
         backup_line,
     ]
     if app.doc is not None and app._book_id:
@@ -5878,6 +6784,13 @@ def draw_storage(renderer, app):
     start = max(0, min(app.storage_index - visible // 2, max(0, n_items - visible)))
     for idx in range(start, min(n_items, start + visible)):
         action = STORAGE_ACTIONS[idx]
+        # v0.1.122: checked BEFORE any drawing (highlight box included) --
+        # unlike the Library Menu's existing "Download Books" hide, which
+        # continues after the highlight box already drew, so a selection
+        # landing on a hidden row there paints a blank highlighted rect.
+        # Checking first avoids that here.
+        if action == "Pre-render Book Images" and native_jpeg is not None and native_jpeg.available:
+            continue
         ry = top + (idx - start) * row_h
         armed = (idx == app._storage_confirm_idx)
         if armed:
@@ -5886,12 +6799,9 @@ def draw_storage(renderer, app):
             fill_rect_rounded(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_BG if armed else (COL_ACCENT if idx == app.storage_index else COL_TEXT)
         label = action
-        if action == "Pre-render Book Images":
-            if native_jpeg is not None and native_jpeg.available:
-                label = "Pre-render Book Images (not needed -- native decode active)"
-            elif app._prerender_active:
-                done, total, scanning = app.prerender_progress()
-                label = f"Cancel Pre-render (scanning... {total} found)" if scanning                     else f"Cancel Pre-render ({done}/{total})"
+        if action == "Pre-render Book Images" and app._prerender_active:
+            done, total, scanning = app.prerender_progress()
+            label = f"Cancel Pre-render (scanning... {total} found)" if scanning                 else f"Cancel Pre-render ({done}/{total})"
         if armed:
             label = "Press A again to confirm, or B to cancel"
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, action_max_w),
@@ -6125,6 +7035,8 @@ def main():
                 draw_download_sources(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_CATEGORIES:
                 draw_download_categories(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_VIDEO_SOURCES:
+                draw_download_video_sources(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_BROWSE:
                 draw_download_browse(renderer, app)
 
@@ -6150,45 +7062,33 @@ def handle_button(app, btn, body_h_px=None):
         n = len(app.books)
         if btn == "UP":
             app.lib_index = (app.lib_index - 1) % n if n else 0
-            app._lib_delete_confirm_idx = None
         elif btn == "DOWN":
             app.lib_index = (app.lib_index + 1) % n if n else 0
-            app._lib_delete_confirm_idx = None
         elif btn == "Y":
             app.cycle_sort_mode()
-            app._lib_delete_confirm_idx = None
+        elif btn == "LEFT" and n:
+            # v0.1.110: quick-scroll -- D-pad LEFT/RIGHT jump 10 rows at a
+            # time, same convention as Chapters/Bookmarks' L/R. Clamps
+            # rather than wraps, so a long library doesn't quietly loop
+            # you back to the opposite end.
+            app.lib_index = max(0, app.lib_index - 10)
+        elif btn == "RIGHT" and n:
+            app.lib_index = min(n - 1, app.lib_index + 10)
         elif btn == "X" and app.books:
             app.toggle_pin(app.books[app.lib_index])
-            app._lib_delete_confirm_idx = None
         elif btn == "A" and app.books:
-            app._lib_delete_confirm_idx = None
             app.open_book(app.books[app.lib_index])
         elif btn == "SELECT" and app.books:
-            if app._lib_delete_confirm_idx == app.lib_index:
-                # second SELECT on the same row -- actually delete
-                book = app.books[app.lib_index]
-                title = book["title"]
-                if app.delete_book(book):
-                    app.refresh_library()  # also purges this book's image
-                                            # cache, anchor cache, and pin
-                                            # entry -- see delete_book()
-                    app.lib_index = max(0, min(app.lib_index, len(app.books) - 1))
-                    app.set_status(f'Deleted "{title}"')
-                else:
-                    app.set_status(f'Could not delete "{title}"')
-                app._lib_delete_confirm_idx = None
-            else:
-                # first SELECT -- arm this row, require a second press so a
-                # stray button press can't silently delete a book. Moved
-                # here from B in v0.1.29 -- B sat right next to the D-pad
-                # and normally means "go back" everywhere else in the app,
-                # so it was too easy to hit by muscle memory and delete a
-                # book by accident, even with the two-press confirm.
-                app._lib_delete_confirm_idx = app.lib_index
+            # v0.1.117: SELECT used to be book-delete (press twice to
+            # confirm) -- moved to a "Delete Book" entry in the Library
+            # Menu (START) so SELECT could become the Finished/Unfinished
+            # marker Kaleb asked for, matching X/pin's one-press toggle
+            # feel since marking a book finished isn't destructive and
+            # doesn't need a confirm step.
+            app.toggle_finished(app.books[app.lib_index])
         elif btn == "B":
             app.quit_requested = True
         elif btn == "L2" and DOWNLOAD_PLUGINS:
-            app._lib_delete_confirm_idx = None
             if len(DOWNLOAD_PLUGINS) == 1:
                 app.open_downloader(DOWNLOAD_PLUGINS[0])
             else:
@@ -6217,24 +7117,84 @@ def handle_button(app, btn, body_h_px=None):
             else:
                 app.set_status(f"Font size: {pt}pt")
         elif btn == "START":
-            app._lib_delete_confirm_idx = None
             app.lib_menu_index = 0
+            # capture whichever book was highlighted right now -- Delete
+            # Book in the menu always targets this, not whatever's
+            # highlighted once inside the menu (there's no book list
+            # shown there)
+            app._menu_delete_target = app.books[app.lib_index] if app.books else None
+            app._menu_delete_armed = False
             app.screen = SCREEN_LIBRARY_MENU
 
     elif app.screen == SCREEN_LIBRARY_MENU:
         n = len(LIBRARY_MENU_ITEMS)
-        if btn == "UP": app.lib_menu_index = (app.lib_menu_index - 1) % n
-        elif btn == "DOWN": app.lib_menu_index = (app.lib_menu_index + 1) % n
-        elif btn == "B": app.screen = SCREEN_LIBRARY
+        if btn == "UP":
+            app.lib_menu_index = (app.lib_menu_index - 1) % n
+            app._menu_delete_armed = False
+            app._menu_clear_finished_armed = False
+        elif btn == "DOWN":
+            app.lib_menu_index = (app.lib_menu_index + 1) % n
+            app._menu_delete_armed = False
+            app._menu_clear_finished_armed = False
+        elif btn == "B":
+            app._menu_delete_armed = False
+            app._menu_clear_finished_armed = False
+            app.screen = SCREEN_LIBRARY
         elif btn == "A":
             choice = LIBRARY_MENU_ITEMS[app.lib_menu_index]
+            if choice != "Delete Book":
+                app._menu_delete_armed = False
+            if choice != "Clear All Finished":
+                app._menu_clear_finished_armed = False
             sort_map = {"Sort: Title A-Z": "title", "Sort: Author A-Z": "author",
                         "Sort: Last Read": "last_read", "Sort: Recently Added": "recent"}
             if choice in sort_map:
                 app.lib_sort_mode = sort_map[choice]
-                app.books = sort_library(app.books, app.lib_sort_mode, app.pinned)
+                app._apply_library_view()
                 app.lib_index = 0
                 app.screen = SCREEN_LIBRARY
+            elif choice == "Continue Reading":
+                app.open_continue_reading()
+            elif choice == "Filter: Cycle":
+                app.cycle_filter_mode()
+                # stays open, same as Theme +/- -- lets Kaleb cycle
+                # through All/Unfinished/Finished and see the label
+                # update without re-opening the menu each time
+            elif choice == "Clear All Finished":
+                if len(app.finished) == 0:
+                    pass  # nothing to clear -- no-op, same spirit as
+                          # Delete Book's "nothing was highlighted" no-op
+                elif app._menu_clear_finished_armed:
+                    app.clear_all_finished()
+                    app._menu_clear_finished_armed = False
+                    # stays open (unlike Delete Book) -- clearing marks
+                    # isn't as disruptive as removing a book file, and
+                    # Kaleb may want to keep adjusting Filter/Sort right
+                    # after seeing the count clear
+                else:
+                    app._menu_clear_finished_armed = True
+            elif choice == "Delete Book":
+                if app._menu_delete_target is None:
+                    pass  # nothing was highlighted when START was pressed
+                elif app._menu_delete_armed:
+                    book = app._menu_delete_target
+                    title = book["title"]
+                    if app.delete_book(book):
+                        app.refresh_library()  # also purges this book's
+                                                # image cache, anchor cache,
+                                                # and pin/finished entries
+                                                # -- see delete_book()
+                        app.lib_index = max(0, min(app.lib_index, len(app.books) - 1))
+                        app.set_status(f'Deleted "{title}"')
+                    else:
+                        app.set_status(f'Could not delete "{title}"')
+                    app._menu_delete_armed = False
+                    app._menu_delete_target = None
+                    app.screen = SCREEN_LIBRARY
+                else:
+                    # first press -- arm it, same two-press-confirm safety
+                    # the old Library-screen SELECT delete used
+                    app._menu_delete_armed = True
             elif choice == "Theme +":
                 new_index = (THEME_INDEX + 1) % len(THEMES)
                 apply_theme(new_index)
@@ -6253,20 +7213,7 @@ def handle_button(app, btn, body_h_px=None):
                 else:
                     app.dl_source_index = 0
                     app.screen = SCREEN_DOWNLOAD_SOURCES
-            elif choice == "Enjoy Life Forever Book Videos" and JW_VIDEO_SUPPORTED:
-                # v0.1.90: only one video catalog confirmed so far ("lffv" --
-                # Enjoy Life Forever videos). If more video pubs get
-                # confirmed live later, this becomes a small picker list
-                # instead of a hardcoded single pub -- deliberately not
-                # over-built for a hypothetical second catalog yet.
-                app.open_video_downloader("lffv")
-            elif choice == "Check JW Broadcasting" and JW_VIDEO_SUPPORTED:
-                app.open_broadcast_downloader()
-            elif choice == "Check Governing Body Updates" and JW_VIDEO_SUPPORTED:
-                app.open_gb_update_downloader()
-            elif choice == "The Good News According to Jesus" and JW_VIDEO_SUPPORTED:
-                app.open_good_news_downloader()
-            elif choice == "Storage":
+            elif choice == "Settings":
                 app.storage_index = 0
                 app._storage_confirm_idx = None
                 app._storage_return_screen = SCREEN_LIBRARY_MENU
@@ -6302,7 +7249,36 @@ def handle_button(app, btn, body_h_px=None):
             else:
                 app.screen = SCREEN_LIBRARY
         elif btn == "A" and categories:
-            app.open_category(categories[app.dl_cat_index])
+            # v0.1.110: jw_fetch.CATEGORY_VIDEOS is a pseudo-category (like
+            # CATEGORY_WHATS_NEW) that doesn't route through
+            # open_category()/list_items() -- it opens the small video-
+            # source picker instead (Enjoy Life Forever / JW Broadcasting /
+            # Governing Body Updates / The Good News According to Jesus),
+            # replacing what used to be four separate Library Menu entries.
+            chosen = categories[app.dl_cat_index]
+            if chosen == getattr(app.dl_plugin, "CATEGORY_VIDEOS", None):
+                app.video_source_index = 0
+                app.screen = SCREEN_DOWNLOAD_VIDEO_SOURCES
+            else:
+                app.open_category(chosen)
+
+    elif app.screen == SCREEN_DOWNLOAD_VIDEO_SOURCES:
+        n = len(VIDEO_SOURCE_ITEMS)
+        if btn == "UP": app.video_source_index = (app.video_source_index - 1) % n
+        elif btn == "DOWN": app.video_source_index = (app.video_source_index + 1) % n
+        elif btn == "B": app.screen = SCREEN_DOWNLOAD_CATEGORIES
+        elif btn == "A":
+            choice = VIDEO_SOURCE_ITEMS[app.video_source_index]
+            if choice == "Enjoy Life Forever":
+                app.open_video_downloader("lffv")
+            elif choice == "JW Broadcasting":
+                app.open_broadcast_downloader()
+            elif choice == "Governing Body Updates":
+                app.open_gb_update_downloader()
+            elif choice == "The Good News According to Jesus":
+                app.open_good_news_downloader()
+            elif choice == "Back":
+                app.screen = SCREEN_DOWNLOAD_CATEGORIES
 
     elif app.screen == SCREEN_DOWNLOAD_BROWSE:
         n = len(app.dl_items)
@@ -6325,6 +7301,17 @@ def handle_button(app, btn, body_h_px=None):
                 app.dl_prev_page()
             elif n:
                 app.dl_index = max(app.dl_index - 10, 0)
+        elif btn == "Y" and app.dl_is_video:
+            # v0.1.110: none of the four video sources have server-side
+            # search -- each is fetched as one small complete list -- so
+            # this is a client-side title filter over the already-loaded
+            # catalog. See App.search_video_items().
+            def _on_video_search_confirm(app, value):
+                app.screen = SCREEN_DOWNLOAD_BROWSE
+                app.search_video_items(value)
+            app.open_text_entry("Search Videos", app.dl_query or "",
+                                 _on_video_search_confirm, SCREEN_DOWNLOAD_BROWSE,
+                                 hint="Search by title  (case-insensitive, blank clears)")
         elif btn == "Y" and not app.dl_is_video and getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
             def _on_search_confirm(app, value):
                 app.screen = SCREEN_DOWNLOAD_BROWSE
@@ -6367,12 +7354,14 @@ def handle_button(app, btn, body_h_px=None):
                                  hint=getattr(app.dl_plugin, "MANUAL_CODE_HINT", ""))
         elif btn == "B":
             if app.dl_is_video:
-                # v0.1.90: video browse was opened directly from the Library
-                # Menu (no category/source picker in between -- see
-                # open_video_downloader()), so B goes straight back there
-                # rather than into the EPUB category/source-picker logic below.
+                # v0.1.110: video browse is now opened from
+                # SCREEN_DOWNLOAD_VIDEO_SOURCES (Download Books > JW >
+                # Videos), not directly from the Library Menu -- so B goes
+                # back there, letting Kaleb pick a different video source
+                # without walking all the way back through Library Menu >
+                # Download Books > JW > Videos again.
                 app.dl_is_video = False
-                app.screen = SCREEN_LIBRARY_MENU
+                app.screen = SCREEN_DOWNLOAD_VIDEO_SOURCES
             elif app.dl_category is not None:
                 app.screen = SCREEN_DOWNLOAD_CATEGORIES
             elif len(DOWNLOAD_PLUGINS) > 1:
@@ -6534,7 +7523,7 @@ def handle_button(app, btn, body_h_px=None):
                 app.refresh_library()
                 app.lib_index = 0
                 app.screen = SCREEN_LIBRARY
-            elif choice == "Storage":
+            elif choice == "Settings":
                 app.storage_index = 0
                 app._storage_confirm_idx = None
                 app._storage_return_screen = SCREEN_READER
@@ -6635,11 +7624,26 @@ def handle_button(app, btn, body_h_px=None):
 
     elif app.screen == SCREEN_STORAGE:
         n = len(STORAGE_ACTIONS)
+
+        def _storage_hidden(idx):
+            return (STORAGE_ACTIONS[idx] == "Pre-render Book Images"
+                    and native_jpeg is not None and native_jpeg.available)
+
         if btn == "UP":
-            app.storage_index = (app.storage_index - 1) % n
+            new_idx = app.storage_index
+            for _ in range(n):
+                new_idx = (new_idx - 1) % n
+                if not _storage_hidden(new_idx):
+                    break
+            app.storage_index = new_idx
             app._storage_confirm_idx = None
         elif btn == "DOWN":
-            app.storage_index = (app.storage_index + 1) % n
+            new_idx = app.storage_index
+            for _ in range(n):
+                new_idx = (new_idx + 1) % n
+                if not _storage_hidden(new_idx):
+                    break
+            app.storage_index = new_idx
             app._storage_confirm_idx = None
         elif btn == "B":
             if app._storage_confirm_idx is not None:
@@ -6674,6 +7678,14 @@ def handle_button(app, btn, body_h_px=None):
                 save_settings({"images_enabled": app.images_enabled})
                 state = "OFF (text-only)" if not app.images_enabled else "ON"
                 app.set_status(f"Images: {state}")
+            elif action == "Toggle Open Last Book on Launch":
+                # Non-destructive, instant -- only affects the NEXT app
+                # launch (checked once at the end of App.__init__), no
+                # live behavior to update right now.
+                app.open_last_book_enabled = not app.open_last_book_enabled
+                save_settings({"open_last_book_enabled": app.open_last_book_enabled})
+                state = "ON" if app.open_last_book_enabled else "OFF"
+                app.set_status(f"Open Last Book on Launch: {state}")
             elif action == "Pre-render Book Images":
                 # v0.1.82: confirmed on-device (Kaleb: "full native
                 # instantaneous image rendering") that native_jpeg.py's

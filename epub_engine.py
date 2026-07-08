@@ -116,6 +116,81 @@ class ParaSpan:
     extra: str = ""   # reserved (box rule text)
 
 
+def collapse_blank_line_runs(text, images, links, styles, para_spans, anchor_offsets):
+    """v0.1.118: nested block-tag transitions (a </header> closing while
+    <div class="bodyTxt"><div class="section"><div class="pGroup"> all
+    open right before the first real <p>, for example) each independently
+    call maybe_newline(), and incidental XML pretty-printing whitespace
+    between sibling tags gets emitted as its own blank " " line by
+    emit_text() -- neither dedupes against the OTHER mechanism, so a
+    transition crossing several nested containers with no real content in
+    between can stack up 2-4 blank lines where exactly one was intended.
+    Confirmed on a real Awake! cover article (Kaleb's report + photos):
+    the </header>-to-first-<p> transition alone produced 4 blank lines,
+    and every <ul><li> boundary (the Anja/Delina/Gregory bullet list)
+    doubled up to 2 blank lines instead of 1, because the <li>'s own
+    block-boundary blank line stacked with its child <p>'s.
+
+    This collapses any run of 2+ consecutive whitespace-only lines down to
+    exactly 1, and remaps every recorded image/link/style/para/anchor
+    offset to match -- safe because no span or anchor is ever placed
+    inside pure whitespace, so nothing meaningful can fall inside a
+    deleted range."""
+    lines = text.split("\n")
+    line_spans = []  # (start, end) in the ORIGINAL text; end excludes the "\n"
+    pos = 0
+    for line in lines:
+        start = pos
+        end = pos + len(line)
+        line_spans.append((start, end))
+        pos = end + 1
+
+    is_blank = [line.strip() == "" for line in lines]
+
+    delete_ranges = []
+    for i in range(1, len(lines)):
+        if is_blank[i] and is_blank[i - 1]:
+            # drop this line's own leading "\n" + content: [end of line
+            # i-1, end of line i) -- the following "\n" then correctly
+            # becomes the sole separator before whatever comes next.
+            delete_ranges.append((line_spans[i - 1][1], line_spans[i][1]))
+
+    if not delete_ranges:
+        return text, images, links, styles, para_spans, anchor_offsets
+
+    def remap(offset):
+        shift = 0
+        for ds, de in delete_ranges:
+            if offset >= de:
+                shift += (de - ds)
+            elif offset > ds:
+                shift += (offset - ds)  # defensive clamp; shouldn't occur
+            else:
+                break
+        return offset - shift
+
+    out = []
+    cursor = 0
+    for ds, de in delete_ranges:
+        out.append(text[cursor:ds])
+        cursor = de
+    out.append(text[cursor:])
+    new_text = "".join(out)
+
+    for im in images:
+        im.start, im.end = remap(im.start), remap(im.end)
+    for ln in links:
+        ln.start, ln.end = remap(ln.start), remap(ln.end)
+    for sp in styles:
+        sp.start, sp.end = remap(sp.start), remap(sp.end)
+    for ps in para_spans:
+        ps.start, ps.end = remap(ps.start), remap(ps.end)
+    for k in list(anchor_offsets.keys()):
+        anchor_offsets[k] = remap(anchor_offsets[k])
+
+    return new_text, images, links, styles, para_spans, anchor_offsets
+
+
 class EpubDocument:
     def __init__(self, path: str, anchor_cache_path: str | None = None):
         self.path = path
@@ -417,6 +492,14 @@ class EpubDocument:
             if node_id:
                 anchor_offsets.setdefault(node_id, cursor[0])
 
+            # v0.1.120 added a skip here for screen-reader-only text
+            # (class="dc-screenReaderText", aria-hidden="true") after
+            # finding "Your answer" fill-in-the-blank labels cluttering
+            # meeting workbooks. v0.1.121: Kaleb decided he wants that
+            # text visible at all times instead (not conditional on the
+            # images toggle, just always shown) -- reverted. No render-
+            # time filtering needed either since there's nothing to filter.
+
             if tag == "img":
                 src = elem.get("src")
                 if src:
@@ -645,6 +728,8 @@ class EpubDocument:
                 emit_text(child.tail)
 
         text = "".join(text_parts)
+        text, images, links, styles, para_spans, anchor_offsets = collapse_blank_line_runs(
+            text, images, links, styles, para_spans, anchor_offsets)
         return text, links, images, anchor_offsets, styles, para_spans
 
     def get_image_bytes(self, image_path: str) -> bytes:
