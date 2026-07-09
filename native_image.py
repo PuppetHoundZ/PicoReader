@@ -1,8 +1,17 @@
 """
-native_jpeg.py
+native_image.py
 
-Optional ctypes bridge to the system's libSDL2_image, used to decode JPEGs
-at real C speed instead of mini_jpeg.py's pure-Python decoder.
+Optional ctypes bridge to the system's libSDL2_image, used to decode
+images (JPEG, PNG, and whatever else the device's SDL2_image build
+supports -- see IMG_INIT_ALL below) at real C speed instead of
+mini_jpeg.py's pure-Python JPEG-only decoder.
+
+RENAMED from native_jpeg.py in v0.1.146 -- Kaleb asked for a name that's
+more obviously accurate now that this handles more than JPEG (v0.1.145
+generalized it to every SDL2_image format). The main decode function was
+also renamed, from decode_jpeg_native() to decode_image_native(), for
+the same reason. See v0.1.146 changelog in main.py for the full list of
+what changed and what didn't.
 
 BACKGROUND (v0.1.80): mini_jpeg.py exists because this project avoids
 external dependencies -- no pip installs, stdlib ctypes-to-SDL2 only.
@@ -32,9 +41,11 @@ freeze this was built to fix is resolved, not just reduced.
 
 FALLBACK: if libSDL2_image can't be loaded for any reason (missing on a
 different muOS build/device, load failure, decode failure on a specific
-malformed file), `available` is False and/or decode_jpeg_native() raises
+malformed file), `available` is False and/or decode_image_native() raises
 -- main.py catches this and falls back to mini_jpeg.decode_jpeg()
-automatically. mini_jpeg.py is NOT being removed; it's the safety net.
+automatically. mini_jpeg.py is NOT being removed; it's the safety net --
+though it remains JPEG-only (see v0.1.144/145 changelog entries), so
+that fallback only helps for JPEG specifically.
 
 This module deliberately mirrors mini_jpeg.decode_jpeg()'s exact
 signature and return contract -- (rgb_bytes, width, height), tightly
@@ -48,16 +59,40 @@ import ctypes
 import ctypes.util
 
 available = False
+supported_formats = set()  # v0.1.145: e.g. {"JPG", "PNG", "WEBP"} -- built
+                            # from IMG_Init()'s actual return bitmask (see
+                            # _init()), not just "we asked for it". Replaces
+                            # v0.1.144's single png_available flag with a
+                            # generic version so future formats don't need
+                            # a new flag added by hand each time.
 _SDL = None
 _IMG = None
 _have_linear_stretch = False  # SDL_SoftStretchLinear -- SDL 2.0.16+ only,
-                               # see decode_jpeg_native()'s v0.1.91 note
+                               # see decode_image_native()'s v0.1.91 note
 
 SDL_PIXELFORMAT_RGB24 = 0x17101803  # confirmed via SDL_GetPixelFormatName()
 SDL_PIXELFORMAT_ARGB8888 = 0x16362004  # confirmed against SDL2 pixels.h --
-                                        # see decode_jpeg_native()'s v0.1.91
+                                        # see decode_image_native()'s v0.1.91
                                         # note for why this is needed
 IMG_INIT_JPG = 0x00000001
+IMG_INIT_PNG = 0x00000002
+IMG_INIT_TIF = 0x00000004
+IMG_INIT_WEBP = 0x00000008
+IMG_INIT_JXL = 0x00000010   # SDL2_image 2.6.0+ -- harmless no-op bit on
+                             # older builds, see _init()'s comment below
+IMG_INIT_AVIF = 0x00000020  # SDL2_image 2.6.0+ -- same as above
+
+# v0.1.145: every format flag OR'd together -- "handle whatever shows up"
+# per Kaleb's ask, rather than hand-picking formats one request at a time.
+IMG_INIT_ALL = (IMG_INIT_JPG | IMG_INIT_PNG | IMG_INIT_TIF |
+                IMG_INIT_WEBP | IMG_INIT_JXL | IMG_INIT_AVIF)
+
+# Human-readable names for the bitmask, used to build SUPPORTED_FORMATS
+# below from whatever IMG_Init() actually reports back.
+_FORMAT_FLAGS = [
+    ("JPG", IMG_INIT_JPG), ("PNG", IMG_INIT_PNG), ("TIF", IMG_INIT_TIF),
+    ("WEBP", IMG_INIT_WEBP), ("JXL", IMG_INIT_JXL), ("AVIF", IMG_INIT_AVIF),
+]
 
 
 class _SDL_Rect(ctypes.Structure):
@@ -178,7 +213,22 @@ def _init():
         if hasattr(sdl, "SDL_WasInit") :
             pass  # no-op; just confirming the symbol exists on this build
         sdl.SDL_Init(0)
-        img.IMG_Init(IMG_INIT_JPG)
+        _initted_flags = img.IMG_Init(IMG_INIT_ALL)
+        # v0.1.145: IMG_Init returns a bitmask of the formats that ACTUALLY
+        # initialized -- not every muOS/SDL2_image build ships every
+        # format library (libpng/libtiff/libwebp/etc. are dlopen'd
+        # per-format, confirmed via SDL2_image's own source), so we don't
+        # assume a format worked just because we asked for it. Building
+        # supported_formats from the real return value means JPEG (or any
+        # other already-working format) keeps working even if some other
+        # format's library is missing on a given device -- and any format
+        # IMG_Init doesn't recognize at all (bit not defined on an older
+        # SDL2_image build) is harmlessly just never set, no crash either
+        # way (unrecognized bits in the request are simply ignored by
+        # IMG_Init, confirmed via SDL2_image's docs).
+        global supported_formats
+        supported_formats = {name for name, flag in _FORMAT_FLAGS
+                              if _initted_flags & flag}
     except (AttributeError, OSError):
         _SDL, _IMG = False, False
         available = False
@@ -188,11 +238,29 @@ def _init():
     available = True
 
 
-def decode_jpeg_native(jpeg_bytes, scale_n=4):
-    """Decode JPEG bytes via libSDL2_image, returning (rgb_bytes, w, h) --
-    same contract as mini_jpeg.decode_jpeg(). Raises RuntimeError on any
-    failure (library unavailable, decode failure, unexpected format) so
-    the caller can fall back to mini_jpeg.decode_jpeg() cleanly."""
+def decode_image_native(jpeg_bytes, scale_n=4):
+    """Decode image bytes via libSDL2_image, returning (rgb_bytes, w, h) --
+    same contract as mini_jpeg.decode_jpeg(). Despite the name (kept for
+    call-site compatibility -- see decode_jpeg() in main.py), this handles
+    ANY format IMG_Load_RW recognizes from the byte content itself (it
+    auto-detects the format, no hint needed) -- v0.1.145 requests every
+    format SDL2_image knows how to init (JPG/PNG/TIF/WEBP/JXL/AVIF -- see
+    IMG_INIT_ALL), so a new format showing up in a future EPUB just works
+    without this file needing another one-line change, as long as the
+    device's SDL2_image build has that format's library available. Check
+    supported_formats (a set of short names, e.g. {"JPG","PNG","WEBP"})
+    if a caller ever needs to know what's actually usable on this device.
+    Note: any source with an alpha channel (PNG, WEBP, AVIF) gets its
+    alpha silently dropped by the RGB24 conversion below (same as any
+    non-RGB24 source format) -- fine for a reader displaying page images,
+    not a general-purpose image pipeline. Raises RuntimeError on any
+    failure (library unavailable, decode failure, unrecognized format) so
+    the caller can fall back to mini_jpeg.decode_jpeg() cleanly -- though
+    that fallback is JPEG-only (see mini_jpeg.py), so a non-JPEG format on
+    a device without native decode support has no fallback path; it'll
+    fail to display rather than silently downgrading. Acceptable per
+    Kaleb's "native engine only" ask.
+    """
     _init()
     if not available:
         raise RuntimeError("libSDL2_image not available on this device")
