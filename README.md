@@ -5,9 +5,22 @@ PicoReader is an EPUB reader for the **Anbernic RG CubeXX-H** running
 dependencies — no PIL/Pillow, no pip installs, nothing to set up. Just
 copy it on and start reading.
 
+Image decoding uses the device's own native `libSDL2_image`/`libjpeg`
+libraries for speed, but that's never a hard requirement — a complete,
+pure-Python JPEG decoder is built in as an automatic fallback. If a
+future muOS update ever changes or removes those native libraries,
+PicoReader keeps working on its own rather than breaking.
+
 It's a companion app to
 [Pico8FavsSorter](https://github.com/PuppetHoundZ/MuOS-Pico8-Favs-Sorter),
 another muOS app for the same device.
+
+The CubeXX-H's square 720×720 screen wasn't an accident of this
+project — it's a deliberate design choice by the device itself, and
+part of why it was bought in the first place. It was picked for
+running PICO-8 games (which are natively square), with minimalism as
+the whole point. The ebook reader started as a smaller side idea on
+the same hardware and ended up becoming the main passion project.
 
 ## Quick start
 
@@ -81,6 +94,30 @@ contract — it's a small, self-contained interface.
 
 - An Anbernic RG CubeXX-H, or another muOS device with Python 3 and
   SDL2/SDL2_ttf available.
+
+## Other-resolution device support (added v0.1.148)
+
+PicoReader is built and tested primarily on the **RG CubeXX-H (720×720)**.
+Starting with v0.1.148 it also runs on other muOS screen sizes without
+any layout changes, by detecting the real screen at boot and having
+SDL2 scale the app's fixed 720×720 canvas to fit — centered, with black
+bars on the sides rather than stretching. Confirmed device groupings
+(via community.muos.dev): 640×480 (RG28XX, RG35XX/+/2024/H/SP, RG40XX
+H/V), 720×480 (RG34XX family), 720×720 (RGCubeXX — primary target),
+1024×768 (TrimUI Brick), 1280×720 (TrimUI Smart Pro).
+
+**Honest status:** this has been verified through headless simulation
+(real SDL2, no exceptions, correct scale factors confirmed via SDL's
+own API, across all resolutions above) but has **not** been confirmed
+on real non-CubeXX hardware — the author only owns a CubeXX-H. The
+approach follows a standard, well-documented SDL2 pattern
+(`SDL_RenderSetLogicalSize`) and avoids a specific real-world bug found
+in another muOS app during this work (non-uniform X/Y scaling that
+stretches the UI instead of preserving aspect ratio), but "should
+work" is not the same claim as "confirmed working." The CubeXX-H path
+itself is completely unaffected by this change (separate code branch,
+zero risk of regression there). If you test this on another device and
+it looks right — or doesn't — please open an issue or PR.
 
 ## Building the `.muxapp` yourself
 
