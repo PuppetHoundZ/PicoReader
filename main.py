@@ -65,7 +65,8 @@ project back up. This describes the CURRENT build only. Full version
 history has been condensed below the standing rules; don't go looking
 for a longer historical changelog elsewhere, this is the whole thing.
 
-CURRENT STATE (v0.1.147 -- see changelog for detail, especially v0.1.116-
+CURRENT STATE (v0.1.148 -- multi-resolution letterboxing added, see that
+changelog entry for detail; also v0.1.116-
 139 which aren't summarized in this paragraph yet (Settings rename,
 Continue Reading, Image Maximize Mode, Continue Reading list marker,
 percentage removed from Library entirely, Font-Size-safe truncation,
@@ -378,6 +379,48 @@ v0.1.92 -- Kaleb: "Categories don't load on Gutenberg." Not a code bug --
   (confirmed with two different User-Agent strings, so it's Gutendex's
   own bot-protection rejecting the sandbox's IP, not a header/code
   issue) -- ordinary on-device network access should not hit this.
+
+v0.1.148 -- Kaleb: support other muOS devices with different screen
+  resolutions, WITHOUT reformatting the app's layout -- keep the fixed
+  720x720 canvas exactly as-is and letterbox/pillarbox it (black bars)
+  onto whatever the real screen size is. Confirmed device groupings via
+  community.muos.dev: 640x480 (RG28XX, RG35XX/+/2024/H/SP, RG40XX H/V),
+  720x480 (RG34XX family), 720x720 (RGCubeXX -- this project's primary
+  target, unchanged), 1024x768 (TrimUI Brick), 1280x720 (TrimUI Smart
+  Pro). Implementation: at boot, SDL_GetDesktopDisplayMode() detects the
+  real screen size. If it's exactly 720x720 the original window path is
+  untouched (no fullscreen flag, no scaling -- zero regression risk on
+  the dev-primary device). On any other resolution, the window is
+  created at the real size with SDL_WINDOW_FULLSCREEN_DESKTOP, and
+  SDL_RenderSetLogicalSize(renderer, 720, 720) pins the drawing
+  coordinate space to 720x720 -- SDL2 itself computes the integer-safe
+  scale-to-fit and centers it, so none of the app's own layout math
+  (SW/SH/_sx/_sy, used everywhere already) needed to change at all.
+  Added one SDL_RenderClear(renderer) call (draw color black) at the top
+  of the frame's dirty-redraw block so the pillarbox/letterbox bars
+  actually get painted black every frame -- SDL_RenderClear() clears the
+  WHOLE physical target including the bars, while every draw_* call
+  only ever touches the scaled 720x720 viewport, so without this the
+  bars would just show stale/undefined pixels instead of black.
+  Verification: headless SDL_VIDEODRIVER=dummy run with a real App()
+  instance booted clean with no exceptions on both the 720x720 path and
+  a forced 1024x768 path (the dummy driver's own reported desktop mode).
+  SDL_RenderGetLogicalSize/GetScale confirmed the 720x720 logical size
+  and ~1.067x scale were actually applied by the API. HONEST CAVEAT: a
+  raw SDL_RenderReadPixels() pixel-level readback of the pillarbox bars
+  under the dummy driver's software renderer came back asymmetric
+  (left/right bar widths didn't match), which looks like a known dummy-
+  driver/software-renderer quirk in how it reports viewport geometry
+  rather than a real bug (the logical-size/scale values it reported were
+  correct; the dummy driver has caused false readback alarms before, see
+  v0.1.147's note on its own harness). Could NOT be cross-checked against
+  a real accelerated SDL2 backend in this sandbox. Kaleb: please confirm
+  actual bar symmetry/centering visually on a real non-CubeXX device (or
+  a PC build) before treating this as fully verified -- flagging clearly
+  rather than claiming certainty I don't have.
+  DEFERRED (Kaleb's idea, explicitly not started): theme the letterbox
+  bars with a banner/color matching the active reading theme instead of
+  plain black. On hold until the RGCubeXX-H version is fully sorted.
 
 v0.1.147 -- Kaleb: while looking at Image Maximize Mode's corner contrast
   (turned out to already be working correctly -- a bug in Claude's own
@@ -2510,6 +2553,7 @@ except Exception:
 SDL_INIT_VIDEO = 0x00000020
 SDL_INIT_JOYSTICK = 0x00000200
 SDL_WINDOWPOS_CENTERED = 0x2FFF0000
+SDL_WINDOW_FULLSCREEN_DESKTOP = 0x00001001
 
 SDL_QUIT_EV = 0x100
 SDL_KEYDOWN_EV = 0x300
@@ -2569,9 +2613,19 @@ class Rect(ctypes.Structure):
                 ("w", ctypes.c_int), ("h", ctypes.c_int)]
 
 
+class SDL_DisplayMode(ctypes.Structure):
+    _fields_ = [("format", ctypes.c_uint32), ("w", ctypes.c_int),
+                ("h", ctypes.c_int), ("refresh_rate", ctypes.c_int),
+                ("driverdata", ctypes.c_void_p)]
+
+
 SDL.SDL_CreateWindow.restype = ctypes.c_void_p
 SDL.SDL_CreateRenderer.restype = ctypes.c_void_p
 SDL.SDL_GetError.restype = ctypes.c_char_p
+SDL.SDL_GetDesktopDisplayMode.argtypes = [ctypes.c_int, ctypes.POINTER(SDL_DisplayMode)]
+SDL.SDL_GetDesktopDisplayMode.restype = ctypes.c_int
+SDL.SDL_RenderSetLogicalSize.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+SDL.SDL_RenderSetLogicalSize.restype = ctypes.c_int
 TTF.TTF_Init.restype = ctypes.c_int
 TTF.TTF_OpenFont.restype = ctypes.c_void_p
 TTF.TTF_OpenFont.argtypes = [ctypes.c_char_p, ctypes.c_int]
@@ -8428,8 +8482,28 @@ def main():
         _boot_log(f"SDL_Init failed: {SDL.SDL_GetError()}\n")
         sys.exit(1)
 
-    win = SDL.SDL_CreateWindow(b"PicoReader", SDL_WINDOWPOS_CENTERED,
-                                SDL_WINDOWPOS_CENTERED, SW, SH, 0)
+    # v0.1.148: detect the real device resolution so the app's fixed
+    # 720x720 internal canvas can letterbox/pillarbox onto other muOS
+    # screens (640x480 RG28XX/RG35XX family, 720x480 RG34XX, 1024x768
+    # TrimUI Brick, 1280x720 TrimUI Smart Pro -- confirmed groupings via
+    # community.muos.dev). RGCubeXX-H (720x720) keeps the exact original
+    # window path (no fullscreen flag, no scaling) so there is zero
+    # regression risk on the primary dev device.
+    disp_mode = SDL_DisplayMode()
+    if SDL.SDL_GetDesktopDisplayMode(0, ctypes.byref(disp_mode)) == 0 and disp_mode.w > 0 and disp_mode.h > 0:
+        DEV_W, DEV_H = disp_mode.w, disp_mode.h
+    else:
+        DEV_W, DEV_H = SW, SH  # detection failed -- fall back to native square
+
+    _boot_log(f"Detected display: {DEV_W}x{DEV_H}\n")
+
+    if (DEV_W, DEV_H) == (SW, SH):
+        win = SDL.SDL_CreateWindow(b"PicoReader", SDL_WINDOWPOS_CENTERED,
+                                    SDL_WINDOWPOS_CENTERED, SW, SH, 0)
+    else:
+        win = SDL.SDL_CreateWindow(b"PicoReader", SDL_WINDOWPOS_CENTERED,
+                                    SDL_WINDOWPOS_CENTERED, DEV_W, DEV_H,
+                                    SDL_WINDOW_FULLSCREEN_DESKTOP)
     if not win:
         _boot_log(f"SDL_CreateWindow failed: {SDL.SDL_GetError()}\n")
         sys.exit(1)
@@ -8439,6 +8513,13 @@ def main():
     if not renderer:
         _boot_log(f"SDL_CreateRenderer failed: {SDL.SDL_GetError()}\n")
         sys.exit(1)
+
+    # v0.1.148: pin the renderer's logical coordinate space to the app's
+    # native 720x720 canvas. On the CubeXX-H this is a 1:1 no-op (window
+    # already is 720x720). On any other resolution SDL2 itself computes
+    # the integer-safe scale-to-fit and centers it -- none of the app's
+    # own layout math (SW/SH/_sx/_sy, used everywhere) has to change.
+    SDL.SDL_RenderSetLogicalSize(renderer, SW, SH)
 
     if SDL.SDL_NumJoysticks() > 0:
         SDL.SDL_JoystickOpen(0)
@@ -8604,6 +8685,18 @@ def main():
             # survives into the next loop iteration -- worst case one
             # harmless extra redraw.
             app.dirty = False
+
+            # v0.1.148: full-target clear (not just the 720x720 logical
+            # viewport) so any pillarbox/letterbox bars on non-square
+            # devices are actually painted black every frame -- SDL_Render
+            # Clear() clears the whole physical render target regardless
+            # of SDL_RenderSetLogicalSize, while every draw_* call below
+            # only ever touches the scaled 720x720 viewport. On the
+            # CubeXX-H (no bars) this is a harmless redundant fill, since
+            # every screen already paints its own full-canvas background.
+            SDL.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)
+            SDL.SDL_RenderClear(renderer)
+
             if app.screen == SCREEN_LIBRARY:
                 draw_library(renderer, app)
             elif app.screen == SCREEN_READER:
