@@ -96,7 +96,7 @@ downloaded release.
 | `main.py` | The app itself — UI, controls, state, image handling |
 | `epub_engine.py` | Parses EPUB files (no external libraries needed) |
 | `mini_jpeg.py` | Decodes JPEG images, including progressive JPEGs, in pure Python |
-| `native_jpeg.py` | Optional ctypes bridge to the device's own `libSDL2_image` for much faster JPEG decoding — used automatically when available, with `mini_jpeg.py` as the automatic fallback |
+| `native_image.py` | Optional ctypes bridge to the device's own `libSDL2_image` for much faster decoding of JPEG, PNG, and other formats — used automatically when available, with `mini_jpeg.py` as the automatic JPEG-only fallback |
 | `mux_launch.sh` | Tells muOS how to launch the app |
 | `gutenberg_fetch.py` | The built-in Project Gutenberg downloader |
 | `PLUGIN_TEMPLATE.py` | Starting point for writing your own downloader |

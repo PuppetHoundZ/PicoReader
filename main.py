@@ -2,16 +2,12 @@
 """
 PicoReader for muOS (Anbernic RG CubeXX-H, 720x720)
 
-*** THIS IS THE PUBLIC/GITHUB RELEASE BUILD -- jw_fetch.py NOT included ***
-jw_fetch.py is a private downloader plugin (JW.org publications) kept
-out of this build and the public repo entirely. Everything else is
-identical to the personal build. The plugin loader below (DOWNLOAD_
-PLUGINS) already handles jw_fetch.py's absence gracefully -- it's a
-defensive try/except import, so Library/Settings simply don't show a
-JW-specific "Download Books" entry or video-download support, with no
-crash and no broken menu item. gutenberg_fetch.py (Project Gutenberg,
-public-domain books) still works exactly as normal. Want your own
-source? See PLUGIN_TEMPLATE.py for the plugin contract.
+*** THIS IS THE PERSONAL BUILD -- INCLUDES jw_fetch.py ***
+jw_fetch.py is a PRIVATE downloader plugin (JW.org publications) and
+must NEVER be published to the public GitHub repo. This build is for
+Kaleb's own device only. For the public/GitHub-safe build (identical
+otherwise, jw_fetch.py simply not included), see the separate release
+build's main.py header.
 
 Companion app to Pico8FavsSorter -- same conventions: raw ctypes SDL2,
 no external deps, hint bar, controller-first navigation.
@@ -69,7 +65,20 @@ project back up. This describes the CURRENT build only. Full version
 history has been condensed below the standing rules; don't go looking
 for a longer historical changelog elsewhere, this is the whole thing.
 
-CURRENT STATE (v0.1.115 -- see changelog for detail; this paragraph
+CURRENT STATE (v0.1.147 -- see changelog for detail, especially v0.1.116-
+139 which aren't summarized in this paragraph yet (Settings rename,
+Continue Reading, Image Maximize Mode, Continue Reading list marker,
+percentage removed from Library entirely, Font-Size-safe truncation,
+Image Maximize Mode hint-bar viewport fix, dimmed hint bar across all
+themes, BMO-style outer screen frame + rounded toast bar, rounded
+inline-image selection border, Library icon glyph fix, hint bar/screen
+frame corner-clip fix, word-wrap overflow fixes for unbreakable tokens
+and multi-word kerning drift, screen frame edge stroke added then fully
+removed again, Image Maximize Mode's own image corners rounded into the
+hint bar, hint bar's own top corners enlarged toward the screen frame's
+radius, toast bar corners matched to the hint bar (naturally renders as
+a half-circle at every Font Size), force-break fix for raw-URL toast
+messages, etc.) -- this paragraph
 covers the still-accurate architecture/theme/JW-plugin description
 below, updated only where recent versions changed behavior: video
 browsing -- Enjoy Life Forever, JW Broadcasting, Governing Body
@@ -138,12 +147,16 @@ Architecture, three files:
                    pure stdlib only
   mini_jpeg.py    from-scratch JPEG decoder (no PIL/Pillow available),
                    full progressive JPEG (SOF2) support since v0.2.0.
-                   Fallback path only as of v0.1.80 -- see native_jpeg.py
-  native_jpeg.py  v0.1.80+: ctypes bridge to the system libSDL2_image
-                   (confirmed present on RG CubeXX-H muOS at /usr/lib)
-                   for real C-speed JPEG decode. decode_jpeg() in
-                   main.py tries this first, falls back to mini_jpeg.py
-                   automatically if unavailable/fails
+                   Fallback path only as of v0.1.80 -- see native_image.py.
+                   Remains JPEG-only (native_image.py handles every other
+                   format -- see its own docstring)
+  native_image.py v0.1.80+ (renamed from native_jpeg.py in v0.1.146 once
+                   v0.1.145 generalized it beyond JPEG): ctypes bridge to
+                   the system libSDL2_image (confirmed present on RG
+                   CubeXX-H muOS at /usr/lib) for real C-speed decode of
+                   JPEG/PNG/TIF/WEBP/JXL/AVIF. decode_jpeg() in main.py
+                   tries this first, falls back to mini_jpeg.py
+                   automatically if unavailable/fails (JPEG only)
 
 Recurring bug shape to watch for: UNIT MISMATCHES between "_lines[]
 index" (li) and "visual screen rows" (row). An image is ONE _lines[]
@@ -365,6 +378,782 @@ v0.1.92 -- Kaleb: "Categories don't load on Gutenberg." Not a code bug --
   (confirmed with two different User-Agent strings, so it's Gutendex's
   own bot-protection rejecting the sandbox's IP, not a header/code
   issue) -- ordinary on-device network access should not hit this.
+
+v0.1.147 -- Kaleb: while looking at Image Maximize Mode's corner contrast
+  (turned out to already be working correctly -- a bug in Claude's own
+  test harness, not the app, caused a false alarm there), asked to make
+  the hint bar itself visibly grey rather than near-black, while keeping
+  good contrast against the hint text. Lifted hint_bg in all 5 themes
+  roughly halfway toward each theme's own panel color (e.g. Default:
+  (15,15,19) -> (34,34,39)) -- genuinely reads as a grey panel now,
+  not just a darker copy of the page background. Recomputed WCAG
+  relative-luminance contrast for every theme against its hint_text
+  (not eyeballed) -- 2 of 5 (Default, Adventure) had contrast headroom
+  to spare and needed no further change; the other 3 (Dim Warm, Deep
+  Amber, Red Shift) dropped under the 4.5:1 AA floor the v0.1.130 hint-
+  bar-dimming work established as this project's bar, so hint_text got
+  a small brightness scale-up (5-7%, same hue each time, not a
+  different color -- same technique v0.1.130 used) to restore 4.5:1+.
+  Final contrast across all 5: Default 4.76:1, Dim Warm 4.60:1, Deep
+  Amber 4.52:1, Red Shift 4.57:1, Adventure 5.30:1 -- every theme still
+  clears WCAG AA. Full 6-book Gutenberg regression re-run clean after
+  the change (0 exceptions) to confirm nothing else was disturbed.
+
+v0.1.146 -- Kaleb: rename native_jpeg.py to something more obviously
+  accurate, now that v0.1.145 made it handle every SDL2_image format, not
+  just JPEG. Renamed the file to native_image.py and its main function
+  from decode_jpeg_native() to decode_image_native(). Updated every real
+  code reference in main.py (the import, the None-check, the call site,
+  the log message inside decode_jpeg()'s except clause, and the two
+  "Pre-render Book Images"/near-instant-decode availability checks) plus
+  the present-tense architecture table near the top of this file and the
+  Project files table in README.md. Left historical changelog entries
+  below (v0.1.80 through v0.1.145) referring to "native_jpeg.py" exactly
+  as they were -- those are an accurate record of what the file was
+  actually called at the time each of those changes shipped; rewriting
+  history there would make old entries harder to trust, not easier.
+  decode_jpeg() itself (in main.py) was deliberately NOT renamed to
+  decode_image() -- every call site already treats it as "the" image
+  decode entry point regardless of format, so renaming it would only add
+  churn across the file without changing behavior or fixing anything
+  actually misleading; the names that WERE misleading (a module and
+  function both saying "jpeg" when they'd quietly grown to handle six
+  formats) are the ones that got renamed.
+  Full regression, per Kaleb's specific request: real App() headless
+  sweep (SDL_VIDEODRIVER=dummy, real SDL2/SDL2_ttf) against a freshly
+  re-downloaded wcg_E.epub (Walk Courageously With God) and lffi_E.epub
+  (Enjoy Life Forever) -- every spine file, every Font Size, checking for
+  import errors, exceptions, and (for images specifically) confirming
+  native_image.decode_image_native() is what's actually getting called
+  post-rename, not silently falling back to mini_jpeg due to a broken
+  import. Also re-ran the original 6-book Gutenberg regression (Alice,
+  Hamlet, Leaves of Grass, War and Peace, Origin of Species, Les
+  Misérables) to confirm the rename didn't regress anything from the
+  v0.1.145 format-support work. All clean.
+
+v0.1.145 -- Kaleb: go further than PNG specifically -- full native image
+  format support so any future format just works, no per-format code
+  needed. Generalized v0.1.144's approach: added the remaining SDL2_image
+  format flags (IMG_INIT_TIF, IMG_INIT_WEBP, IMG_INIT_JXL, IMG_INIT_AVIF)
+  alongside JPG/PNG, OR'd together as IMG_INIT_ALL and requested in one
+  IMG_Init() call. Replaced v0.1.144's single png_available flag with a
+  generic supported_formats set, built from IMG_Init()'s real return
+  bitmask (unchanged principle from v0.1.144: don't assume a format
+  worked just because it was requested -- some format libraries may be
+  missing on a given device, confirmed this is dlopen'd per-format by
+  SDL2_image itself). decode_jpeg_native() needed ZERO logic changes --
+  it already only cared about "did IMG_Load_RW recognize this," never
+  which format specifically, so the generic format support was really
+  just widening the IMG_Init() request; the decode path was already
+  future-proof by construction.
+  Verified live on this dev machine's SDL2_image build (2.8.2): auto-
+  detected support for JPG, PNG, TIF, and WEBP (JXL/AVIF flags harmlessly
+  ignored -- this build doesn't have those decoder libs, exactly the
+  gradual-degradation behavior supported_formats is for). Created a real
+  WebP test image and confirmed end-to-end decode with no format-specific
+  code anywhere in the call path -- proves a brand new format showing up
+  in a future EPUB (WebP covers are increasingly common) will just work
+  without needing another Claude session to add a flag by hand, as long
+  as the device's own SDL2_image build supports it.
+  Full 6-book regression re-run clean, 0 exceptions.
+  Same scope note as v0.1.144 still applies: mini_jpeg.py (the pure-
+  Python fallback) remains JPEG-only by design -- a format native_jpeg.py
+  can't decode (library missing on-device, or IMG_Load_RW just doesn't
+  recognize it) still has no fallback path.
+
+v0.1.144 -- Kaleb asked whether PNG support was possible, at least on the
+  native decode engine. Confirmed the actual decode path in native_jpeg.py
+  was already fully format-agnostic (converts any source surface format
+  to RGB24, no JPEG-specific logic beyond the docstring wording) -- the
+  only real gap was IMG_Init() only requesting IMG_INIT_JPG. Added
+  IMG_INIT_PNG to the init call, and now check IMG_Init()'s return
+  bitmask rather than assuming success -- a new png_available flag
+  reflects whether libpng specifically loaded (some SDL2_image builds
+  ship libjpeg without libpng), separate from the existing `available`
+  flag, so JPEG keeps working even on a hypothetical device missing
+  libpng. Verified live against a real PNG (Origin of Species' actual
+  cover, the same file v0.1.139-era regression testing flagged as the
+  known gap): decoded correctly at 800x1200 via the native path. Full
+  6-book regression re-run clean (0 exceptions) -- the "single-pass
+  decode failed ... not a JPEG" log line that book's cover always
+  produced before is gone.
+  Scope note per Kaleb's "native engine only" ask: mini_jpeg.py (the
+  pure-Python fallback) is untouched and remains JPEG-only -- a PNG on a
+  device where native_jpeg fails to load at all (not just missing libpng,
+  but libSDL2_image itself unavailable) has no fallback and simply won't
+  display, same as before this change on such a device. Acceptable
+  per the explicit scope of the ask; flagging here so a future session
+  doesn't mistake it for an oversight.
+
+v0.1.143 -- Kaleb: remove redundancy, use official naming based on the
+  OPDS API. Dropped CATEGORY_TOP100 (our own invented label, "Top 100
+  (Most Downloaded)") since it was functionally identical to
+  CATEGORY_POPULAR (both sort_order=downloads) -- kept CATEGORY_POPULAR
+  as the sole entry. "Popular"/"Latest"/"Random" aren't names we made up:
+  confirmed live that Project Gutenberg's own OPDS root catalog
+  (www.gutenberg.org/ebooks.opds/) titles these exact three entries that
+  exact way -- using their real labels, not our own invention. Category
+  count now 19 (was 20), no duplication. list_items()'s sort_order logic
+  untouched -- CATEGORY_SORT_ORDER lookup already handled the None-
+  category default case generically, so removing the constant needed no
+  other code changes.
+
+v0.1.142 -- Kaleb asked to confirm the Library/Download menus hadn't
+  changed after the v0.1.141 OPDS swap, and to add three new categories:
+  Popular, Latest, Random. Confirmed main.py's category picker
+  (draw_download_categories()) is fully generic/data-driven off
+  plugin.CATEGORIES with its own scroll windowing already -- zero main.py
+  changes needed for a longer category list. Added CATEGORY_POPULAR,
+  CATEGORY_LATEST, CATEGORY_RANDOM to gutenberg_fetch.py, mapped through a
+  new CATEGORY_SORT_ORDER dict straight to OPDS's own sort_order= values
+  (downloads/release_date/random) -- confirmed live all three work, and
+  combine cleanly with a free-text search query at the same time (tested:
+  Latest + query="poetry" correctly narrowed results). CATEGORY_POPULAR is
+  functionally identical to the pre-existing CATEGORY_TOP100 (both use
+  sort_order=downloads) -- kept both since Kaleb asked for "Popular" by
+  name specifically; harmless duplication, not a bug, flagged here for
+  clarity. Regression: original 17-category list (Adventure, Mystery,
+  etc.) untouched and still uses the query=-based CATEGORY_TOPIC approach
+  from v0.1.141.
+
+v0.1.141 -- Kaleb found Project Gutenberg's official OPDS catalog feed
+  (www.gutenberg.org/ebooks/search.opds/) and asked whether it's more
+  reliable than Gutendex (the third-party JSON API gutenberg_fetch.py used
+  before). It is, for a real reason: Gutendex lives on a separate host
+  (gutendex.com) from the one we actually download EPUBs from
+  (gutenberg.org) -- OPDS is Project Gutenberg's OWN feed, served from the
+  same trusted host as the downloads themselves. One dependency instead of
+  two. Rewrote gutenberg_fetch.py's list_items()/download() around it.
+  Confirmed live: search, category-as-free-text-query (see below),
+  pagination (start_index, 25/page), and real end-to-end download (Moby
+  Dick, 835 KB, byte-identical flow to before) all work.
+  Trade-off found and documented in the new file's docstring: OPDS has no
+  topic/subject FILTER param (unlike Gutendex's topic=) -- only three sort
+  orders (downloads/release_date/random) plus free-text query=. Confirmed
+  live that free-text query genuinely matches subject/bookshelf text too.
+  So CATEGORY_TOPIC keywords are now sent through query= instead of a real
+  filter -- same 17-category list, results confirmed live (query="Mystery"
+  correctly surfaced Crime and Punishment, Sherlock Holmes, etc.) -- this
+  is actually a strict improvement over the old version, which had a
+  topic= list that was NEVER live-verified against the real API (network
+  access to gutendex.com was blocked from the dev sandbox all last
+  session).
+  Second real finding along the way: gutenberg.org 403/503s on bursts of
+  rapid requests from the same client (confirmed live, cleared after
+  15-20s) -- NOT a permanent block and NOT User-Agent-specific (the
+  existing honest, descriptive USER_AGENT works fine at normal request
+  pacing) -- documented in the file so a future "why did this fail"
+  doesn't get misdiagnosed as a UA block. Normal on-device single-request
+  UI interactions are nowhere near this threshold.
+  Structural change: OPDS book-listing entries only carry a "subsection"
+  link to that book's own .opds detail page, not a direct download link
+  (unlike Gutendex, which gave everything in one response) -- so items now
+  carry "_gb_id" instead of "_download_url", and download() does one extra
+  request to resolve the real EPUB acquisition link before downloading.
+  Picks the "EPUB (older E-readers)" variant when more than one is offered
+  (matches what the old Gutendex version downloaded -- no size-preference
+  regression). main.py needed ZERO changes -- it never touched
+  "_download_url" directly, only ever passed items through to the plugin's
+  own download(), so the item-shape change is fully contained to this file.
+
+v0.1.140 -- Kaleb: "said can't parse" -- a video-link download had failed
+  with a cryptic error. Root cause found via comparison against a
+  third-party JW.org API library (allejok96/jw-scripts): jw_fetch.py's
+  _extract_video_tracks() had two unguarded crash paths -- (1) if
+  data["files"][LANG]["MP4"] came back as something other than a list
+  (e.g. a dict), and (2) if any individual entry in that list wasn't a
+  dict -- both threw AttributeError ('str'/... object has no attribute
+  'get'), which wasn't caught by the surrounding except clauses (those
+  only catch URLError/TimeoutError/ValueError/OSError around the
+  network call, not errors from parsing the already-fetched JSON), so
+  it surfaced as a raw Python exception via main.py's outer "Download
+  failed: {e}" handler. Confirmed no real JW.org response with this
+  shape was found live, but fixed defensively regardless: entries is
+  now isinstance-checked as a list (return [] if not, same as the
+  existing "path doesn't exist" case); each entry is isinstance-checked
+  as a dict before .get() is called on it (non-dict entries are simply
+  skipped, not fatal). Verified 10 synthetic edge cases (empty files,
+  missing MP4 key, null label, audio-description-only, missing file
+  key, MP4-as-dict, all-string entries, unknown label, and a mixed
+  valid+garbage list) -- all now return cleanly instead of throwing,
+  and the mixed case confirms garbage entries are skipped while the
+  good entry is still extracted and downloadable. Regression: all 42
+  real in-text video links found across a fresh wcg_E.epub ("Walk
+  Courageously With God") download still resolve correctly after the
+  patch, no change in behavior for well-formed API responses.
+
+v0.1.139 -- Kaleb sent 2 more photos with red annotations: (1) wants the
+  toast/status bar ("Theme: Dim Warm", "Font size: 28pt", etc.) curved to
+  match the hint bar, consistent box corners at large Font Sizes and
+  "almost look like half circle" at small ones; (2) wants the
+  v0.1.135/138 bottom-corner edge stroke REMOVED COMPLETELY -- it was
+  making the hint bar's own (correctly working) curve look like it
+  wasn't there, since the separate small stroke mark didn't visually
+  connect with the hint bar's bigger curve above it.
+
+  (1) _draw_status_bar() now uses the same HINT_CORNER_RADIUS +
+  bar_h//2 clamp as draw_hint() (was still the small CORNER_RADIUS,
+  explicitly left alone in v0.1.137 since it wasn't part of that
+  request). Checked the toast bar's actual height at all 7 Font Sizes:
+  it's ALWAYS thin enough (23-42px) that bar_h//2 clamps below the 28px
+  target at every single size -- meaning the toast bar renders as a true
+  half-circle top universally, automatically satisfying both halves of
+  Kaleb's request (no separate "large font" vs "small font" logic
+  needed). Text padding and wrap width matched to HINT_SIDE_PAD too,
+  same reasoning as the hint bar's own v0.1.137 change.
+
+  (2) _draw_screen_frame()'s FRAME_EDGE_COLOR stroke pass removed
+  entirely (was bottom-corners-only since v0.1.138) -- every corner is
+  now a plain black cut again, the original v0.1.131 look, with no
+  stroke anywhere. FRAME_EDGE_COLOR/FRAME_EDGE_W constants removed as
+  dead code. Note: this reopens the original v0.1.135 problem (Image
+  Maximize Mode's bottom corners have low contrast against the dark
+  hint bar there specifically) -- Kaleb's direction was explicit and
+  direct ("remove it completely"), honored as-is; can revisit that one
+  screen separately if it matters in practice.
+
+  BUG FOUND while verifying the toast bar's widened wrap width:
+  App.handle_button() calls self.set_status(link.href, ...) on link
+  follow -- a raw URL with no spaces, so _wrap_hint_text_unbounded()
+  (used by both hint bar and toast bar) had the exact same "oversized
+  unbreakable word" bug App._force_break_word() fixed for body text in
+  v0.1.134, just never ported to this separate, non-style-aware wrap
+  function. Pre-existing, not caused by the width change (just exposed
+  at more Font Sizes by it -- narrower width, same class of bug).
+  NEW standalone _force_break_plain_word() (no style-run lookup needed,
+  hint/toast text is never styled) plus matching force-break handling
+  added to _wrap_hint_text_unbounded(). Verified: reconstructing the
+  force-broken URL exactly matches the original character-for-character.
+
+  Verified all three changes via real pixel readback (top/bottom screen
+  corners, toast bar's actual curve boundary) and the full regression
+  sweep (384 checks) + 228-real-render smoke test -- zero issues.
+
+v0.1.138 -- BUG FOUND (Kaleb): reported an unexpected "corner highlight"
+  on every screen at every Font Size, with 2 photos. Re-rendered the
+  identical screen/theme (Dim Warm)/Font Size (14pt) headlessly and read
+  back real pixels rather than guessing -- confirmed the hint bar's own
+  enlarged corner (v0.1.137) WAS working correctly (COL_BG cleanly
+  revealed, radius properly clamped at this Font Size), but also found
+  the actual cause of what Kaleb was seeing: v0.1.135's FRAME_EDGE_COLOR
+  stroke (added so the outer screen frame's BOTTOM corners stay visible
+  against the dark hint bar) had been applied to ALL FOUR corners "for
+  consistency" -- including the TOP corners, which never had that
+  visibility problem (already good contrast: black cut against bright
+  reading content). That extra, unrequested top-corner stroke is what
+  read as a "highlight" in Kaleb's photos, confirmed identical via a
+  matching pixel-readback render on my end. Fix: restricted the edge
+  stroke to bottom corners only -- top corners are back to a clean plain
+  black cut, no stroke, matching how they looked before v0.1.135 ever
+  touched them. Verified via pixel readback: top-left now transitions
+  straight from pure black to background color with no gray stroke;
+  bottom-left still shows the stroke exactly as before (the original
+  Image Maximize Mode fix this was actually needed for is unaffected).
+  Re-ran the full regression sweep (384 checks) and 228-real-render
+  smoke test afterward -- zero issues.
+
+v0.1.137 -- Kaleb sent two more annotated photos confirming the hint
+  bar's top-left/right corner rounding already works at every Font Size
+  (16pt and 32pt both shown with the curve visible) -- and asked to make
+  it bigger, "close to the overall screen corners," anticipating smaller
+  Font Sizes might need the text padded left/right to avoid the bigger
+  curve clipping it. All three parts implemented: (1) NEW
+  HINT_CORNER_RADIUS = SCREEN_FRAME_RADIUS (28px, was the small
+  CORNER_RADIUS at 6px) -- draw_hint() still clamps the ACTUAL applied
+  radius to bar_h // 2 (same clamp fill_rect_rounded already uses
+  everywhere), so the two smallest Font Size steps (bar_h=33/34, too
+  thin for the full 28px) scale down naturally to ~16-17px instead of a
+  degenerate/overlapping shape -- confirmed via simulation: 18pt and up
+  reach the full 28px target, matching the screen frame's own radius as
+  requested. (2) NEW HINT_SIDE_PAD (HINT_CORNER_RADIUS + 4px, a FIXED
+  worst-case value used everywhere for consistency rather than computed
+  per-call from the smaller clamped radius, which would need the 3
+  places that must agree on the hint bar's usable width -- _hint_pt()'s
+  font-size calibration, _hint_lines_needed(), and draw_hint() itself --
+  to stay in lockstep without any circular-dependency risk) replaces the
+  old flat 14px HINT_TEXT_X for the hint bar specifically (toast bar
+  unchanged, kept the small radius/padding -- wasn't part of this
+  request). (3) HINT_BOTTOM_SAFE_GAP (the v0.1.133 screen-frame-vs-hint-
+  text safety margin) recalculated against the new bigger HINT_SIDE_PAD
+  instead of the old HINT_TEXT_X -- the bigger x-offset only makes this
+  margin MORE conservative (10px -> effectively 2px needed, i.e. even
+  less margin is required now since text sits further from the corner),
+  confirmed by re-running the full v0.1.133 corner-clip sweep against
+  every real hint string at every Font Size: zero overflow, worst-case
+  margin improved from +10px to +26px. Verified the new geometry three
+  ways: (1) re-ran the full text-wrap regression sweep (384 checks,
+  every real book) -- zero line-width overflow issues from the narrower
+  max_w; (2) real SDL_RenderReadPixels pixel readback at both the
+  smallest and largest Font Size, confirming the clamped ~16px curve and
+  the full 28px curve both render as clean quarter-circle tapers; (3)
+  228-real-render smoke test across real books/images -- zero
+  exceptions.
+
+v0.1.136 -- Kaleb sent a second photo, this time with red hand-drawn
+  annotations, clarifying that v0.1.135 solved a DIFFERENT problem than
+  the one he actually meant: he wants the MAXIMIZED IMAGE's own bottom-
+  left/right corners rounded off where the image meets the hint bar
+  below it (the image's own corner cut away, revealing hint-bar color
+  behind it) -- not the hint bar's corners, and not more contrast on the
+  outer screen frame (that was v0.1.135, a real fix but for a different
+  spot). NEW _round_image_bottom_corners_to_hint() -- paints
+  COL_HINT_BG quarter-circles over the image's own last few rows at
+  each bottom corner, right where it meets the hint bar, so the image
+  visually "flows into" the hint bar via a curve instead of ending in a
+  hard square edge. This is the mirror image of the existing
+  _round_top_corners_to_bg() (which rounds the HINT BAR's top corners to
+  reveal whatever's drawn ABOVE it, correct on every normal screen where
+  that's COL_BG) -- Image Maximize Mode is the one screen where content
+  directly above the hint bar is NOT COL_BG, it's the image itself, so
+  that existing treatment would have been erasing to the wrong color
+  there. New IMG_MAXIMIZE_CORNER_RADIUS (_sx(20)) -- deliberately its
+  own size, bigger than the subtle per-panel CORNER_RADIUS (6px, would
+  read as too small per Kaleb's annotation) but smaller than the bold
+  outer SCREEN_FRAME_RADIUS (28px, a different physical-screen-edge
+  element). draw_hint() gained a skip_top_corners parameter so Image
+  Maximize Mode's call can suppress its own (now redundant, and
+  wrong-colored for this screen) corner erase -- only that one call site
+  passes it; every other draw_hint() call in the app is unaffected,
+  confirmed via the full regression sweep. The "no image"/"loading"/
+  "error" fallback paths in draw_image_view() were deliberately left on
+  the DEFAULT draw_hint() behavior (no skip) since those really do show
+  plain COL_BG background, where the original erase-to-COL_BG treatment
+  is still correct. Verified two ways before considering this done: (1)
+  rendered against a real book's real cover image via the actual decode
+  pipeline; (2) since that particular cover happened to have dark
+  content right at the corner (made it hard to visually confirm the
+  effect), re-verified with a synthetic bright fill + real
+  SDL_RenderReadPixels pixel readback, which showed a clean quarter-
+  circle taper from the bright color into the exact real COL_HINT_BG
+  value at the corner, growing correctly row by row. Re-ran the full
+  v0.1.134 regression sweep (384 checks) and 228-real-render smoke test
+  afterward -- zero issues.
+
+v0.1.135 -- Kaleb sent a real device photo of Image Maximize Mode: top
+  corners read as clearly curved, bottom corners looked squared -- both
+  are geometrically identical (same _draw_screen_frame() call, same
+  SCREEN_FRAME_RADIUS, every screen). Root cause: every theme's hint_bg
+  is already near-black (default theme (15,15,19), others similarly
+  dark) and the frame's corner cut is pure black -- almost zero contrast
+  where the cut lands on the hint bar at the bottom, while at the top it
+  cuts into whatever bright image/content is on screen and reads
+  clearly. Confirmed by rendering a mockup (bright top half / hint_bg-
+  colored bottom strip) BEFORE touching code -- the black-into-near-
+  black bottom corner was genuinely almost invisible, matching Kaleb's
+  photo exactly. Fix: new FRAME_EDGE_COLOR (fixed dim gray (70,70,78),
+  not theme-dependent -- same "always" spirit as the frame itself) and
+  FRAME_EDGE_W (_sx(2)) -- _draw_screen_frame() now strokes this color
+  along the exact curve boundary as a second pass after the black cut,
+  so the corner has a visible edge regardless of what's behind it.
+  Verified two ways: (1) re-rendered the same mockup with the stroke --
+  bottom corners now clearly read as curved, top corners look
+  effectively unchanged (the stroke is subtle enough not to look like a
+  new decorative element there); (2) read back REAL rendered pixels via
+  SDL_RenderReadPixels against a live renderer -- confirmed the exact
+  stroke color appears at both the top-left and bottom-left curve
+  boundary in the actual pixel buffer, sandwiched correctly between the
+  black cut and the surrounding content on both ends. Re-ran the full
+  v0.1.134 regression sweep (384 checks) and the 228-real-render smoke
+  test afterward -- zero issues, confirming this didn't disturb anything
+  else.
+
+v0.1.134 -- Kaleb asked for a big regression check across multiple real
+  books with text and images, simulating every Font Size. Built a full
+  headless simulation harness -- real SDL2/SDL2_ttf via the SDL_VIDEODRIVER=
+  dummy driver, a REAL App() instance (not reimplemented logic), opening
+  every EPUB actually on hand (be_E, bhs_E, bi12_E, es26_E, jy_E, lfb_E,
+  nwt_E, sjj_E, w_E_202604 -- ~7100 spine files total). Two real bugs
+  found and fixed, both in App._wrap() (the core text-wrap engine, used
+  by every page of every book):
+
+  (1) BUG FOUND: a "word" with NO interior spaces wider than avail_w_px
+  all by itself rendered past the right margin instead of wrapping --
+  the packing loop's overflow check only fires when there's already
+  something accumulated on the line (`if cur_words and ...`), so an
+  oversized lone word fell through to the plain-append branch
+  regardless of width. Traced to two real sources: epub_engine.py's own
+  boxSupplement divider rule (a hardcoded "\u2500"*32 with no spaces,
+  emitted before/after every sidebar box) at large Font Size, and raw
+  dot-leader runs ("\u2024"*N) from a book's own table-of-contents
+  formatting. NEW App._force_break_word() -- splits an oversized word
+  into avail_w_px-fitting chunks via the same style-aware _word_width()
+  measurement _wrap() already uses elsewhere (binary search per chunk
+  boundary), each chunk becoming its own line. Only triggers when a
+  single word alone exceeds avail_w_px; ordinary words never reach this
+  path, so normal wrapping is unchanged.
+
+  (2) BUG FOUND (smaller, found via the same sweep): _wrap()'s packing
+  decision sums each word's INDIVIDUALLY measured width + a fixed space
+  width, but SDL_ttf's real glyph spacing for the final joined line (one
+  text_width() call -- what draw_reader() actually renders) can measure
+  a few px WIDER than that sum, worse with more short words per line
+  (confirmed: 9px drift on a 26-word numeric list at the smallest Font
+  Size, on pagenav.xhtml's page-number index). New WRAP_SAFETY_MARGIN
+  (_sx(16), comfortably more than the worst 9px measured) subtracted
+  from the packing decision's budget only -- not from actual box
+  widths/centering anywhere else. _force_break_word()'s chunks measure
+  one contiguous substring directly (no summing), so they're unaffected
+  and intentionally still use the full avail_w_px.
+
+  Re-ran the full sweep after both fixes: 1519 (book, spine file, Font
+  Size) combinations across all 7 Font Size steps, zero line-overflow or
+  image-box-math issues (down from 135 on the first pre-fix pass).
+  Additionally ran 228 REAL draw_reader()/draw_image_view() calls (actual
+  JPEG decode via native_jpeg/mini_jpeg, actual paint calls, not just the
+  text-layout math) across a sample of image-containing and plain-text
+  pages at 3 Font Sizes each -- zero exceptions.
+
+v0.1.133 -- Two bugs, both from Kaleb's follow-up requests:
+
+  (1) BUG FOUND: Library's "Continue Reading" marker (U+25B6, BLACK
+  RIGHT-POINTING TRIANGLE) rendered blank -- Kaleb noticed the icon
+  missing. Confirmed via fontTools cmap inspection that U+25B6 is NOT in
+  the bundled Liberation Sans (assets/font.ttf). While fixing it, checked
+  every other prefix glyph in the same code path and found
+  finished_prefix's U+2713 (CHECK MARK) has the exact same bug (not yet
+  reported, but confirmed missing from the font too) -- pin_prefix's
+  U+2665 (HEART) IS present, unaffected. Replaced continue with U+25BA
+  (BLACK RIGHT-POINTING POINTER, "\u25ba" -- same solid-triangle meaning,
+  confirmed present AND visually verified by rasterizing with the actual
+  bundled font, not just cmap presence) and finished with U+221A (SQUARE
+  ROOT, "\u221a" -- common checkmark substitute in fonts lacking a true
+  check glyph, also confirmed present + rendered). Swept the whole file
+  for every other \\uXXXX escape in use (\\u2014 em dash, \\uffff -- the
+  latter is a sort-key sentinel, never actually rendered) -- both
+  confirmed fine, no other hidden tofu bugs found.
+
+  (2) BUG FOUND (Kaleb asked to bug-check the v0.1.131 BMO screen frame
+  against hint bar text across several menus): built a full headless
+  simulation harness (real SDL2_ttf, the actual bundled font, the app's
+  own real hint_height()/_hint_pt()/_wrap_hint_text()/draw_hint() logic
+  imported directly from main.py, not reimplemented by hand) and swept
+  every real hint string in the app across all 7 Font Size steps against
+  SCREEN_FRAME_RADIUS's actual per-row corner mask math. Found a REAL
+  -7px overlap: at max Font Size, the Library screen's hint ("A Open Y
+  Sort X Pin ... B Quit") is the one hint long enough to wrap to the full
+  HINT_H_MAX_LINES=3 ceiling, and TWO compounding bugs let its last line
+  land inside the frame's bottom-left/right corner cut: (a) hint_height()
+  computed its per-line spacing as bare TTF_FontHeight(font), while
+  draw_hint() actually spaces lines at TTF_FontHeight(font)+6px -- so for
+  3 lines the reserved bar was ~4px SHORTER than the real text needed
+  (content_h=114 vs bar_h=110, confirmed via simulation, an actual
+  overflow past the bar's own bottom edge, independent of the screen
+  frame). Fixed by matching the +6px per-line gap in hint_height() too.
+  (b) Separately, v0.1.131's centering change (draw_hint) had no floor
+  against the corner mask at all -- pure centering could still place
+  text arbitrarily close to the edge. Added HINT_BOTTOM_SAFE_GAP, a
+  constant CALCULATED (not guessed) by walking SCREEN_FRAME_RADIUS's own
+  per-row inset formula to find the minimum bottom clearance a
+  HINT_TEXT_X-offset line needs to clear the corner cut, plus a small
+  buffer for font hinting/antialiasing variance -- draw_hint() now clamps
+  its vertical centering against this floor (giving up perfect centering
+  in the rare case content nearly fills the bar, prioritizing "not
+  clipped" over "perfectly centered"). Re-ran the full sweep after both
+  fixes: worst-case margin went from -7px (confirmed clipping) to +10px
+  (confirmed safe), zero content_h > bar_h overflows across all 70
+  hint-string x Font-Size combinations checked.
+  Also checked (no bugs found, no changes needed): the toast/status bar
+  was already safe by construction (its bar_h is a max() against its own
+  content height + 10px, and its bottom edge always sits above the hint
+  bar -- never near the screen's actual bottom corners at all). Every
+  screen's top-left heading text (Library, Chapters, Settings, Download
+  Sources, Videos -- confirmed ALL use the same y=16/x=20 position) has
+  17px+ of margin against the top corner cut even under the conservative
+  assumption that ink starts at the very top of the text's bounding box;
+  rendering the real font confirmed actual glyph ink starts ~7px lower
+  than that box top, so real-world margin is even larger. No top-corner
+  clipping risk found anywhere.
+
+v0.1.132 -- Rounded the inline reader image's selection/link border
+  (the yellow-ish outline drawn around a selected image in the reading
+  view), Kaleb's follow-up after the BMO frame work: discussed 3 options
+  for avoiding a squared-off image corner poking through a rounded
+  border (extra padding, thicker line for a "crop" look, or stretching
+  the border's own corner edges) -- landed on a 4th, structural fix
+  instead: the border was already drawn OUTSIDE the image with a small
+  existing margin (pad_x/pad_y, 4px scaled), so capping the new corner
+  radius at min(pad_x, pad_y) guarantees the curve can only ever dip
+  into that existing empty margin, never far enough to expose the
+  image's actual square corner -- no new padding, thickness, or
+  stretching needed, just a constraint on the radius itself. NEW
+  draw_rect_rounded_outline() -- an OUTLINE-only sibling of
+  fill_rect_rounded() (which fills solid, wrong for a selection ring):
+  same per-row quarter-circle boundary math, but only paints a
+  `thickness`-wide strip hugging that boundary instead of filling all
+  the way to the rect edge. Only the border draw call itself changed
+  (SDL_RenderDrawRect -> draw_rect_rounded_outline); none of the
+  existing image scaling/hug math (dw, dh, avail_w/h, border_w/h,
+  box_rows/_image_box_rows()) was touched, so this can't reintroduce
+  any of the border/pagination desync bugs this exact code area has a
+  history of (v0.1.83, v0.1.96, v0.1.97). The separate loading/error
+  placeholder box already used fill_rect_rounded() before this version
+  (confirmed, not touched) -- only the real border outline needed this.
+
+v0.1.131 -- Two rounded-corner additions, Kaleb's request (referencing a
+  BMO image -- wants the whole physical screen to read as one curved-
+  corner "device face", separate from the existing small per-panel
+  rounding): (1) NEW _draw_screen_frame() -- masks all 4 corners of the
+  full 720x720 canvas with solid black quarter-circles, always, no
+  matter which theme is active (Kaleb: black specifically so it matches
+  future letterbox bars on wider non-square muOS devices, not the
+  theme's own background). New SCREEN_FRAME_RADIUS constant (_sx(28)),
+  deliberately much larger than the existing per-panel CORNER_RADIUS
+  (_sx(6)) for a more pronounced BMO-style curve. Called exactly ONCE,
+  right before the single SDL_RenderPresent() call site, AFTER every
+  screen's own draw_*() -- confirmed there is only one RenderPresent
+  call in the whole app, so this applies uniformly to literally every
+  screen (Library, Reader, all Menu variants, Download screens, Text
+  Entry, Storage) with zero per-screen changes, INCLUDING Image
+  Maximize Mode, where it correctly clips the corners of a full-bleed
+  maximized image -- exactly what Kaleb asked for. (2) Toast/status bar
+  (_draw_status_bar(), e.g. "Bookmark added", download progress) now
+  gets its top corners rounded via the existing _round_top_corners_to_bg()
+  helper at the normal small CORNER_RADIUS, same treatment the hint bar
+  already had -- this was the one remaining panel still using a hard-
+  edged fill_rect() while every other panel/menu/selection-row already
+  had rounding. Inline images rendered mid-text (and their selection-
+  highlight border box) explicitly NOT touched this round -- Kaleb
+  wants to discuss feasibility separately since those sit inside the
+  paginated text flow with their own border-box logic, not a simple
+  full-bleed clip like Image Maximize.
+
+  Follow-up same version, Kaleb asked for a full audit of every hint
+  bar/selection row/toast for rounding + text wrap/centering:
+  (3) BUG FOUND: the "delete confirm" (armed/red COL_WARNING) row on
+  both Bookmarks and Storage screens still used a hard-edged fill_rect()
+  while the normal selection highlight right next to it already used
+  fill_rect_rounded() -- fixed both to match. Audited every remaining
+  fill_rect() call site in the file afterward; only the hint bar and
+  toast bar's own base fill remain unrounded directly, and both are
+  immediately followed by a corner-rounding pass, which is correct.
+  (4) BUG FOUND: Bookmarks used a fixed row_h = _sy(44), unlike every
+  other list screen (Library, Menu, TOC, Storage, etc.) which uses the
+  shared _row_h(font) helper that grows with Font Size -- at large Font
+  Size the fixed height didn't grow with the text, breaking vertical
+  centering and risking clipping. Switched to _row_h(app.fonts.ui_body)
+  for consistency; combined with the existing "y + _sy(8)" text offset
+  this now centers correctly (confirmed the pad=20 default + that offset
+  produce equal ~8px gaps above/below the text at every Font Size).
+  (5) Hint bar: was computing row spacing as bar_h/max_lines (the Font
+  Size's WORST-CASE line count), so a short hint string at a Font Size
+  where max_lines=2 or 3 always drew starting at the top slot, leaving
+  the rest of the bar visibly empty instead of centered. Now measures
+  the actual wrapped line count and centers that block within the full
+  reserved bar height. (6) Toast bar: same centering treatment applied
+  for the same reason (bar_h is a max() against a fixed single-line
+  floor, so a 1-line message could have a few px of top-anchored slack
+  instead of being centered). Text wrapping itself was already correct
+  before this pass -- toast bar wraps with no line cap (can't lose
+  words), hint bar's font size auto-shrinks (calibrated against the
+  app's real hint strings) specifically so known hints never overflow;
+  this pass only fixed alignment/centering, not wrapping logic. Kaleb
+  confirmed: keep horizontal alignment left everywhere (lists included)
+  -- vertical centering only.
+
+v0.1.130 -- Dimmed the hint bar across ALL 5 themes (Kaleb: it felt too
+  bright/prominent). Applies globally with zero per-screen changes --
+  confirmed all 15 draw_hint() call sites across the whole app (Library,
+  Reader, Image Maximize Mode, Menu, TOC, Bookmarks, Settings, Download
+  screens, text entry, etc.) go through the exact same shared function
+  with no local color override anywhere, so changing hint_bg/hint_text
+  in THEMES once applies everywhere automatically. hint_bg lifted from
+  "bg minus ~8" to "bg minus 3" in every theme (bar recedes into the
+  page instead of reading as a separately-lit panel); hint_text brought
+  down from near-full reading-text brightness toward each theme's own
+  existing "dim" tone (the same quiet visual language already used
+  elsewhere, e.g. "improving...", Library chapter sub-labels) -- NOT a
+  single generic dimming formula, since checking actual WCAG AA contrast
+  (4.5:1) after the first pass found the literal "dim" tone failed on 3
+  of the 5 themes once measured against the new hint_bg (Dim Warm
+  4.43:1, Deep Amber 3.26:1, Red Shift 2.39:1 -- Red Shift's near-zero
+  blue/green channels weigh especially low in perceived luminance).
+  Those 3 themes instead use a brightness-scaled version of their own
+  dim hue (not a different color, same hue at 4-56% more brightness
+  depending on the theme) tuned to clear 4.5:1 -- Default and Adventure
+  needed no adjustment (5.74:1 and 6.14:1 already). Demoed via rendered
+  mockups using the actual bundled font before implementing (both the
+  initial side-by-side and, after the WCAG fix, a before/after
+  specifically for Red Shift, the theme needing the largest correction)
+  -- Kaleb confirmed the direction from the mockup before any theme
+  values were touched.
+
+v0.1.129 -- Fixed a real bug Kaleb found: Image Maximize Mode drew the
+  image at the full SW x SH screen size with the hint bar simply
+  overlaid on top afterward -- but hint_height() varies with Font Size
+  (it can wrap to 2-3 lines at larger sizes), so a taller hint bar
+  silently covered more of the image's bottom at big Font Sizes than the
+  zoom/pan math had ever accounted for, since that math was computed
+  against the full screen regardless of how much of it the hint bar
+  would actually cover. Added App._imgview_viewport_h() = SH minus the
+  hint bar (using the exact same `SH - _sy(hint_height(fonts))`
+  expression draw_hint() itself uses for its own top_y, so the image's
+  bottom edge and the hint bar's top edge are mathematically guaranteed
+  to meet exactly, not just approximately, at every Font Size) --
+  _imgview_reset()/_imgview_zoom_by()/_imgview_pan_by()/
+  _imgview_clamp_pan() and draw_image_view()'s crop/dst-rect math all
+  switched from a bare SH to this viewport height, so the image now
+  fits and fills exactly the space above the hint bar at every Font
+  Size, never behind it. Re-ran the same style of exhaustive bounds
+  regression as the original Image Maximize Mode work: 48 combinations
+  of 6 realistic hint-bar heights (spanning the 1-line-at-14pt to
+  3-line-wrapped-at-32pt range) x 8 real/edge-case image shapes, each
+  put through 150 randomized zoom/pan presses with the source-rect
+  bounds checked after every step -- 0 failures.
+
+v0.1.128 -- Kaleb asked how the Library list holds up at different Font
+  Sizes. Checked by measuring REAL text widths with the bundled
+  assets/font.ttf (PIL/FreeType, not a guess) at every SIZE_STEPS value
+  (14-32pt) against real book titles -- found a genuine bug: _fit_text()
+  was truncating the whole "prefix+title+suffix" row from the END, which
+  at 28pt/32pt with a realistic title silently ate "Continue Reading"
+  itself (e.g. 32pt, "Walk Courageously With God" -> "...Continue Re...",
+  the actual word cut off mid-way) or the author/relative-time suffix on
+  other rows -- exactly the accessibility-sized text where this needed
+  to work best. Fixed by reserving the prefix+suffix width FIRST and
+  fitting only the TITLE into whatever's left, then reassembling -- the
+  marker and "Continue Reading"/author/relative-time now always survive
+  in full at every Font Size; if anything has to give, it's the title
+  getting an ellipsis, never the suffix. Also capped the author fragment
+  itself (row_max_w // 3) for the Author sort mode, closing a related
+  gap where a pathologically long co-author string could alone exceed
+  the row before the title/suffix budgeting even got a say -- real
+  metadata on hand is always short ("WATCHTOWER" for every JW epub), but
+  nothing guarantees that for every possible source.
+
+  Verified with the real bundled font across all 7 Font Size steps x 3
+  titles (a normal one, a long real one, and a 100-character synthetic
+  one) x realistic prefix/suffix combos (continue+pinned+finished
+  together, author-sort, last-read-sort, and a synthetic pathological
+  long-publisher-name case): "Continue Reading" visible and the row
+  within width in every case after the fix, vs. silently hidden in
+  2 of the pre-fix cases (28pt/Jesus-The Way, 32pt/Walk Courageously).
+
+v0.1.127 -- Reverted v0.1.126 and simplified further (Kaleb: the chapter-
+  name approach was more than this needed). Removed the whole-book
+  percentage from the Library list ENTIRELY -- not just the continue
+  row, every row -- along with the App._get_progress_pct() method and
+  its self._progress_cache that computed it (both were only ever used
+  for this one display, so fully removed rather than left as dead code).
+  Also removed v0.1.126's App._resolve_chapter_label() and
+  self._continue_chapter_cache (the EpubDocument-for-TOC-parsing
+  approach, and the honest performance caveat that came with it for
+  large books like the NWT) -- gone entirely, not just unused.
+  draw_library()'s row loop is back to the plain fixed-height v0.1.125
+  shape (no variable row heights, no word-wrapping, no per-book I/O of
+  any kind at draw time). The continue-book row keeps its v0.1.125
+  "\u25b6 " marker and accent color, and now simply appends literal
+  "Continue Reading" text where the percentage used to be -- zero I/O,
+  zero caching, zero new failure modes. Every other row is now just
+  title (+ author suffix in Author sort, + relative time in Last Read
+  sort) with nothing else appended.
+
+v0.1.126 -- Library's Continue Reading row now shows the actual chapter/
+  section name instead of a percentage (Kaleb: a chapter name is more
+  useful there than a number). Adds App._resolve_chapter_label(book) --
+  reads the saved __lastpos__ file via the existing get_last_position(),
+  opens a throwaway EpubDocument just for OPF/TOC parsing (container.xml
+  + content.opf + toc.ncx/nav only, never the actual chapter content --
+  same reason open_book() itself is fast), and walks the flattened TOC
+  for the nearest entry at-or-before that spine position, mirroring the
+  section-title half of _current_location_label()'s existing logic
+  without needing a live self.doc/self._chapter_nav_points (this book
+  may not even be the one currently open). Cached by (filename, last-
+  read timestamp) in App._continue_chapter_cache so it's resolved once
+  per continue-book change, not every draw_library() frame. Falls back
+  to None (row just omits the sub-line, no crash) on any failure --
+  corrupt file, no TOC, no saved position, spine file not found.
+
+  Also switched the Library row loop from a fixed row_h * i layout to
+  variable per-row height, since the continue row can now wrap the
+  chapter name across up to 2 lines (_wrap_hint_text_unbounded, same
+  greedy word-wrap the hint bar and empty-library message already use;
+  a 3rd+ line would be truncated with an ellipsis via _fit_text instead
+  of pushing the whole list further down). Every other row is completely
+  unaffected -- still single-line, percentage still shown exactly as
+  before; this only touches the one continue-book row.
+
+  Verified _resolve_chapter_label() against the real epub_engine.py
+  (not a reimplementation) across Walk Courageously, Jesus-The Way,
+  Enjoy Life Forever, Watchtower 2026-04, and NWT: sampled real spine
+  positions across each book, confirmed correct book/chapter titles
+  resolve for genuine reading positions (Genesis, Joshua, Psalms, Job,
+  Nehemiah, 1 Samuel, Deuteronomy, etc. for NWT specifically). Cover
+  page and internal nav-helper spine files (indices/cross-reference
+  pages no reader would actually stop on) correctly fall back to None
+  rather than a misleading label. One honest caveat found and kept, not
+  hidden: EpubDocument() init for the NWT specifically (3941 spine
+  entries, by far the largest book on hand) measured ~134ms on this
+  sandbox's CPU -- likely more on the actual ARM hardware, and it runs
+  synchronously (not threaded) on whichever frame the cache misses, so
+  the very first Library-screen draw after the NWT becomes the continue
+  book could have a brief, one-time pause. Every other book tested
+  (Courage, Jesus-The Way, Enjoy Life Forever) resolved in under 10ms.
+
+v0.1.125 -- Library list now marks the "Continue Reading" book directly
+  on its row (Kaleb: a bare "42%" suffix wasn't clear enough -- every
+  started book shows a percentage, so nothing told you WHICH one
+  "Continue Reading" would actually open unless you switched to Last
+  Read sort or opened the Library Menu). Adds a leading "\u25b6 " marker
+  (leftmost, before the existing \u2665 pin / \u2713 finished prefixes)
+  plus COL_ACCENT text color to whichever single row matches
+  App.most_recent_book() -- the exact same function open_continue_
+  reading() and the Library Menu's dynamic "Continue: {title}" label
+  already use, so this can never disagree with what pressing "Continue
+  Reading" actually opens. Shows in every sort mode and survives
+  filters correctly (if the continue book is filtered out of the
+  current view, no row gets marked -- expected, the book just isn't
+  shown at all, same as any other filtered-out book). Bug-checked with
+  a standalone simulation of the row-labeling logic: full library
+  across all 4 sort modes (exactly one marker, always the same book),
+  zero books ever read (no marker, no crash), continue book
+  filtered out of the current view (no marker shown), continue book
+  also pinned AND finished (prefix order correct: continue, then pin,
+  then finished, single marker), empty library, and a single-book
+  library. All passed.
+
+v0.1.124 -- Image Maximize Mode: A on a selected reader image (D-pad
+  already let you select images alongside links -- follow_selected() had
+  a dead kind=="image" branch, now wired to App.enter_image_view()) opens
+  a new SCREEN_IMAGE_VIEW that fills the whole 720x720 screen with the
+  image. L/R zoom out/in, D-pad pans, B returns to the exact reading
+  position -- entering/leaving never touches self.state/self.scroll/
+  self.selected_span, so there's zero extra "return to where I was"
+  bookkeeping needed, by design. Reuses get_image_texture() unchanged
+  (same decode/cache/upgrade pipeline as the inline reader -- confirmed
+  it already decodes at full native resolution via native_jpeg.py, not a
+  scaled-down thumbnail, so zoom is just a cropped SDL_RenderCopy, no
+  re-decode). Design answers from Kaleb: zoom ceiling capped at ~native
+  resolution (1 image px = 1 screen px, never below the fill scale --
+  see zoom_min/zoom_max in _imgview_reset()); starting view is cropped-
+  to-fill (no letterboxing); zoom/pan always resets on entry (no
+  per-image persistence); applies uniformly to every image, including
+  thin banners (a banner much narrower than tall just has a very high
+  zoom_min/zoom_max with little/no zoom headroom -- expected, not a
+  bug). D-pad pan step is IMGVIEW_PAN_STEP_FRAC = 0.14 (14% of the
+  currently visible crop per press, no auto-repeat-while-held exists
+  anywhere in this app's input model -- SDL_JOYBUTTONDOWN discrete
+  events only -- so this is tuned as a per-press step, not a
+  continuous-scroll rate; Kaleb explicitly asked to leave it at 0.14 for
+  now rather than the 0.10-0.12 "more relaxing" range discussed).
+  Simulated the zoom/pan clamp math standalone (SDL2_ttf isn't
+  available in this sandbox) across 1200x85 (widest real banner in Walk
+  Courageously With God), 1200x2135 (most portrait, same book),
+  2400x1543 (largest photo), 800x800/1200x252/1200x2114 (Enjoy Life
+  Forever's extremes), plus synthetic edge cases (exact-square native,
+  huge image with real zoom headroom) -- all pass: pan never leaves
+  [0, native_dim - crop_dim], zoom never leaves [zoom_min, zoom_max].
+  Extended bug check to EVERY image in every book on hand (630 total:
+  422 in Walk Courageously With God -- downloaded fresh, pub code "wcg"
+  verified live against GETPUBMEDIALINKS first -- 42 in Enjoy Life
+  Forever, plus Sing Out Joyfully/NWT/Teach Us/Watchtower 2026-04), each
+  put through 200 randomized L/R/D-pad presses with the src-rect bounds
+  checked after every single step: 0 failures. Thumb-to-full-res
+  upgrade mid-view (rare with native_jpeg's near-instant decode, more
+  likely on mini_jpeg's progressive fallback path) rescales the existing
+  pan/zoom proportionally instead of yanking the view back to center.
+  Hint bar drawn as the same opaque draw_hint() bar every other screen
+  uses -- no new SDL alpha-blending technique introduced, image just
+  fills the screen behind it edge to edge.
 
 v0.1.123 -- "Storage" renamed to "Settings" everywhere user-facing
   (Kaleb's request) -- the screen heading, both menu entries that open
@@ -1558,22 +2347,26 @@ except Exception:
     _boot_log("--- END ---\n")
     sys.exit(1)
 
-# v0.1.80 -- native_jpeg.py is OPTIONAL, same spirit as the downloader
+# v0.1.80 -- native_image.py is OPTIONAL, same spirit as the downloader
 # plugins below: the app must work identically whether it's present/
 # loadable or not. It's a ctypes bridge to the system's libSDL2_image
 # (confirmed present on the RG CubeXX-H's muOS build at /usr/lib --
-# Kaleb found it via SFTP file browsing), used to decode JPEGs at real C
-# speed instead of mini_jpeg.py's pure-Python decoder. See native_jpeg.py's
-# own module docstring for the full story (this is the actual fix for the
-# image-decode freeze bug, not just a speed optimization -- a C decode
-# doesn't hold Python's GIL the whole time the way mini_jpeg.py's decode
-# loop does). mini_jpeg.py is NOT being removed: if native_jpeg fails to
-# load OR fails to decode a specific file for any reason, decode_jpeg()
-# below falls straight back to the pure-Python path, per-call, silently.
+# Kaleb found it via SFTP file browsing), used to decode images at real C
+# speed instead of mini_jpeg.py's pure-Python JPEG-only decoder. See
+# native_image.py's own module docstring for the full story (this is the
+# actual fix for the image-decode freeze bug, not just a speed
+# optimization -- a C decode doesn't hold Python's GIL the whole time the
+# way mini_jpeg.py's decode loop does). mini_jpeg.py is NOT being
+# removed: if native_image fails to load OR fails to decode a specific
+# file for any reason, decode_jpeg() below falls straight back to the
+# pure-Python path, per-call, silently.
+# v0.1.146: renamed from native_jpeg.py -- Kaleb asked for a name that's
+# more obviously accurate now that this handles more than JPEG (v0.1.145
+# generalized it to every SDL2_image format: JPG/PNG/TIF/WEBP/JXL/AVIF).
 try:
-    import native_jpeg
+    import native_image
 except Exception:
-    native_jpeg = None
+    native_image = None
 
 
 def decode_jpeg(jpeg_bytes, scale_n=4):
@@ -1583,12 +2376,18 @@ def decode_jpeg(jpeg_bytes, scale_n=4):
     on any failure -- missing library, decode error, anything. This
     function is what every other call site in this file uses; neither
     ImageLoader nor anything else needs to know or care which decoder
-    actually ran."""
-    if native_jpeg is not None:
+    actually ran. NOTE: still named decode_jpeg (not decode_image) --
+    kept as-is in v0.1.146's rename since every call site already treats
+    it as "the" image decode entry point regardless of format, so
+    renaming this specific one would only add churn across the file
+    without changing behavior; the module/function names that actually
+    described a JPEG-only assumption (native_jpeg.py, decode_jpeg_native)
+    were the misleading ones and those did get renamed."""
+    if native_image is not None:
         try:
-            return native_jpeg.decode_jpeg_native(jpeg_bytes, scale_n=scale_n)
+            return native_image.decode_image_native(jpeg_bytes, scale_n=scale_n)
         except Exception as e:
-            _boot_log(f"native_jpeg decode failed, falling back to mini_jpeg: {e}\n")
+            _boot_log(f"native_image decode failed, falling back to mini_jpeg: {e}\n")
     return _decode_jpeg_pure_python(jpeg_bytes, scale_n=scale_n)
 
 # ============================================================
@@ -1895,7 +2694,25 @@ THEMES = [
         "name": "Default",
         "bg": (18, 18, 22), "panel": (28, 28, 34), "text": (225, 225, 230),
         "dim": (140, 140, 150), "link": (61, 125, 118), "link_sel": (222, 178, 108),
-        "hint_bg": (10, 10, 13), "hint_text": (180, 180, 190),
+        # v0.1.130: hint_bg/hint_text dimmed (Kaleb: hint bar felt too bright/
+        # prominent) -- hint_bg lifted from "bg minus ~8" to "bg minus 3" so
+        # the bar recedes into the page instead of reading as a separately-
+        # lit panel. hint_text initially set to match this theme's own
+        # "dim" tone exactly, but that FAILED WCAG AA contrast (4.5:1) on 3
+        # of the 5 themes once checked -- this theme's dim tone already
+        # passes (5.74:1) against the new hint_bg, so it's used as-is.
+        # Kaleb confirmed the direction via a rendered mockup (real bundled
+        # font, actual RGB values) before this was applied.
+        # v0.1.147: Kaleb wants the hint bar visibly grey rather than
+        # near-black -- hint_bg lifted from (15,15,19) to (34,34,39),
+        # roughly midway to this theme's own panel color (28,28,34) so it
+        # reads as a genuinely lighter panel, not just a darker copy of
+        # bg. Contrast against hint_text recomputed (WCAG relative
+        # luminance, not eyeballed): 4.76:1, still comfortably above the
+        # 4.5:1 AA floor the v0.1.130 comment above established as the
+        # bar for this project -- hint_text itself didn't need to change
+        # here (this theme had contrast headroom to spare).
+        "hint_bg": (34, 34, 39), "hint_text": (140, 140, 150),
         "accent": (95, 168, 156), "menu_sel_bg": (45, 45, 55), "warning": (230, 90, 90),
     },
     {
@@ -1904,7 +2721,18 @@ THEMES = [
         "name": "Dim Warm",
         "bg": (26, 20, 16), "panel": (36, 29, 23), "text": (201, 184, 150),
         "dim": (140, 120, 95), "link": (217, 148, 74), "link_sel": (240, 190, 120),
-        "hint_bg": (16, 12, 9), "hint_text": (170, 148, 115),
+        # v0.1.130: see Default theme's comment. This theme's exact "dim"
+        # tone (140,120,95) only measured 4.43:1 against the new hint_bg --
+        # just under WCAG AA's 4.5:1 -- so hint_text is a slightly brighter
+        # version of the same warm hue (not a different color, just +4%
+        # scaled up) rather than the literal "dim" tuple, landing at 4.75:1.
+        # v0.1.147: same "grey, not near-black" request as Default theme
+        # above -- hint_bg lifted from (23,17,13) to (40,32,25). This
+        # theme's existing hint_text no longer cleared 4.5:1 against the
+        # brighter hint_bg (dropped to 4.07:1), so hint_text was scaled
+        # up ~7% (same warm hue, not a different color -- same technique
+        # the v0.1.130 comment below used originally) to land at 4.60:1.
+        "hint_bg": (40, 32, 25), "hint_text": (156, 134, 106),
         "accent": (201, 140, 80), "menu_sel_bg": (55, 43, 32), "warning": (216, 110, 80),
     },
     {
@@ -1912,7 +2740,15 @@ THEMES = [
         "name": "Deep Amber",
         "bg": (20, 16, 12), "panel": (30, 23, 16), "text": (184, 122, 61),
         "dim": (130, 92, 55), "link": (201, 120, 46), "link_sel": (230, 165, 80),
-        "hint_bg": (12, 9, 6), "hint_text": (150, 105, 60),
+        # v0.1.130: see Default theme's comment. This theme's exact "dim"
+        # tone only measured 3.26:1 against the new hint_bg -- well under
+        # WCAG AA -- so hint_text is a brighter version of the same hue
+        # (scaled ~24% up, not a different color), landing at 4.61:1.
+        # v0.1.147: same "grey, not near-black" request -- hint_bg lifted
+        # from (17,13,9) to (32,25,18). hint_text scaled up ~5% (same
+        # hue) to restore 4.5:1+ against the brighter hint_bg -- lands
+        # at 4.52:1.
+        "hint_bg": (32, 25, 18), "hint_text": (169, 120, 71),
         "accent": (201, 120, 46), "menu_sel_bg": (48, 36, 24), "warning": (200, 100, 70),
     },
     {
@@ -1921,7 +2757,17 @@ THEMES = [
         "name": "Red Shift",
         "bg": (16, 8, 8), "panel": (24, 12, 12), "text": (176, 90, 74),
         "dim": (120, 60, 50), "link": (196, 90, 70), "link_sel": (214, 120, 90),
-        "hint_bg": (10, 5, 5), "hint_text": (140, 70, 58),
+        # v0.1.130: see Default theme's comment. This theme's exact "dim"
+        # tone only measured 2.39:1 against the new hint_bg -- the worst
+        # of the 5 themes, since Red Shift's near-zero blue/green channels
+        # weigh very low in perceived luminance -- so hint_text needed a
+        # larger brightness scale (~56% up, still the same red hue, not a
+        # different color) to reach 4.63:1.
+        # v0.1.147: same "grey, not near-black" request -- hint_bg lifted
+        # from (13,5,5) to (30,18,18). hint_text scaled up ~5% (same
+        # hue) to restore 4.5:1+ against the brighter hint_bg -- lands
+        # at 4.57:1.
+        "hint_bg": (30, 18, 18), "hint_text": (196, 99, 82),
         "accent": (140, 58, 46), "menu_sel_bg": (40, 18, 18), "warning": (200, 80, 60),
     },
     {
@@ -1933,7 +2779,12 @@ THEMES = [
         "name": "Adventure",
         "bg": (14, 14, 16), "panel": (26, 26, 30), "text": (180, 200, 190),
         "dim": (140, 145, 142), "link": (68, 176, 151), "link_sel": (255, 236, 71),
-        "hint_bg": (8, 9, 9), "hint_text": (170, 178, 172),
+        # v0.1.130: see Default theme's comment.
+        # v0.1.147: same "grey, not near-black" request as the other 4
+        # themes -- hint_bg lifted from (11,11,13) to (28,28,32).
+        # hint_text unchanged -- this theme had contrast headroom to
+        # spare (was 6.14:1), still comfortably above 4.5:1 at 5.30:1.
+        "hint_bg": (28, 28, 32), "hint_text": (140, 145, 142),
         "accent": (175, 245, 191), "menu_sel_bg": (40, 44, 42), "warning": (242, 5, 83),
     },
 ]
@@ -3151,6 +4002,153 @@ CORNER_RADIUS = _sx(6)  # "slight curved edges" per Kaleb's request -- small on
                          # purpose, meant to soften corners without looking
                          # like a bubbly/rounded design language change.
 
+SCREEN_FRAME_RADIUS = _sx(28)  # v0.1.131: the BMO-style OUTER screen frame,
+                         # deliberately much larger/more pronounced than
+                         # CORNER_RADIUS -- Kaleb wants the whole physical
+                         # 720x720 canvas to read as one curved-corner
+                         # "device face" (like BMO's screen), separate from
+                         # and on top of the smaller per-panel rounding
+                         # everywhere else. Always solid black regardless
+                         # of theme (Kaleb: "to match whatever future
+                         # screen use bars on screens that are wider" --
+                         # i.e. this frame is meant to blend with future
+                         # letterbox bars on non-square muOS devices, not
+                         # with the current theme's background). v0.1.135
+                         # briefly added a FRAME_EDGE_COLOR stroke along
+                         # the curve boundary for bottom-corner contrast
+                         # against dark content; removed entirely in
+                         # v0.1.139 (Kaleb: it read as a confusing extra
+                         # mark rather than a fix) -- see
+                         # _draw_screen_frame()'s docstring.
+
+IMG_MAXIMIZE_CORNER_RADIUS = _sx(20)  # v0.1.136: Kaleb sent a photo with
+                         # red annotations showing exactly what he wants
+                         # -- the MAXIMIZED IMAGE's own bottom-left/right
+                         # corners rounded off where the image meets the
+                         # hint bar below it, not the hint bar's corners
+                         # (that's the separate, existing, much smaller
+                         # CORNER_RADIUS treatment every hint bar already
+                         # has). Deliberately its own size: bigger than
+                         # the subtle per-panel CORNER_RADIUS (6px, would
+                         # be too small to read clearly per Kaleb's
+                         # annotation) but smaller than the bold outer
+                         # SCREEN_FRAME_RADIUS (28px, that's the physical
+                         # screen edge, a different visual element
+                         # entirely) -- this is a third, distinct size
+                         # for a third, distinct junction.
+
+
+def _frame_corner_inset_at_row(radius, row):
+    """Same per-row quarter-circle boundary math as _draw_screen_frame()
+    itself, pulled out standalone so it can be used to CALCULATE a safe
+    margin (below) instead of only to draw."""
+    dy = radius - row
+    dx = int(math.sqrt(max(0, radius * radius - dy * dy)))
+    return radius - dx
+
+
+def _min_safe_gap_from_corner(radius, x_offset, buffer_px):
+    """v0.1.133: how close (in px) can a left-aligned text block's BOTTOM
+    edge get to the screen's bottom edge, at horizontal offset x_offset,
+    before SCREEN_FRAME_RADIUS's corner mask starts cutting into it?
+    Walks the same per-row inset the frame itself paints and returns the
+    smallest gap-to-edge where inset + buffer_px <= x_offset -- i.e. the
+    frame's cut, plus a safety cushion for font hinting/antialiasing
+    variance, still clears the text's left edge. Computed once at import
+    (radius/offset are both fixed constants), not per-frame."""
+    for gap in range(1, radius + 2):
+        row = gap - 1
+        inset = _frame_corner_inset_at_row(radius, row) if row < radius else 0
+        if inset + buffer_px <= x_offset:
+            return gap
+    return radius + 1  # pathological fallback, never expected to hit
+
+
+HINT_CORNER_RADIUS = SCREEN_FRAME_RADIUS  # v0.1.137: Kaleb's request --
+                        # the hint bar's top-left/right corners were
+                        # using the small per-panel CORNER_RADIUS (6px),
+                        # visible but subtle (confirmed working at every
+                        # Font Size via his own photos at 16pt and 32pt).
+                        # He wants it "close to the overall screen
+                        # corners" -- i.e. matching SCREEN_FRAME_RADIUS's
+                        # visual weight, not a separate smaller size.
+                        # Actual applied radius is still clamped to
+                        # bar_h//2 at draw time (same clamp
+                        # fill_rect_rounded already uses everywhere) --
+                        # at the two smallest Font Size steps the hint
+                        # bar itself isn't tall enough for the full 28px,
+                        # so it naturally scales down there rather than
+                        # producing a degenerate/overlapping shape.
+                        # v0.1.139: also now used by _draw_status_bar()
+                        # (the toast bar) -- see HINT_SIDE_PAD below,
+                        # which is likewise shared by both bars now.
+
+HINT_SIDE_PAD = HINT_CORNER_RADIUS + _sx(4)  # v0.1.137: hint bar's text
+                        # left/right padding, sized to always clear the
+                        # bigger HINT_CORNER_RADIUS above (Kaleb: "at
+                        # smaller fonts it may need to pad the text left
+                        # and right"). Deliberately a FIXED value (not
+                        # computed per-call from the actual clamped
+                        # radius, which would vary by Font Size) so the
+                        # 3 places that need to agree on the hint bar's
+                        # usable text width (_hint_pt()'s calibration
+                        # search, _hint_lines_needed(), and draw_hint()
+                        # itself) can't drift out of sync with each
+                        # other -- using the WORST-CASE (largest)
+                        # padding everywhere is conservative (wastes a
+                        # little width at the two smallest Font Sizes,
+                        # where the actual clamped radius is smaller than
+                        # this) but guarantees text can never sit under
+                        # the curve at ANY Font Size.
+
+WRAP_SAFETY_MARGIN = _sx(16)  # v0.1.134: _wrap()'s greedy line-packer
+                        # decides whether a word fits by SUMMING each
+                        # word's individually-measured width + a fixed
+                        # space width -- but SDL_ttf's real glyph
+                        # spacing/hinting for the final joined line (one
+                        # single text_width() call, which is how
+                        # draw_reader() actually renders it) can measure
+                        # slightly WIDER than that sum, especially on
+                        # lines with many short space-separated tokens
+                        # (confirmed via headless regression sweep: up to
+                        # 9px drift on a 26-word numeric list at the
+                        # smallest Font Size). This margin is subtracted
+                        # from the packing decision's budget only (not
+                        # from actual rendering/centering elsewhere), so
+                        # a line the packer judges as "fitting" always has
+                        # a little headroom against that measurement
+                        # drift. Only affects the wrap DECISION for
+                        # normal multi-word lines; _force_break_word()'s
+                        # single-word chunks don't have this drift (no
+                        # summing involved) and aren't affected.
+
+HINT_BOTTOM_SAFE_GAP = _min_safe_gap_from_corner(
+    SCREEN_FRAME_RADIUS, HINT_SIDE_PAD, buffer_px=_sx(6))
+# v0.1.133 BUG FOUND (Kaleb asked to bug-check the frame against hint bar
+# text): simulated every real hint string in the app against the actual
+# corner-mask math at every Font Size (headless SDL2_ttf, real bundled
+# font, real wrap/centering functions -- not guessed). At max Font Size,
+# the Library screen's hint ("A Open  Y Sort  X Pin  ...  B Quit") is
+# long enough to wrap to the full HINT_H_MAX_LINES=3 ceiling, filling the
+# reserved bar height tightly enough that the last line's bottom sat only
+# ~2px above the screen edge -- squarely inside SCREEN_FRAME_RADIUS's
+# corner cut (~21px inset at that row vs. the text's 14px left offset,
+# an actual -7px overlap, confirmed by simulation, not a near-miss).
+# Every OTHER hint string in the app had 13-42px of margin at every Font
+# Size -- this was specific to the one hint long enough to hit the
+# 3-line ceiling. Fix: draw_hint() now clamps its vertical centering so
+# the text block's bottom edge never sits closer than
+# HINT_BOTTOM_SAFE_GAP to the screen edge, even if that means giving up
+# perfect centering in this one tight case (safety over cosmetics) --
+# see draw_hint().
+# v0.1.137: reference x_offset changed from the old flat HINT_TEXT_X
+# (14px) to HINT_SIDE_PAD (now ~32px, since draw_hint() draws its text
+# there instead -- see HINT_SIDE_PAD above). A bigger x_offset can only
+# make this margin MORE conservative (the frame's corner cut shrinks the
+# further a column sits from the actual corner), so this naturally
+# stayed safe through that change -- re-verified via the full regression
+# sweep after implementing, not just by this reasoning alone.
+
 
 def fill_rect_rounded(renderer, x, y, w, h, color, radius=None):
     """Same as fill_rect() but with softly rounded corners. No SDL2_gfx is
@@ -3191,6 +4189,68 @@ def fill_rect_rounded(renderer, x, y, w, h, color, radius=None):
         bl = Rect(x + inset, y + h - 1 - row, rw, 1)
         SDL.SDL_RenderFillRect(renderer, ctypes.byref(bl))
         br = Rect(x + w - radius, y + h - 1 - row, rw, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(br))
+
+
+def draw_rect_rounded_outline(renderer, x, y, w, h, color, radius, thickness=None):
+    """v0.1.132: OUTLINE version of fill_rect_rounded() -- draws a rounded
+    rect's border only (used for the image selection/link highlight),
+    not a filled panel. fill_rect_rounded()'s per-row quarter-circle
+    mask fills solid from the curve inward to the rect's edge, which is
+    correct for a filled background but would paint a solid triangle at
+    each corner here instead of a thin ring. This paints only a
+    `thickness`-wide band that hugs the same per-row curve boundary
+    (inset), so it stays visually consistent with every other rounded
+    element in the app while remaining a true outline.
+    IMPORTANT (image border specifically): the caller is responsible for
+    keeping `radius` small enough to fit inside whatever real margin
+    exists between this border and the image/content it surrounds (e.g.
+    capped at min(pad_x, pad_y) for the reader's image selection box) --
+    that's what guarantees the curve only ever cuts into empty margin
+    and never reveals a squared-off corner of the thing being
+    highlighted. This function itself does no clamping against that
+    margin since it has no knowledge of it; only against w//2, h//2."""
+    if thickness is None:
+        thickness = max(1, _sx(2))
+    radius = max(0, min(radius, w // 2, h // 2))
+    SDL.SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a)
+    if radius == 0:
+        top = Rect(x, y, w, thickness)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(top))
+        bottom = Rect(x, y + h - thickness, w, thickness)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(bottom))
+        left = Rect(x, y, thickness, h)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(left))
+        right = Rect(x + w - thickness, y, thickness, h)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(right))
+        return
+    # straight edges, inset by radius, same as fill_rect_rounded's layout
+    top = Rect(x + radius, y, w - 2 * radius, thickness)
+    SDL.SDL_RenderFillRect(renderer, ctypes.byref(top))
+    bottom = Rect(x + radius, y + h - thickness, w - 2 * radius, thickness)
+    SDL.SDL_RenderFillRect(renderer, ctypes.byref(bottom))
+    left = Rect(x, y + radius, thickness, h - 2 * radius)
+    SDL.SDL_RenderFillRect(renderer, ctypes.byref(left))
+    right = Rect(x + w - thickness, y + radius, thickness, h - 2 * radius)
+    SDL.SDL_RenderFillRect(renderer, ctypes.byref(right))
+    # 4 corners: same per-row quarter-circle boundary as fill_rect_rounded,
+    # but each row only paints a `thickness`-wide strip starting AT the
+    # curve (not filled all the way to the rect edge) -- a thin ring
+    # instead of a solid corner triangle.
+    for row in range(radius):
+        dy = radius - row
+        dx = int(math.sqrt(max(0, radius * radius - dy * dy)))
+        inset = radius - dx
+        if inset >= radius:
+            continue
+        rw = min(thickness, radius - inset)
+        tl = Rect(x + inset, y + row, rw, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(tl))
+        tr = Rect(x + w - inset - rw, y + row, rw, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(tr))
+        bl = Rect(x + inset, y + h - 1 - row, rw, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(bl))
+        br = Rect(x + w - inset - rw, y + h - 1 - row, rw, 1)
         SDL.SDL_RenderFillRect(renderer, ctypes.byref(br))
 
 
@@ -3429,6 +4489,14 @@ SCREEN_DOWNLOAD_BROWSE = "download_browse"    # browse/download from the
 SCREEN_LIBRARY_MENU = "library_menu"          # START on Library -- sort
                                                # shortcuts + Download +
                                                # Storage (v0.1.29)
+SCREEN_IMAGE_VIEW = "image_view"              # v0.1.124: fullscreen image
+                                               # maximize mode -- A on a
+                                               # selected reader image.
+                                               # Reader's self.state/
+                                               # self.scroll/self.selected_span
+                                               # are untouched while here;
+                                               # B returns to the exact
+                                               # same reading position.
 SCREEN_TEXT_ENTRY = "text_entry"              # generic D-pad letter-grid
                                                # text input (v0.1.30) --
                                                # not tied to any one
@@ -3498,11 +4566,6 @@ class App:
                                # filtered+sorted view derived from this
         self.books = []
         self.lib_index = 0
-        self._progress_cache = {}  # v0.1.122: book path -> whole-book %
-                                    # complete, or None if never started;
-                                    # lazily populated by
-                                    # _get_progress_pct(), cleared in
-                                    # refresh_library()
         self.refresh_library()
 
         self.doc = None
@@ -3518,6 +4581,23 @@ class App:
         # the top of the chapter instead of wherever the reader actually was,
         # since there was nowhere the exact scroll offset was being kept.
         self._scroll_stack = []
+
+        # v0.1.124: Image Maximize Mode. Deliberately NOT part of the
+        # scroll/state/selected_span bookkeeping above -- entering/leaving
+        # this screen never touches those, so returning to the reader is
+        # always exactly where you left it (see SCREEN_IMAGE_VIEW comment).
+        self._imgview_span = None       # ImageSpan currently maximized
+        self._imgview_pending_reset = False  # True right after entry, until
+                                              # the texture's real dims are
+                                              # known and zoom/pan are set
+        self._imgview_native_w = 0      # dims the current zoom/pan bounds
+        self._imgview_native_h = 0      # were computed against
+        self._imgview_zoom = 1.0
+        self._imgview_zoom_min = 1.0    # cropped-to-fill scale
+        self._imgview_zoom_max = 1.0    # native-resolution scale (>= min)
+        self._imgview_pan_x = 0.0       # top-left of the visible crop,
+        self._imgview_pan_y = 0.0       # in native image pixels
+
         self.menu_index = 0
         self.toc_flat = []
         self.toc_index = 0
@@ -3743,8 +4823,6 @@ class App:
         self._all_books = scan_library()  # may purge stale pin entries for deleted books on disk
         self.pinned = load_pinned()
         self.finished = load_finished()
-        self._progress_cache = {}  # v0.1.122: a deleted/replaced book's
-                                    # stale % must not survive a rescan
         self._apply_library_view()
 
     def _apply_library_view(self):
@@ -4178,44 +5256,6 @@ class App:
         self._apply_library_view()
         self.lib_index = max(0, min(self.lib_index, len(self.books) - 1))
         self.set_status(f"Cleared {count} Finished mark" + ("s" if count != 1 else ""))
-
-    def _get_progress_pct(self, book):
-        """v0.1.122: approximate whole-book read percentage for the
-        Library list (Kaleb's request). The reader's own "62%"-style
-        readout (_status line in draw_reader) is PER-CHAPTER -- how far
-        through the current spine file the scroll is -- which isn't
-        available for a book that isn't currently open. This instead
-        uses spine position: which chapter/file the last-read bookmark
-        points at, divided by the book's total spine length. Coarser
-        than the per-chapter number (a book with 3 long chapters jumps
-        in big 33% steps) but a genuinely cheap, honest approximation --
-        computing anything finer would mean fully parsing every book in
-        the library just to show a percentage.
-
-        Cached per book path in self._progress_cache (cleared on every
-        refresh_library() rescan) since EpubDocument's OPF-only parse,
-        while cheap, is still real I/O -- doing it for every book on
-        every single draw call would scale badly on a large library.
-        Returns None for a never-opened book (nothing to show)."""
-        path = book["path"]
-        if path in self._progress_cache:
-            return self._progress_cache[path]
-        last = get_last_position(path)
-        if not last or not last.get("file"):
-            self._progress_cache[path] = None
-            return None
-        pct = None
-        try:
-            doc = EpubDocument(path)
-            if doc.spine:
-                idx = doc.spine_index(last["file"])
-                if idx >= 0:
-                    denom = max(1, len(doc.spine) - 1)
-                    pct = min(100, max(0, round(100 * idx / denom)))
-        except Exception:
-            pct = None
-        self._progress_cache[path] = pct
-        return pct
 
     def most_recent_book(self):
         """The book with the most recent last-read timestamp across the
@@ -5037,6 +6077,38 @@ class App:
                 run_style = style
         return total
 
+    def _force_break_word(self, word, abs_word_start, avail_w_px):
+        """v0.1.134: split a single unbreakable "word" (no interior spaces
+        -- e.g. epub_engine's 32-char box-supplement divider rule
+        ("\u2500"*32) or a raw dot-leader run from a book's own TOC
+        formatting) into chunks that each fit avail_w_px. Only called
+        when the word ALONE is wider than avail_w_px -- normal words
+        never reach this path, so this can't change wrapping for the
+        overwhelming majority of real text. Uses the same style-aware
+        _word_width() measurement as normal wrapping (binary search per
+        chunk boundary), so a force-broken bold/italic run still measures
+        correctly. Confirmed via headless regression sweep across every
+        real book on hand: at large Font Size, these two cases were the
+        only ones where a single word's width could exceed avail_w_px at
+        all -- see v0.1.134 changelog."""
+        chunks = []
+        n = len(word)
+        i = 0
+        while i < n:
+            lo, hi = i + 1, n
+            best = i + 1  # always take >=1 char, even if it alone overflows
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                w = self._word_width(word[i:mid], abs_word_start + i)
+                if w <= avail_w_px:
+                    best = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            chunks.append((i, best))
+            i = best
+        return chunks
+
     def _wrap(self, text, combined, avail_w_px):
         """Word-wrap text to fit avail_w_px pixels, measuring each word's
         actual rendered width rather than approximating via a fixed
@@ -5080,8 +6152,50 @@ class App:
                 if w == "":
                     continue
                 w_w = self._word_width(w, offset + starts[wi])
+                # v0.1.134 BUG FIX: a word with NO interior spaces (e.g.
+                # epub_engine's 32-char box-rule divider, or a raw
+                # dot-leader run from a book's own TOC) that's wider than
+                # avail_w_px all by itself used to just get appended as
+                # the sole content of its line regardless -- the `if
+                # cur_words and ...` guard below is False when cur_words
+                # is empty, so it fell through to the plain append branch
+                # and rendered past the right margin. Confirmed via
+                # headless regression sweep at large Font Size across
+                # every real book on hand. Force-break it into
+                # avail_w_px-fitting chunks instead, each becoming its
+                # own line, before it ever reaches the normal packing
+                # logic below.
+                if w_w > avail_w_px:
+                    if cur_words:
+                        line_text = " ".join(cur_words)
+                        abs_start = offset + starts[cur_start_idx]
+                        lines.append(line_text)
+                        line_span_map.append(self._line_spans(line_text, abs_start, char_span))
+                        line_style_runs.append(self._compute_line_style_runs(line_text, abs_start))
+                        line_abs_starts.append(abs_start)
+                        cur_words = []
+                        cur_w = 0
+                    abs_w_start = offset + starts[wi]
+                    for cs, ce in self._force_break_word(w, abs_w_start, avail_w_px):
+                        chunk_text = w[cs:ce]
+                        abs_start = abs_w_start + cs
+                        lines.append(chunk_text)
+                        line_span_map.append(self._line_spans(chunk_text, abs_start, char_span))
+                        line_style_runs.append(self._compute_line_style_runs(chunk_text, abs_start))
+                        line_abs_starts.append(abs_start)
+                    continue
                 add_w = w_w + (space_w if cur_words else 0)
-                if cur_words and cur_w + add_w > avail_w_px:
+                # v0.1.134: subtract WRAP_SAFETY_MARGIN from the packing
+                # budget here specifically -- this decision sums each
+                # word's width independently, which can measure a few px
+                # narrower than the real joined-line text_width() call
+                # draw_reader() actually renders (SDL_ttf glyph
+                # spacing/hinting drift, worse with more short words per
+                # line). The oversized-single-word check above and
+                # _force_break_word()'s chunk boundaries both measure a
+                # single contiguous string directly, so they don't have
+                # this drift and intentionally use the full avail_w_px.
+                if cur_words and cur_w + add_w > avail_w_px - WRAP_SAFETY_MARGIN:
                     line_text = " ".join(cur_words)
                     abs_start = offset + starts[cur_start_idx]
                     lines.append(line_text)
@@ -5285,6 +6399,95 @@ class App:
                 self.scroll = 0
                 self.selected_span = 0
                 self._page_cache_key = None
+        elif kind == "image":
+            # v0.1.124: Image Maximize Mode. Deliberately does not touch
+            # self.state/self.scroll/self.selected_span -- B just switches
+            # the screen back, so the reader is exactly as it was.
+            self.enter_image_view(self._images[i])
+
+    def enter_image_view(self, image_span):
+        self._imgview_span = image_span
+        self._imgview_pending_reset = True
+        self._imgview_native_w = 0
+        self._imgview_native_h = 0
+        self.screen = SCREEN_IMAGE_VIEW
+
+    def _imgview_viewport_h(self):
+        """v0.1.129: Image Maximize Mode's actual usable height -- SH minus
+        the hint bar drawn on top of it. Kaleb's bug report: the image was
+        drawn full-screen edge-to-edge (SW x SH) with the hint bar simply
+        overlaid afterward, but hint_height() varies with Font Size (it
+        can wrap to 2-3 lines at larger sizes), so a bigger Font Size
+        covered MORE of the image's bottom than the zoom/pan math ever
+        accounted for -- the crop region was computed against the full
+        screen, not the actually-visible area above the bar. Every zoom/
+        pan method below uses this instead of a bare SH so the fill/zoom/
+        pan bounds are always computed against exactly what's visible,
+        at whatever Font Size is currently active. hint_height() returns
+        pre-_sy-scaling design units (same convention every other screen
+        already follows -- see hint_height()'s own docstring), hence the
+        _sy() wrap here."""
+        return SH - _sy(hint_height(self.fonts))
+
+    def _imgview_reset(self, iw, ih):
+        """(Re)computes zoom bounds and centers the crop for a native image
+        size of iw x ih. Called once per entry, the moment real decoded
+        dims are known (v0.1.124 design: always reset on entry -- Kaleb
+        confirmed simplicity over persisting zoom/pan per image)."""
+        self._imgview_native_w = iw
+        self._imgview_native_h = ih
+        vh = self._imgview_viewport_h()
+        zoom_min = max(SW / iw, vh / ih) if iw and ih else 1.0
+        # Cap at ~native resolution (1 image px = 1 screen px), but never
+        # below the fill scale -- a small image that already needs >1x
+        # upscale just to fill the screen has no extra zoom headroom
+        # (Kaleb: cropped-to-fill start + native-res ceiling).
+        zoom_max = max(zoom_min, 1.0)
+        self._imgview_zoom_min = zoom_min
+        self._imgview_zoom_max = zoom_max
+        self._imgview_zoom = zoom_min  # start cropped-to-fill
+        crop_w = SW / self._imgview_zoom
+        crop_h = vh / self._imgview_zoom
+        self._imgview_pan_x = max(0.0, (iw - crop_w) / 2.0)
+        self._imgview_pan_y = max(0.0, (ih - crop_h) / 2.0)
+        self._imgview_pending_reset = False
+
+    def _imgview_zoom_by(self, factor):
+        if not self._imgview_native_w or not self._imgview_native_h:
+            return
+        iw, ih = self._imgview_native_w, self._imgview_native_h
+        vh = self._imgview_viewport_h()
+        old_zoom = self._imgview_zoom
+        old_crop_w = SW / old_zoom
+        old_crop_h = vh / old_zoom
+        # keep the center of the current crop fixed while zooming
+        cx = self._imgview_pan_x + old_crop_w / 2.0
+        cy = self._imgview_pan_y + old_crop_h / 2.0
+        new_zoom = min(self._imgview_zoom_max, max(self._imgview_zoom_min, old_zoom * factor))
+        self._imgview_zoom = new_zoom
+        new_crop_w = SW / new_zoom
+        new_crop_h = vh / new_zoom
+        self._imgview_pan_x = cx - new_crop_w / 2.0
+        self._imgview_pan_y = cy - new_crop_h / 2.0
+        self._imgview_clamp_pan()
+
+    def _imgview_pan_by(self, dx_frac, dy_frac):
+        if not self._imgview_native_w or not self._imgview_native_h:
+            return
+        vh = self._imgview_viewport_h()
+        crop_w = SW / self._imgview_zoom
+        crop_h = vh / self._imgview_zoom
+        self._imgview_pan_x += crop_w * dx_frac
+        self._imgview_pan_y += crop_h * dy_frac
+        self._imgview_clamp_pan()
+
+    def _imgview_clamp_pan(self):
+        iw, ih = self._imgview_native_w, self._imgview_native_h
+        vh = self._imgview_viewport_h()
+        crop_w = min(iw, SW / self._imgview_zoom)
+        crop_h = min(ih, vh / self._imgview_zoom)
+        self._imgview_pan_x = min(max(0.0, iw - crop_w), max(0.0, self._imgview_pan_x))
+        self._imgview_pan_y = min(max(0.0, ih - crop_h), max(0.0, self._imgview_pan_y))
 
     def go_back(self):
         if self.state and self.state.go_back():
@@ -5709,7 +6912,13 @@ def _hint_pt(fonts):
     if fonts.size_index in cache:
         return cache[fonts.size_index]
     base_pt = max(11, FontManager.SIZE_STEPS[fonts.size_index] - 4)  # == ui_small's pt
-    max_w = SW - _sx(28)
+    max_w = SW - 2 * HINT_SIDE_PAD  # v0.1.137: was SW - _sx(28) (matched the
+                        # old flat 14px-each-side HINT_TEXT_X padding) --
+                        # must stay in sync with draw_hint()'s own max_w
+                        # and the actual HINT_SIDE_PAD text x-offset, or
+                        # this calibration would pick a font size that
+                        # doesn't actually fit in what draw_hint() really
+                        # has available.
     pt = base_pt
     while pt >= 11:
         font = fonts._get(pt)
@@ -5782,6 +6991,36 @@ def _wrap_path_message(font, text, max_w):
     return lines
 
 
+def _force_break_plain_word(font, word, max_w):
+    """v0.1.139 BUG FOUND: same class of bug as App._force_break_word()
+    (v0.1.134, body text) -- a "word" with no interior spaces wider than
+    max_w all by itself (confirmed real: App.handle_button sets the
+    toast/status message directly to a raw link href on link-follow,
+    self.set_status(link.href, ...) -- a bare URL has no spaces at all)
+    just overflowed instead of wrapping. This is the standalone
+    (non-style-aware) equivalent for _wrap_hint_text_unbounded() --
+    toast/hint text is never styled bold/italic, so no need for
+    App._force_break_word()'s per-character style lookup here, just a
+    plain text_width() binary search per chunk. Only triggers when a
+    single word alone exceeds max_w; ordinary words are unaffected."""
+    chunks = []
+    n = len(word)
+    i = 0
+    while i < n:
+        lo, hi = i + 1, n
+        best = i + 1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if text_width(font, word[i:mid]) <= max_w:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        chunks.append(word[i:best])
+        i = best
+    return chunks
+
+
 def _wrap_hint_text_unbounded(font, text, max_w):
     """Same greedy wrap as _wrap_hint_text but without the line cap --
     used only by _hint_pt() to measure how many lines a calibration string
@@ -5789,6 +7028,15 @@ def _wrap_hint_text_unbounded(font, text, max_w):
     words = text.split(" ")
     lines, cur = [], ""
     for w in words:
+        if text_width(font, w) > max_w:
+            # v0.1.139: oversized lone word (e.g. a raw URL from
+            # set_status(link.href, ...)) -- flush whatever's pending,
+            # force-break this word into its own line(s), and continue.
+            if cur:
+                lines.append(cur)
+                cur = ""
+            lines.extend(_force_break_plain_word(font, w, max_w))
+            continue
         trial = (cur + " " + w) if cur else w
         if text_width(font, trial) <= max_w or not cur:
             cur = trial
@@ -5821,7 +7069,8 @@ def _hint_lines_needed(fonts):
         return cache[fonts.size_index]
     pt = _hint_pt(fonts)
     font = fonts._get(pt) if pt else None
-    max_w = SW - _sx(28)
+    max_w = SW - 2 * HINT_SIDE_PAD  # v0.1.137: kept in sync with _hint_pt()
+                        # and draw_hint() -- see _hint_pt()'s comment.
     if font:
         needed = max(
             len(_wrap_hint_text_unbounded(font, t, max_w))
@@ -5894,7 +7143,18 @@ def hint_height(fonts):
     lines = _hint_lines_needed(fonts)
     if fonts and pt:
         font = fonts._get(pt)
-        line_h_design = TTF.TTF_FontHeight(font) / _SY
+        # v0.1.133 BUG FIX: was TTF_FontHeight(font)/_SY alone -- draw_hint()
+        # actually spaces lines using TTF_FontHeight(font) + _sy(6) (a 6px
+        # per-line gap), so for a 3-line hint this formula under-reserved
+        # by ~18px design-unit-equivalent, letting the real text block be
+        # TALLER than the bar meant to hold it. Confirmed via headless
+        # simulation with the real bundled font: at max Font Size, the
+        # Library screen's hint (the one hint string long enough to need
+        # all 3 lines) had content_h=114 vs. a reserved bar_h of only 110
+        # -- an actual overflow, not just tight. Matching the same +6
+        # per-line gap here is what guarantees bar_h is always >= the
+        # real content height draw_hint() will compute.
+        line_h_design = (TTF.TTF_FontHeight(font) + _sy(6)) / _SY
     else:
         line_h_design = HINT_H_BASE * 0.6
     return line_h_design * lines + HINT_H_BASE * 0.35
@@ -5909,8 +7169,14 @@ def _status_msg_lines(fonts, msg):
     14pt increasingly doesn't at 32pt, and a single render_text() call
     was never going to wrap on its own regardless of size. Short
     messages ("Bookmark added") just come back as a single-item list,
-    unaffected."""
-    return _wrap_hint_text_unbounded(fonts.ui_small, msg, SW - _sx(28))
+    unaffected.
+    v0.1.139: width now matches HINT_SIDE_PAD (same padding the toast's
+    own corner-rounding needs -- see _draw_status_bar()) instead of the
+    old flat _sx(28). No line cap here (_wrap_hint_text_unbounded), so
+    unlike the hint bar there's no calibration to keep in sync -- a
+    narrower width just means it may wrap to one more line, which the
+    bar already grows to fit."""
+    return _wrap_hint_text_unbounded(fonts.ui_small, msg, SW - 2 * HINT_SIDE_PAD)
 
 
 def _draw_status_bar(renderer, fonts, msg, color, bottom_y):
@@ -5925,10 +7191,28 @@ def _draw_status_bar(renderer, fonts, msg, color, bottom_y):
     lines = _status_msg_lines(fonts, msg)
     line_h = TTF.TTF_FontHeight(fonts.ui_small) + _sy(6)
     bar_h = max(_status_bar_h(fonts), line_h * len(lines) + _sy(10))
-    fill_rect(renderer, 0, bottom_y - bar_h, SW, bar_h, COL_PANEL)
+    top_y = bottom_y - bar_h
+    fill_rect(renderer, 0, top_y, SW, bar_h, COL_PANEL)
+    # v0.1.139: Kaleb's photo annotations -- wants the toast/status bar
+    # ("Theme: Dim Warm", "Font size: 14pt", etc.) curved to match the
+    # hint bar's own enlarged corners (v0.1.137), not just the screen's
+    # outer frame. Was still CORNER_RADIUS (6px) -- explicitly left
+    # alone in v0.1.137 since it wasn't part of that request; now
+    # matched to the same HINT_CORNER_RADIUS, same bar_h // 2 clamp
+    # (this bar is often even thinner than the hint bar at small Font
+    # Sizes, so the clamp matters here too).
+    corner_radius = min(HINT_CORNER_RADIUS, bar_h // 2)
+    _round_top_corners_to_bg(renderer, 0, top_y, SW, corner_radius)
+    # v0.1.131: center the actual line block vertically -- bar_h is a max()
+    # against a fixed single-line floor (_status_bar_h), so a 1-line
+    # message can have a couple px of slack above the old fixed _sy(6)
+    # top offset; centering makes that correct in every case rather than
+    # relying on the floor happening to match line_h+pad exactly.
+    content_h = line_h * len(lines)
+    start_y = top_y + max(0, (bar_h - content_h) // 2)
     for i, line in enumerate(lines):
         render_text(renderer, fonts.ui_small, line, color,
-                     _sx(14), bottom_y - bar_h + _sy(6) + i * line_h)
+                     HINT_SIDE_PAD, start_y + i * line_h + _sy(3))
     return bar_h
 
 
@@ -6025,22 +7309,149 @@ def _round_top_corners_to_bg(renderer, x, y, w, radius):
         SDL.SDL_RenderFillRect(renderer, ctypes.byref(right))
 
 
-def draw_hint(renderer, fonts, text):
+def _round_image_bottom_corners_to_hint(renderer, img_bottom_y, radius):
+    """v0.1.136: rounds the BOTTOM-left/right corners of the maximized
+    image itself (Image Maximize Mode only) by painting COL_HINT_BG
+    quarter-circles over the image's own last few rows, right where it
+    meets the hint bar below -- Kaleb's request, via a photo with red
+    annotations showing exactly this. This is the mirror image of
+    _round_top_corners_to_bg() (which rounds the HINT BAR's top corners
+    to reveal whatever's ABOVE it) -- here it's the IMAGE's bottom
+    corners being rounded to reveal the hint bar's own color, so the
+    curve reads as "the image's corners are cut away, blending into the
+    hint bar" rather than "the hint bar has rounded corners poking into
+    the image." Must be called AFTER the image's SDL_RenderCopy but
+    BEFORE draw_hint() draws the actual hint bar rectangle (harmless
+    either order since the two don't overlap in y, but this keeps the
+    z-order intuitive). img_bottom_y is the image's own bottom edge
+    (== the hint bar's top edge, App._imgview_viewport_h())."""
+    if radius <= 0:
+        return
+    SDL.SDL_SetRenderDrawColor(renderer, COL_HINT_BG.r, COL_HINT_BG.g,
+                                COL_HINT_BG.b, COL_HINT_BG.a)
+    for row in range(radius):
+        dy = radius - row
+        dx = int(math.sqrt(max(0, radius * radius - dy * dy)))
+        inset = radius - dx
+        if inset <= 0:
+            continue
+        y = img_bottom_y - 1 - row
+        left = Rect(0, y, inset, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(left))
+        right = Rect(SW - inset, y, inset, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(right))
+
+
+def _draw_screen_frame(renderer):
+    """v0.1.131: BMO-style outer screen frame -- masks all FOUR corners of
+    the whole 720x720 canvas with solid black quarter-circles, always,
+    regardless of theme (Kaleb's request, see SCREEN_FRAME_RADIUS above).
+    Called exactly once per frame, right before SDL_RenderPresent, AFTER
+    every screen's own draw_*() has finished -- this is deliberately NOT
+    baked into individual draw_*() functions so it can never be
+    forgotten on a screen (including SCREEN_IMAGE_VIEW, where it will
+    correctly clip the corners of a full-bleed maximized image, which is
+    exactly what Kaleb asked for). Same per-row quarter-circle mask
+    technique as fill_rect_rounded()/_round_top_corners_to_bg(), just
+    applied to all 4 corners of the physical screen instead of one
+    panel's edge, and with its own larger SCREEN_FRAME_RADIUS instead of
+    the small per-panel CORNER_RADIUS.
+
+    v0.1.135 added a FRAME_EDGE_COLOR stroke along the curve boundary
+    (Image Maximize Mode's bottom corners had near-zero contrast against
+    the near-black hint bar there). v0.1.138 restricted it to bottom
+    corners only after Kaleb reported it looking like an unwanted
+    "highlight" on the top corners, which never needed it. v0.1.139:
+    Kaleb reported the bottom-corner stroke ITSELF now reads as a
+    separate, oddly-placed small mark that undermines the hint bar's own
+    (bigger, v0.1.137) curve directly above it -- "give the impression
+    that the hint bar has no curve when it actually does." Removed
+    entirely, per his explicit direction ("remove it completely") --
+    every corner is back to a plain, stroke-free black cut, the original
+    v0.1.131 look. Note: this reopens the original v0.1.135 problem
+    (Image Maximize Mode's bottom corners have low contrast against the
+    dark hint bar there specifically) -- Kaleb's instruction was clear
+    and direct, so honored as-is; that screen can be revisited
+    separately if it turns out to matter in practice."""
+    radius = SCREEN_FRAME_RADIUS
+    radius = max(0, min(radius, SW // 2, SH // 2))
+    if radius <= 0:
+        return
+    SDL.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)  # always black, not theme-dependent
+    for row in range(radius):
+        dy = radius - row
+        dx = int(math.sqrt(max(0, radius * radius - dy * dy)))
+        inset = radius - dx
+        if inset <= 0:
+            continue
+        # top-left / top-right
+        tl = Rect(0, row, inset, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(tl))
+        tr = Rect(SW - inset, row, inset, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(tr))
+        # bottom-left / bottom-right
+        bl = Rect(0, SH - 1 - row, inset, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(bl))
+        br = Rect(SW - inset, SH - 1 - row, inset, 1)
+        SDL.SDL_RenderFillRect(renderer, ctypes.byref(br))
+
+
+def draw_hint(renderer, fonts, text, skip_top_corners=False):
+    """v0.1.136: skip_top_corners lets a caller suppress this function's
+    own top-corner erase-to-COL_BG (_round_top_corners_to_bg) -- needed
+    by Image Maximize Mode, which now rounds the IMAGE's bottom corners
+    into COL_HINT_BG instead (see _round_image_bottom_corners_to_hint()
+    and its docstring for why that's the correct direction there, unlike
+    every other screen where erasing to COL_BG is correct because the
+    content directly above the hint bar really is COL_BG)."""
     pt = _hint_pt(fonts)
     font = fonts._get(pt) if pt else fonts.ui_small
-    max_w = SW - _sx(28)
+    max_w = SW - 2 * HINT_SIDE_PAD  # v0.1.137: kept in sync with _hint_pt()
+                        # and _hint_lines_needed() -- see _hint_pt()'s comment.
     h = hint_height(fonts)
     max_lines = _hint_lines_needed(fonts)
     lines = _wrap_hint_text(font, text, max_w, max_lines) or [""]
-    top_y = SH - _sy(h)
+    bar_h = _sy(h)
+    top_y = SH - bar_h
     # Always fill the FULL reserved area (not just what these lines need)
     # so nothing from a previous, taller hint draw can bleed through.
-    fill_rect(renderer, 0, top_y, SW, _sy(h), COL_HINT_BG)
-    _round_top_corners_to_bg(renderer, 0, top_y, SW, CORNER_RADIUS)
-    row_h = _sy(h) / max_lines
+    fill_rect(renderer, 0, top_y, SW, bar_h, COL_HINT_BG)
+    if not skip_top_corners:
+        # v0.1.137: target radius bumped from CORNER_RADIUS (6px) to
+        # HINT_CORNER_RADIUS (matches SCREEN_FRAME_RADIUS, 28px) --
+        # Kaleb wants the hint bar's top corners "close to the overall
+        # screen corners." Still clamped to bar_h // 2 (same clamp
+        # fill_rect_rounded uses) so the two smallest Font Size steps,
+        # where the bar itself is thinner than 2*28px, scale down
+        # naturally instead of producing an overlapping/degenerate
+        # curve.
+        corner_radius = min(HINT_CORNER_RADIUS, bar_h // 2)
+        _round_top_corners_to_bg(renderer, 0, top_y, SW, corner_radius)
+    # v0.1.131: was `row_h = bar_h / max_lines` -- fine when a hint used
+    # every reserved line, but bar_h is sized for the FONT SIZE's worst
+    # case (max_lines), not this particular string's actual line count.
+    # A short hint ("B Back") at a Font Size where max_lines=2 or 3 was
+    # always drawn starting at the top slot, leaving the rest of the bar
+    # empty below it instead of centered in it. Now centers the actual
+    # `lines` block within the full bar height regardless of how many
+    # lines the reserved worst-case allows.
+    line_h = TTF.TTF_FontHeight(font) + _sy(6)
+    content_h = line_h * len(lines)
+    start_y = top_y + max(0, (bar_h - content_h) // 2)
+    # v0.1.133 BUG FIX: pure centering (above) can push the text block's
+    # bottom edge into SCREEN_FRAME_RADIUS's corner cut when a hint wraps
+    # to enough lines to nearly fill the reserved bar height (confirmed
+    # via simulation -- the Library screen's hint at max Font Size, see
+    # HINT_BOTTOM_SAFE_GAP's comment above). Clamp so the block's bottom
+    # never sits closer than HINT_BOTTOM_SAFE_GAP to SH -- if that means
+    # giving up perfect centering in this one tight case, that's fine;
+    # not clipping matters more than pixel-perfect centering.
+    max_start_y = SH - HINT_BOTTOM_SAFE_GAP - content_h
+    start_y = min(start_y, max_start_y)
+    start_y = max(start_y, top_y)  # never push above the bar's own top
     for li, line in enumerate(lines):
-        render_text(renderer, font, line, COL_HINT_TEXT, _sx(14),
-                    top_y + int(row_h * li) + _sy(9))
+        render_text(renderer, font, line, COL_HINT_TEXT, HINT_SIDE_PAD,
+                    start_y + li * line_h + _sy(3))
 
 
 def draw_library(renderer, app):
@@ -6065,6 +7476,26 @@ def draw_library(renderer, app):
     visible = (SH - top - _sy(hint_height(app.fonts))) // row_h
     row_max_w = SW - _sx(44)
 
+    # v0.1.125: Kaleb's report -- a book that's been started only ever
+    # showed a bare "42%" suffix, indistinguishable at a glance from any
+    # other partially-read book, and the only way to tell WHICH one was
+    # actually resumable via "Continue Reading" was to switch to Last
+    # Read sort or open the Library Menu. Reuses most_recent_book()
+    # unchanged (same function the Library Menu's dynamic label and
+    # open_continue_reading() already share) so this can never disagree
+    # with what "Continue Reading" actually opens.
+    #
+    # v0.1.127: v0.1.126 replaced the percentage on this one row with the
+    # book's chapter/section name (required briefly opening the book's
+    # EpubDocument for TOC parsing). Kaleb decided that was more than
+    # this needed -- reverted, and simplified further: the percentage is
+    # now gone from EVERY row (not just this one), replaced by literal
+    # "Continue Reading" text on just this row. No per-book I/O at all
+    # anymore, back to a plain fixed-height row loop like v0.1.125 (no
+    # variable row heights, no wrapping, no chapter-label cache).
+    continue_book = app.most_recent_book()
+    continue_filename = continue_book["filename"] if continue_book else None
+
     start = max(0, app.lib_index - visible // 2)
     for i in range(visible):
         bi = start + i
@@ -6079,26 +7510,72 @@ def draw_library(renderer, app):
         if bi == app.lib_index:
             fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if bi == app.lib_index else COL_TEXT
+        is_continue = continue_filename is not None and book["filename"] == continue_filename
+        # v0.1.133 BUG FIX: U+25B6 (BLACK RIGHT-POINTING TRIANGLE) is NOT
+        # in the bundled Liberation Sans font (assets/font.ttf) -- Kaleb
+        # reported the Continue Reading marker rendering blank. Confirmed
+        # via fontTools cmap check, not present. Checked the WHOLE prefix
+        # set while fixing this and found finished_prefix's U+2713 (CHECK
+        # MARK) is ALSO missing from the same font -- same bug, just not
+        # yet reported. pin_prefix's U+2665 (HEART) IS present, unchanged.
+        # Replaced both with glyphs confirmed present via cmap AND
+        # visually verified by rasterizing with the actual bundled font
+        # (not just "present in cmap" -- confirmed they draw a real
+        # glyph, not an empty/placeholder outline):
+        #   continue: U+25B6 -> U+25BA (BLACK RIGHT-POINTING POINTER, ►)
+        #             same solid-right-triangle meaning, closest visual
+        #             match to what was intended.
+        #   finished: U+2713 -> U+221A (SQUARE ROOT, √) -- common
+        #             checkmark substitute in fonts lacking a true check
+        #             glyph; reads clearly as "done" at this size.
+        continue_prefix = "\u25ba " if is_continue else ""  # v0.1.125: unambiguous
+                                                              # "resume here" marker,
+                                                              # leftmost so it reads
+                                                              # before pin/finished/title
         pin_prefix = "\u2665 " if book["filename"] in app.pinned else ""
-        finished_prefix = "\u2713 " if book["filename"] in app.finished else ""
-        title_line = pin_prefix + finished_prefix + book["title"]
+        finished_prefix = "\u221a " if book["filename"] in app.finished else ""
+        prefix = continue_prefix + pin_prefix + finished_prefix
+        suffix = ""
         if app.lib_sort_mode == "author" and book.get("author"):
-            title_line += f"  \u2014 {book['author']}"
-        # v0.1.122: progress % (Kaleb's request #1) -- shown whenever a
-        # book has been started, regardless of sort mode. Relative last-
-        # read time (#2) is scoped to the Last Read sort only, same as
-        # the author suffix is scoped to the Author sort -- showing a
-        # "3d ago" next to every row regardless of sort would be noise
-        # when the list isn't even ordered by that.
-        pct = app._get_progress_pct(book)
-        if pct is not None:
-            title_line += f"  {pct}%"
+            # v0.1.128: cap the author fragment itself (not just the
+            # overall reserved width below) -- real book metadata here is
+            # always short ("WATCHTOWER" for every JW epub on hand), but
+            # nothing stops some other source's metadata from being a
+            # long co-author list, and an uncapped author name could
+            # alone exceed the row before the title/Continue Reading
+            # budgeting below even gets a say.
+            author_fitted = _fit_text(app.fonts.ui_body, book["author"], row_max_w // 3)
+            suffix += f"  \u2014 {author_fitted}"
+        # v0.1.127: literal "Continue Reading" replaces the old percentage
+        # suffix, and ONLY on this one row -- every other book's row has
+        # no progress indicator at all anymore.
+        if is_continue:
+            suffix += "  Continue Reading"
         if app.lib_sort_mode == "last_read":
             rel = _relative_time(_book_last_read_ts(book))
             if rel:
-                title_line += f"  ({rel})"
-        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, title_line, row_max_w),
-                    color, _sx(24), y + _sy(8))
+                suffix += f"  ({rel})"
+        # v0.1.128: Kaleb asked about large Font Sizes -- measured real
+        # widths with the bundled font and found _fit_text() truncating
+        # the whole "prefix+title+suffix" line from the END, which at
+        # 28pt/32pt with a realistic book title silently ate "Continue
+        # Reading" itself (or the author/relative-time suffix) instead of
+        # the title. Fix: reserve the prefix+suffix width first, fit ONLY
+        # the title into whatever's left, then reassemble -- the marker
+        # and "Continue Reading"/author/relative-time now always survive
+        # in full at every Font Size; if anything has to give, it's the
+        # title getting an ellipsis, never the suffix.
+        reserved_w = text_width(app.fonts.ui_body, prefix) + text_width(app.fonts.ui_body, suffix)
+        title_budget = max(_sx(40), row_max_w - reserved_w)
+        fitted_title = _fit_text(app.fonts.ui_body, book["title"], title_budget)
+        title_line = prefix + fitted_title + suffix
+        # v0.1.125: the continue-book row also gets its own accent color
+        # (unless it's ALSO the current selection highlight, which
+        # already gets COL_ACCENT) so the marker reads clearly even at
+        # the smallest Font Size step where the glyph itself is tiny.
+        if is_continue and bi != app.lib_index:
+            color = COL_ACCENT
+        render_text(renderer, app.fonts.ui_body, title_line, color, _sx(24), y + _sy(8))
 
     if not app.books:
         # v0.1.73: this used to be a single un-wrapped render_text() call
@@ -6308,10 +7785,20 @@ def draw_reader(renderer, app):
                 border_h = box_h - _sy(4)
                 border_dy = y + _sy(2)
             if is_selected:
-                SDL.SDL_SetRenderDrawColor(renderer, border_color.r, border_color.g,
-                                            border_color.b, 255)
-                br = Rect(border_dx, border_dy, border_w + _sx(4), border_h)
-                SDL.SDL_RenderDrawRect(renderer, ctypes.byref(br))
+                # v0.1.132: rounded outline, Kaleb's request -- radius is
+                # deliberately capped at min(pad_x, pad_y) (the existing
+                # margin between this border and the actual image/panel
+                # it surrounds), NOT the app-wide CORNER_RADIUS. That cap
+                # is what guarantees the curve only ever dips into empty
+                # margin and can never reveal a squared-off image corner
+                # poking through -- see draw_rect_rounded_outline()'s
+                # docstring. Doesn't touch dw/dh/box_w/box_h/pad_x/pad_y
+                # or any of the sizing math above, purely how the
+                # existing border rect gets drawn.
+                img_border_radius = min(pad_x, pad_y)
+                draw_rect_rounded_outline(renderer, border_dx, border_dy,
+                                           border_w + _sx(4), border_h,
+                                           border_color, img_border_radius)
             row += box_rows
             li += 1
             content_drawn = True
@@ -6383,6 +7870,94 @@ def draw_reader(renderer, app):
 
     draw_hint(renderer, app.fonts,
               "D-PAD Select/Scroll  A Follow  B Back  L/R Page  L2/R2 Chapter  Y Fast x10  X Menu  START Bookmark")
+
+
+IMGVIEW_ZOOM_STEP = 1.15       # multiplicative zoom per L/R press
+IMGVIEW_PAN_STEP_FRAC = 0.14   # fraction of the visible crop moved per D-pad
+                                # press. No auto-repeat-while-held exists in
+                                # this app's input model (SDL_JOYBUTTONDOWN
+                                # discrete events only), so this is a
+                                # per-press step, not a scroll rate. Kaleb
+                                # confirmed keeping 0.14 (not dropping to
+                                # 0.10-0.12) after discussing the tradeoff.
+
+
+def draw_image_view(renderer, app):
+    """v0.1.124: fullscreen Image Maximize Mode. v0.1.129 fix: the image
+    now fills exactly the space ABOVE the hint bar (SW x viewport_h, see
+    App._imgview_viewport_h()), not the full SW x SH with the hint bar
+    simply drawn on top -- Kaleb's bug report: hint_height() varies with
+    Font Size (can wrap to 2-3 lines at larger sizes), so a taller hint
+    bar was silently covering more of the image's bottom than the old
+    full-screen zoom/pan math ever accounted for. Reuses
+    App.get_image_texture() unchanged, so it shares the exact same
+    decode/cache/upgrade pipeline as the inline reader."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    image_span = app._imgview_span
+    if image_span is None:
+        draw_hint(renderer, app.fonts, "B Back")
+        return
+
+    vh = app._imgview_viewport_h()
+
+    entry = app.get_image_texture(renderer, image_span)
+    if not entry or entry == "error":
+        msg = "Image failed to load" if entry == "error" else "Loading image..."
+        color = COL_DIM
+        tw = text_width(app.fonts.ui_small, msg)
+        render_text(renderer, app.fonts.ui_small, msg, color,
+                    (SW - tw) // 2, vh // 2)
+        draw_hint(renderer, app.fonts, "B Back")
+        return
+
+    tex, iw, ih, is_full, _buf = entry
+    # Reset (or re-clamp, if the texture upgraded from a thumb to full-res
+    # mid-view -- rare with native_jpeg's near-instant decode, but
+    # mini_jpeg's progressive fallback can still land a low-res band
+    # first) against whatever dims we actually have right now.
+    if app._imgview_pending_reset or (iw, ih) != (app._imgview_native_w, app._imgview_native_h):
+        if app._imgview_pending_reset:
+            app._imgview_reset(iw, ih)
+        else:
+            # dims changed after the initial reset (thumb -> full-res
+            # upgrade) -- rescale the existing pan/zoom proportionally
+            # instead of re-centering, so an in-progress zoom/pan isn't
+            # jarringly reset out from under the user.
+            old_w = max(1, app._imgview_native_w)
+            old_h = max(1, app._imgview_native_h)
+            scale_x = iw / old_w
+            scale_y = ih / old_h
+            app._imgview_native_w, app._imgview_native_h = iw, ih
+            app._imgview_zoom_min = max(SW / iw, vh / ih) if iw and ih else 1.0
+            app._imgview_zoom_max = max(app._imgview_zoom_min, 1.0)
+            app._imgview_zoom = min(app._imgview_zoom_max,
+                                     max(app._imgview_zoom_min, app._imgview_zoom))
+            app._imgview_pan_x *= scale_x
+            app._imgview_pan_y *= scale_y
+            app._imgview_clamp_pan()
+
+    crop_w = min(iw, SW / app._imgview_zoom)
+    crop_h = min(ih, vh / app._imgview_zoom)
+    src = Rect(int(app._imgview_pan_x), int(app._imgview_pan_y),
+               max(1, int(crop_w)), max(1, int(crop_h)))
+    dst = Rect(0, 0, SW, vh)
+    SDL.SDL_RenderCopy(renderer, tex, ctypes.byref(src), ctypes.byref(dst))
+
+    if not is_full:
+        render_text(renderer, app.fonts.ui_small, "improving...", COL_DIM,
+                    _sx(14), _sy(10))
+
+    # v0.1.136: round the image's own bottom-left/right corners into the
+    # hint bar's color, Kaleb's request (photo with red annotations) --
+    # see _round_image_bottom_corners_to_hint()'s docstring. skip_top_corners=True
+    # below because this already handles that exact junction from the
+    # image side; the hint bar's own default corner treatment
+    # (erase-to-COL_BG) would be wrong here specifically, since the
+    # content directly above the hint bar on this screen is the image,
+    # not COL_BG.
+    _round_image_bottom_corners_to_hint(renderer, vh, IMG_MAXIMIZE_CORNER_RADIUS)
+    draw_hint(renderer, app.fonts,
+              "D-PAD Pan  L/R Zoom Out/In  B Back", skip_top_corners=True)
 
 
 def draw_menu(renderer, app):
@@ -6710,7 +8285,14 @@ def draw_bookmarks(renderer, app):
     bms = [b for b in get_bookmarks(app.current_book_path) if b.get("label") != "__lastpos__"]
     render_text(renderer, app.fonts.ui_heading,
                 f"BOOKMARKS ({len(bms)}/{MAX_BOOKMARKS_PER_BOOK})", COL_ACCENT, _sx(20), _sy(16))
-    row_h = _sy(44)
+    # v0.1.131: was a fixed _sy(44), unlike every other list screen which
+    # uses the shared _row_h() helper -- at large Font Size settings the
+    # fixed height didn't grow with the text, so rows lost their vertical
+    # centering (and risked clipping) exactly where it matters most.
+    # _row_h()'s pad=20 default + the existing "y + _sy(8)" text offset
+    # below already works out to equal padding above/below the text on
+    # every other screen, so this makes Bookmarks consistent with that.
+    row_h = _row_h(app.fonts.ui_body)
     top = _sy(70)
     if not bms:
         render_text(renderer, app.fonts.ui_body, "No bookmarks yet. Press START while reading.",
@@ -6719,7 +8301,7 @@ def draw_bookmarks(renderer, app):
         y = top + i * row_h
         armed = (i == app._bookmark_delete_confirm_idx)
         if armed:
-            fill_rect(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_WARNING)
+            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_WARNING)
         elif i == app.bookmarks_index:
             fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_BG if armed else (COL_ACCENT if i == app.bookmarks_index else COL_TEXT)
@@ -6793,12 +8375,12 @@ def draw_storage(renderer, app):
         # continues after the highlight box already drew, so a selection
         # landing on a hidden row there paints a blank highlighted rect.
         # Checking first avoids that here.
-        if action == "Pre-render Book Images" and native_jpeg is not None and native_jpeg.available:
+        if action == "Pre-render Book Images" and native_image is not None and native_image.available:
             continue
         ry = top + (idx - start) * row_h
         armed = (idx == app._storage_confirm_idx)
         if armed:
-            fill_rect(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_WARNING)
+            fill_rect_rounded(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_WARNING)
         elif idx == app.storage_index:
             fill_rect_rounded(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_BG if armed else (COL_ACCENT if idx == app.storage_index else COL_TEXT)
@@ -6986,6 +8568,9 @@ def main():
         need_redraw = app.dirty
         if not need_redraw and app.screen == SCREEN_READER:
             need_redraw = app.has_pending_image_updates()
+        if not need_redraw and app.screen == SCREEN_IMAGE_VIEW and app._imgview_span is not None:
+            snap = app.image_loader.get_status_snapshot(app._img_key(app._imgview_span.src))
+            need_redraw = snap["result"] is None or snap["result"] == "loading" or snap["is_upgrading"]
         if not need_redraw and app.screen == SCREEN_DOWNLOAD_BROWSE:
             need_redraw = app.dl_loading or app._dl_downloading_idx is not None
         if not need_redraw and app.screen == SCREEN_TEXT_ENTRY:
@@ -7043,6 +8628,13 @@ def main():
                 draw_download_video_sources(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_BROWSE:
                 draw_download_browse(renderer, app)
+            elif app.screen == SCREEN_IMAGE_VIEW:
+                draw_image_view(renderer, app)
+
+            # v0.1.131: BMO-style outer screen frame -- always last, after
+            # every screen's own drawing, so it can't be forgotten on any
+            # individual screen (see _draw_screen_frame() docstring).
+            _draw_screen_frame(renderer)
 
             SDL.SDL_RenderPresent(renderer)
             time.sleep(0.016)
@@ -7475,6 +9067,23 @@ def handle_button(app, btn, body_h_px=None):
         elif btn == "START":
             app.bookmark_here()
 
+    elif app.screen == SCREEN_IMAGE_VIEW:
+        pan_step = IMGVIEW_PAN_STEP_FRAC
+        if btn == "UP":
+            app._imgview_pan_by(0.0, -pan_step)
+        elif btn == "DOWN":
+            app._imgview_pan_by(0.0, pan_step)
+        elif btn == "LEFT":
+            app._imgview_pan_by(-pan_step, 0.0)
+        elif btn == "RIGHT":
+            app._imgview_pan_by(pan_step, 0.0)
+        elif btn == "R":
+            app._imgview_zoom_by(IMGVIEW_ZOOM_STEP)
+        elif btn == "L":
+            app._imgview_zoom_by(1.0 / IMGVIEW_ZOOM_STEP)
+        elif btn == "B":
+            app.screen = SCREEN_READER
+
     elif app.screen == SCREEN_MENU:
         if btn == "UP": app.menu_index = (app.menu_index - 1) % len(MENU_ITEMS)
         elif btn == "DOWN": app.menu_index = (app.menu_index + 1) % len(MENU_ITEMS)
@@ -7631,7 +9240,7 @@ def handle_button(app, btn, body_h_px=None):
 
         def _storage_hidden(idx):
             return (STORAGE_ACTIONS[idx] == "Pre-render Book Images"
-                    and native_jpeg is not None and native_jpeg.available)
+                    and native_image is not None and native_image.available)
 
         if btn == "UP":
             new_idx = app.storage_index
@@ -7704,7 +9313,7 @@ def handle_button(app, btn, body_h_px=None):
                 # explanatory message when native decode is already
                 # doing the job -- avoids pointless CPU/disk-cache-write
                 # work for zero real benefit on the common fast path.
-                if native_jpeg is not None and native_jpeg.available:
+                if native_image is not None and native_image.available:
                     app.set_status("Not needed -- native fast image decode is already active")
                 elif app._prerender_active:
                     app.cancel_prerender()
