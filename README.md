@@ -97,8 +97,9 @@ Open Last Book on Launch, and more).
 
 PicoReader can browse and download books without needing a computer.
 Included out of the box is `gutenberg_fetch.py`, which pulls
-public-domain books from [Project Gutenberg](https://www.gutenberg.org)
-via the community-run [Gutendex](https://gutendex.com) API.
+public-domain books directly from
+[Project Gutenberg](https://www.gutenberg.org)'s own official OPDS
+catalog feed — no third-party API in between.
 
 Want to add your own source? See `PLUGIN_TEMPLATE.py` for the plugin
 contract — it's a small, self-contained interface.
@@ -178,6 +179,4 @@ me.
 
 - [DejaVu Fonts](https://dejavu-fonts.github.io/) — public domain
   changes over a Bitstream Vera base, permissively licensed
-- [Gutendex](https://gutendex.com) — Gareth Johnson, MIT licensed, used
-  as an API only (no code bundled)
 - Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-H
