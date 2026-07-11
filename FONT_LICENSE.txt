@@ -1,17 +1,32 @@
-Bundled fonts: Liberation Sans -- assets/font.ttf (Regular),
-assets/font-bold.ttf (Bold), assets/font-italic.ttf (Italic),
-assets/font-bolditalic.ttf (Bold Italic).
+Bundled fonts: DejaVu Sans Condensed -- assets/font.ttf (Regular),
+assets/font-bold.ttf (Bold), assets/font-italic.ttf (Oblique),
+assets/font-bolditalic.ttf (Bold Oblique).
 
-Full license text (SIL Open Font License 1.1) has moved into the
-project's consolidated LICENSE file, alongside the MIT license that
-covers this project's own source code. See LICENSE in the repo root.
+Full license text (bitstream-vera license, a permissive font license
+predating and distinct from OFL 1.1) has moved into the project's
+consolidated LICENSE file, alongside the MIT license that covers this
+project's own source code. See LICENSE in the repo root.
 
-Source: built directly from the official upstream source at
-https://github.com/liberationfonts/liberation-fonts, tag 2.1.5
-(commit 4b0192046158094654e865245832c66d2104219e), using the
-project's own documented build process (fontforge -script
-scripts/fontexport.pe against the .sfd sources, via `make`). Verified
-by inspecting each output file's embedded name-table version field
-(all four report "Version 2.1.5") -- not sourced from a third-party
-mirror or a distro repackaging. Not modified from the original
-release beyond this standard build step.
+Source: the fonts-dejavu-core Debian/Ubuntu package (version 2.37-8),
+upstream https://dejavu-fonts.github.io/. Embedded name-table version
+field confirms "Version 2.37" on the regular weight. Not modified in
+any way from the original release.
+
+License summary: DejaVu's own changes are public domain; the
+underlying Bitstream Vera base is permissively licensed (free to use,
+copy, merge, publish, distribute -- the one real restriction is that
+the font file itself can't be sold standalone, separate from a larger
+software package, which doesn't apply here since PicoReader is free).
+Renaming is required if the font is modified and redistributed under
+the Bitstream/Vera name specifically -- not a concern here since these
+files are unmodified.
+
+Inter (OFL 1.1), Liberation Sans (OFL 1.1), and DejaVu Sans (regular
+width, same license family as this font) were all bundled at earlier
+points in this project's history (see main.py's FONT_PATHS comment for
+the full switch history) but are no longer shipped as of v0.1.152.
+Liberation Sans is still referenced by filename as an on-device
+system-path fallback if the bundled DejaVu Sans Condensed files are
+ever missing -- that path loads the OS's own installed copy under
+muOS, not a file this project ships, so no separate license obligation
+applies to that fallback reference.

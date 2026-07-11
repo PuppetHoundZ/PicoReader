@@ -18,6 +18,7 @@ SDL2 render loop.
 from __future__ import annotations
 import zipfile
 import posixpath
+import bisect
 import os
 import json
 import re
@@ -32,6 +33,24 @@ NS = {
     "xhtml": "http://www.w3.org/1999/xhtml",
     "epub": "http://www.idpf.org/2007/ops",
 }
+
+# v0.1.151: populated by main.py at startup (set_active_glyph_subs()),
+# after it checks the ACTIVE bundled font's real cmap via
+# TTF_GlyphIsProvided32 -- see the call site in main.py right after
+# FONT_PATH is resolved for the full reasoning. Starts as an empty dict
+# (not a hardcoded per-font table) so that if this module is ever used
+# standalone/without main.py calling the setter, text passes through
+# unmodified rather than guessing at substitutions for a font state it
+# can't actually see.
+_ACTIVE_GLYPH_SUBS = {}
+
+
+def set_active_glyph_subs(subs: dict) -> None:
+    """Replace the active glyph-substitution table. Called once by
+    main.py at startup with only the entries the active font actually
+    needs (i.e. codepoints TTF_GlyphIsProvided32 reported as missing)."""
+    global _ACTIVE_GLYPH_SUBS
+    _ACTIVE_GLYPH_SUBS = dict(subs)
 
 
 def _local(tag: str) -> str:
@@ -158,15 +177,36 @@ def collapse_blank_line_runs(text, images, links, styles, para_spans, anchor_off
     if not delete_ranges:
         return text, images, links, styles, para_spans, anchor_offsets
 
+    # v26.07.09.16 BUG FIX: same underlying pattern as main.py's
+    # style_at()/_compute_line_style_runs() fixes (v26.07.09.15/.16) --
+    # remap() used to do a scan over delete_ranges (early-break once past
+    # the query offset, but still O(ranges before offset) per call) for
+    # EVERY offset being remapped. On Enjoy Life Forever's largest page
+    # (4.5M chars, many collapsed-blank-line ranges), this was called
+    # 134,097 times (once per image/link/style/anchor offset) and was the
+    # single largest remaining cost after the style_at() fix -- confirmed
+    # via profiling, ~7 of ~16s total. Fixed with a precomputed cumulative-
+    # shift array (delete_ranges is already naturally sorted and non-
+    # overlapping, built from sequential line indices) and bisect, giving
+    # O(log ranges) per call instead.
+    _ends = [de for _ds, de in delete_ranges]
+    _cum_shift = []
+    _running = 0
+    for _ds, _de in delete_ranges:
+        _running += (_de - _ds)
+        _cum_shift.append(_running)
+
     def remap(offset):
-        shift = 0
-        for ds, de in delete_ranges:
-            if offset >= de:
-                shift += (de - ds)
-            elif offset > ds:
-                shift += (offset - ds)  # defensive clamp; shouldn't occur
-            else:
-                break
+        idx = bisect.bisect_right(_ends, offset) - 1
+        if idx < 0:
+            return offset
+        shift = _cum_shift[idx]
+        # defensive clamp (matches original's "shouldn't occur" case):
+        # offset falls INSIDE the next range rather than before/after it
+        if idx + 1 < len(delete_ranges):
+            nds, nde = delete_ranges[idx + 1]
+            if nds < offset < nde:
+                shift += (offset - nds)
         return offset - shift
 
     out = []
@@ -447,6 +487,22 @@ class EpubDocument:
         # matter how much screen width was actually available.
         _WS_RE = re.compile(r"[ \t\r\n]+")
 
+        # v0.1.151: substitution table is now DYNAMIC, computed once by
+        # main.py at startup via a real TTF_GlyphIsProvided32 check
+        # against whichever font is actually bundled (see
+        # set_active_glyph_subs() below and the call site in main.py,
+        # right after FONT_PATH is resolved). This function no longer
+        # hardcodes an assumption about which font is active -- it just
+        # applies whatever _ACTIVE_GLYPH_SUBS currently holds, which may
+        # be empty (e.g. DejaVu Sans, as of v0.1.151, has every one of
+        # these natively, so nothing gets substituted and the real
+        # glyphs render untouched).
+        def _sub_missing_glyphs(s: str) -> str:
+            for bad, good in _ACTIVE_GLYPH_SUBS.items():
+                if bad in s:
+                    s = s.replace(bad, good)
+            return s
+
         def emit(s: str):
             if not s:
                 return
@@ -476,6 +532,7 @@ class EpubDocument:
             row as the drift compounded."""
             if not s:
                 return
+            s = _sub_missing_glyphs(s)
             collapsed = _WS_RE.sub(" ", s)
             if collapsed.startswith(" ") and text_parts and text_parts[-1].endswith(" "):
                 collapsed = collapsed[1:]

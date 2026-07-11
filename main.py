@@ -54,12 +54,448 @@ scrolled to your current reading position, not always the top of the list.
 
 ===========================================================================
 AI NOTES -- read this first if you're a future Claude session picking this
-project back up. This describes the CURRENT build only (v0.1.148).
+project back up. This describes the CURRENT build only (v26.07.10.10).
+
+v26.07.10.10: reworked the corner-mask contrast fix from v26.07.10.08 --
+Kaleb wanted corners "totally black" rather than theme-tinted, so
+instead lightened each theme's own COL_BG (see THEMES' individual bg
+comments) and reverted _draw_screen_frame()'s corner color back to
+pure black (0,0,0) unconditionally. Landed on 1.5:1 contrast against
+pure black after live-iterating through several targets in this
+session, each rendered as real screenshots before deciding: 3:1 (too
+close to the original ask but still visibly grey) -> 2.7:1 -> 2.2:1 ->
+1.9:1 -> 1.5:1, Kaleb's explicit final brief being "subtle but just
+barely noticeable" -- deliberately BELOW the WCAG 3:1 UI-component
+minimum discussed earlier; this was an aesthetic choice, not an
+accessibility target. Per-theme new bg values, each theme's own hue
+preserved (scaled the theme's existing hint_bg color up, not a flat
+neutral grey): Default/Adventure (43,43,50), Dim Warm (52,42,33), Deep
+Amber (53,42,30), Red Shift (62,37,37) -- Red Shift specifically
+double-checked since Kaleb named it directly ("if they were in red
+shift it will render properly"). Also cleaned up a leftover duplicated
+paragraph in _draw_screen_frame()'s docstring from the v26.07.10.08
+edit (copy-paste artifact, no functional effect, just redundant text).
+Verified via real pixel readback across all 5 themes: corner is
+exactly (0,0,0) every time, bg is measurably lighter than the corner
+every time, never equal. Full regression clean.
+
+v26.07.10.09: splash subtitle face changed again (Kaleb's request) --
+requested string used U+2E1C/U+2E1D (decorative low double-quote
+brackets) and U+FF61 (halfwidth ideographic dot), all missing from
+this font (confirmed via fontTools cmap, same recurring situation as
+every other face this project has needed). U+2661 (♡) IS present and
+kept as-is. Substituted ˋ/ˊ (modifier letter grave/acute) for the
+bracket marks and ˚ for the dot -- same "hands framing a happy face"
+shape, all confirmed-present glyphs. Verified this session: fits SW
+with margin at every Font Size step (306px at the smallest up to 695px
+at the largest, vs. 720px SW -- narrowest margin at the top step, but
+still fits), full regression clean.
+
+v26.07.10.08: _draw_screen_frame()'s corner mask (the BMO-style cut on
+all 4 corners, every screen) is no longer pure black -- Kaleb reported
+not seeing it on the new splash screen, which led to a real measured
+finding, not just a splash-specific bug: pure black against every
+theme's COL_BG measured ~1.06-1.15:1 WCAG contrast (well under the 3:1
+UI-component minimum), so it's been near-invisible on EVERY screen,
+every theme, since v0.1.131 -- the splash just made it obvious. Tried
+COL_PANEL next (measured equally poor, ~1.03-1.11:1). Tried COL_ACCENT
+(real contrast, 2.6-15.3:1, but turns corners into a bold theme-color
+cut, abandoning the black-bezel look). Landed on the current theme's
+own COL_BG lightened +85 per channel (clamped 255) -- keeps each
+theme's hue (Red Shift's frame reads as a lighter red-grey, not flat
+neutral grey -- Kaleb's specific ask: "if they were in red shift it
+will render properly"), measured 3.1-3.4:1 across all 5 themes,
+clearing the WCAG minimum on every one. Multiplicative darkening was
+tried and measured FIRST, before landing on lightening -- doesn't
+work, there's no headroom below an already near-zero-luminance bg.
+Verified this session: real pixel readback (not a screenshot) confirms
+the corner is now visibly distinct from bg on all 5 themes, Red Shift
+included -- corner sum-of-channels > bg sum-of-channels every time,
+never equal.
+
+v26.07.10.07: splash "PICO READER" title is now 50% bigger (Kaleb's
+request -- title text only, the face above it and subtitle below it
+are unchanged). New Fonts.splash_title property: same pattern as the
+existing heading/ui_heading properties (a plain _get() call off
+SIZE_STEPS[size_index]), just *1.5, so it still scales with the Font
+Size setting instead of being a fixed pixel value. draw_splash()'s
+layout math updated to use face_h/title_h separately now that the two
+lines are different font sizes (was a single shared `font` var doing
+double duty for both). Tested across all 7 Font Size steps this
+session: confirmed the actual rendered ratio lands at ~1.5x
+ui_heading's height every time (1.46-1.51x, TTF_FontHeight rounding),
+and confirmed the full "PICO READER" string still fits SW with margin
+at every step, largest included (349px vs. 720px SW at the top step).
+
+v26.07.10.06: extended the boot splash (Kaleb's request). Sequence is
+now: title types over SPLASH_TYPE_SECONDS (2.0s, unchanged) -> a new
+subtitle (SPLASH_SUBTITLE, "Designed with Love by: Kaleb Fabsik" + a
+face) types near the bottom over SPLASH_SUBTITLE_TYPE_SECONDS (2.0s,
+starts only once the title finishes) -> everything holds for SPLASH_
+HOLD_SECONDS (3.0s) -> hands off to the real destination screen. 2 + 2
++ 3 = SPLASH_TOTAL_SECONDS = 7.0s, matching Kaleb's exact spec (tested
+directly this session: SPLASH_TOTAL_SECONDS == 7.0). Subtitle drawn in
+app.fonts.ui_body (smaller than the title's ui_heading -- the full
+string is much longer and needs to comfortably fit SW), same fixed-x/
+full-final-width centering approach the title already used, for the
+same anti-jitter reason. Also: splash is now skippable via START/A/B
+(handle_button()'s new SCREEN_SPLASH branch, checked first before the
+Library branch) -- jumps straight to app._splash_dest_screen, same
+target draw_splash() itself would hand off to once its timer runs out.
+Confirmed a non-skip button (tested with UP) does NOT dismiss it.
+Requested subtitle face used U+3063 (Hiragana small tsu) and U+02F6
+(same missing modifier-letter mark flagged in earlier sessions), both
+absent from this font (confirmed via fontTools cmap) -- substituted
+with a face built from confirmed-present glyphs only, same as every
+other face this project uses. Also flagged to Kaleb (not silently
+"corrected"): the original subtitle string looked like it had a
+mismatched extra closing paren partway through.
+
+v26.07.10.05: two more changes, Kaleb's requests. (1) Boot splash --
+new SCREEN_SPLASH, shown before whatever App.__init__ actually resolves
+as the real destination (Library, or Reader if Open Last Book on
+Launch just found one -- captured into self._splash_dest_screen as the
+LAST thing __init__ does, same ordering reasoning as Open Last Book
+itself). draw_splash() shows FACE_MENU_LOGO above SPLASH_TITLE
+("PICO READER"), same font/color as the Menu overlay's logo
+(ui_heading/COL_ACCENT) per Kaleb's explicit request to match --
+SPLASH_TITLE spells itself left-to-right over SPLASH_TYPE_SECONDS
+(2.0s), holds fully spelled for SPLASH_HOLD_SECONDS (2.0s), then
+delegates straight to draw_library()/draw_reader() once
+SPLASH_TOTAL_SECONDS elapses (rather than just flipping app.screen and
+returning blank, which would paint one empty frame first). The
+revealed prefix is drawn at a FIXED x computed once from the FULL
+final string's width -- confirmed by testing this needs to NOT
+recenter every frame, or the growing text visibly drifts instead of
+reading as being typed in place. Needed two other wire-ups: the main
+loop's screen-dispatch (checked first, before Library) and its
+need_redraw fallback chain (splash always redraws, no button to wait
+for -- same shape as the existing SCREEN_READER/pending-image-update
+case). Tested via a second real App() instance this session: confirmed
+the initial screen really is SPLASH, confirmed the reveal count is
+correct at t=0/1.0s/3.0s (still splash, mid-type vs. fully held), and
+confirmed it correctly hands off to the real destination screen once
+past SPLASH_TOTAL_SECONDS. (2) Exit toast now uses FACE_DONE (the
+existing download-completion cheer face) instead of last session's
+dedicated FACE_EXIT, which was removed as dead code -- Kaleb's request
+to reuse the same "done" face rather than a separate exit-only one.
+
+v26.07.10.04: two more cosmetic additions, Kaleb's requests. (1) Menu
+screen logo -- draw_menu()'s plain "MENU" label replaced with
+FACE_MENU_LOGO on its own line and "PICO READER" below it, both
+centered in the 360px overlay, same ui_heading font size the old label
+already used (a literally bigger font risked overflowing this narrow
+sidebar at large Font Size settings -- confirmed via this session's
+test sweep across every Font Size step: both lines fit with margin to
+spare at all 7 sizes, from 65/123px at the smallest up to 124/234px at
+the largest, well under the 360px overlay). (2) Exit toast -- pressing
+B on the Library screen (the only place App.quit_requested gets set,
+confirmed by search) now shows "Exiting Pico Reader" + FACE_EXIT for
+EXIT_TOAST_SECONDS (0.9s) before the window actually closes, instead
+of vanishing the instant B is pressed: sets the status message, draws
+one more Library frame, presents it, SDL_Delay()s, then quits. Both
+new faces (FACE_MENU_LOGO, FACE_EXIT) follow the same substitution
+approach as v26.07.10.03's faces -- the originally requested glyphs
+(U+02F6, U+15DC, halfwidth katakana U+FF89/U+FF9E) are missing from
+DejaVu Sans Condensed (confirmed via fontTools cmap), so equivalents
+were built from confirmed-present glyphs only (˚ for the sparkle-cheek
+mark, ◡ for the compressed mouth, plain "~" for the hand-wave).
+Verified this session: draw_menu() and the exit-toast draw_library()
+call both render without error at every Font Size, real SDL2/SDL2_ttf.
+
+v26.07.10.03: two features, Kaleb's requests. (1) Mid-wrap abort for the
+live large-page loading screen: B/L2/R2 now break out of an in-progress
+synchronous wrap instead of only being acted on after it finishes.
+Reuses _wrap()'s existing per-paragraph progress_cb checkpoint (already
+there for the percentage display) -- App._poll_wrap_abort_button() polls
+for a matching JOYBUTTONDOWN at each throttled (~4x/second) tick and
+raises App._WrapAbortRequested if found; _ensure_page_built() catches
+it, restores a snapshot of self._links/_styles/_styles_starts/
+_styles_prefix_max_end/_para_spans/_visible_image_keys/_combined_spans/
+_anchors/_images taken before the new page started overwriting them
+(self._lines is never touched by an aborted attempt, so this keeps
+self._lines and the restored fields a matched pair instead of one
+describing the abandoned page and the other the old one -- same save/
+restore shape _prerender_one_extreme_page() already used for exactly
+this reason around self._styles alone), queues the abandoned page at
+the FRONT of the existing _extreme_page_queue (priority over the
+proactively-scanned FIFO -- this one was actually asked for), then
+performs the requested navigation via the exact same go_back()/
+prev_chapter()/next_chapter() methods B/L2/R2 already call normally,
+and recurses into _ensure_page_built() once more so draw_reader()
+never renders a stale frame that same cycle. _wrap() itself has no
+try/except around its progress_cb call and never mutates self during
+its loop (confirmed by reading it) -- an abort at any paragraph
+boundary can't leave self in a half-set state beyond what's explicitly
+snapshotted/restored. "back" specifically: if there's no link-history
+to go back to (go_back() returns False), this correctly falls through
+to the SAME "exit to Library, keep current_file where it was" behavior
+a normal B press has in that situation -- confirmed this is intentional
+(resuming later should return to the actual last-read position, not an
+abandoned in-progress page), not a bug, while writing this session's
+test suite. draw_reader()'s own pre-wrap peek (the "Rendering large
+page..." screen shown before _ensure_page_built() even runs) now also
+shows queue position ("(queued, N ahead)" / "(queued, next up)") when
+the upcoming page is already sitting in _extreme_page_queue, so
+returning to a previously-bailed-on page shows real status instead of
+a plain unmoving message. Tested this session with real SDL2/SDL2_ttf,
+a real App() instance, and NWT's real 108,741-char page (its real max
+-- confirmed still under the real 133,000 shipped threshold, so this
+has ZERO effect on NWT's actual on-device behavior; the threshold was
+only lowered in the test harness, exactly the existing project
+precedent for exercising this mechanism without Enjoy Life Forever/
+Daily Text on hand): all 3 actions (back/prev_chapter/next_chapter)
+aborting at the first available tick, each followed by a full state-
+consistency check (page_cache_key/current_file match, styles arrays in
+sync, no premature/corrupt disk-cache entry); background-queue drain
+via _prerender_one_extreme_page() correctly completes and persists the
+abandoned page; revisiting it afterward loads from disk instantly, no
+re-wrap. Plus a 20-page regression sample at the REAL threshold: zero
+errors. (2) Cosmetic: small kaomoji-style faces on loading/status
+screens (Kaleb's request) -- FACE_THINKING_A/_B cycle every
+FACE_CYCLE_SECONDS on any in-progress message (Downloading/Rendering/
+Pre-rendering/Loading), FACE_DONE appears on any completion/already-
+satisfied message (downloaded/already), via one choke point each:
+_draw_status_bar() (every toast in the app) and
+_draw_large_page_loading_screen(). The ORIGINALLY requested faces used
+Kannada/Malayalam script characters DejaVu Sans Condensed doesn't
+cover (confirmed via direct fontTools cmap inspection) -- since this
+font's glyph-substitution table is empty, those would've rendered as
+blank tofu with zero fallback, so equivalent faces were built entirely
+from glyphs individually confirmed present (fontTools cmap AND real
+TTF_GlyphIsProvided32 AND an actual SDL_RenderReadPixels check that
+real ink -- not a blank box -- gets painted).
+
+v26.07.10.02: "Search Audio" -- follow-up to v26.07.10.01's Audio
+feature, after Kaleb asked whether the DEFAULT keyword search surfaces
+audio results now that a download path for them exists. Confirmed
+directly: no -- and this exposed a real, separate gap along the way.
+The general keyword search (Y from Categories, jw_fetch.list_items()
+with a query) is DELIBERATELY EPUB-only by design (its own comment:
+"video-only results aren't shown here") -- that's unrelated to audio
+and wasn't touched. But _walk_search_results() (OmniSearch response
+parsing, shared by every search_jw() caller) was ALSO silently
+dropping real subtype="audio" hits from the raw API response --
+confirmed live: filter="audio", q="love" returns 12 real results
+(lank format "pub-XXX_N_AUDIO", same shape as video's "pub-XXX_N_VIDEO")
+that were simply discarded before this fix, not because the API lacked
+them but because the parser only recognized "video"/"publication"
+subtypes -- true when that code was written (no audio download path
+existed yet), stale now. Fixed at the source: _walk_search_results()
+now tags subtype="audio" items with _kind="audio" (+ "duration" as the
+subtitle, e.g. "4:16" -- a real field on audio hits, more useful here
+than a text snippet). New "Search Audio" entry in AUDIO_SOURCES,
+mirroring "Search Videos" exactly: search_jw(filter="audio"), lazy
+resolve at download time only (resolve_search_audio_item() ->
+resolve_audio_link(), parsing the pub-XXX_N_AUDIO lank via new
+_AUDIO_LINK_RE -- mirrors _VIDEO_LINK_RE, confirmed live across several
+queries that every real audio lank found follows this simple pub+track
+shape, no docid variant seen the way video has one). start_download()'s
+audio branch now has the same "already resolved vs. needs
+resolving" branch the video branch already had. Full live test:
+searched "love" -> 12 real results (some are duplicate titles, e.g.
+"154. Unfailing Love" appearing twice -- likely vocal/instrumental
+variants, same track-numbering behavior already seen in the Songbook
+source) -> downloaded the first result end-to-end through the lazy-
+resolve path, confirmed real MP3 landed in find_music_dir()'s path.
+
+v26.07.10.01: MP3 audio downloads (Kaleb's bug-report feature request #9)
+-- new "Audio" entry in Download Books > JW (jw_fetch.CATEGORY_AUDIO,
+same pseudo-category pattern as CATEGORY_VIDEOS), saving into muOS's
+native GMU Music Player content folder. Folder path confirmed against
+Kaleb's own device (ROMS/Music, capital M) -- unlike ROMS/movies, muOS
+itself has no fixed default naming for music content (muos.dev docs are
+explicit that content folder names are fully user-defined), so this is
+specifically Kaleb's setup, not a muOS-wide convention like "movies" is.
+Three real AUDIO_SOURCES entries, all confirmed live against
+GETPUBMEDIALINKS?fileformat=MP3 this session (real files downloaded and
+verified, not just listed): "Watchtower Study Audio (This Week)"
+(auto-resolves the RSS-confirmed latest issue, same chain
+generate_mwb_back_issues() already uses, no picker needed), "Songbook --
+Sing Out Joyfully to Jehovah" (pub=sjjm, 326 tracks, already self-
+numbered in each title), and "Bible Reading Audio (NWT)" (pub=nwt,
+needs a booknum -- the one AUDIO_SOURCES entry marked "books": True,
+which opens a new Bible-book sub-picker screen,
+SCREEN_DOWNLOAD_AUDIO_BOOKS, driven by jw_fetch.BIBLE_BOOKS' fixed
+66-book table, before calling the loader). Architecture mirrors
+VIDEO_SOURCES/SCREEN_DOWNLOAD_VIDEO_SOURCES closely: jw_fetch.py owns
+find_music_dir()/download_audio()/list_audio_items()/
+list_watchtower_study_audio(), main.py's App.dl_is_audio flag threads
+through start_download() (audio branch: find_music_dir()+
+download_audio(), no refresh_library(), same as the video branch) and
+draw_download_browse()'s title/hint (had to explicitly exclude audio
+mode from the SUPPORTS_SEARCH/SUPPORTS_MANUAL_CODE hint/button branches,
+which otherwise incorrectly fired off JW_PLUGIN's own flags -- those
+apply to the EPUB browse path, not audio). B-back navigation is
+history-aware: from a direct source (Study Audio, Songbook) B returns
+to SCREEN_DOWNLOAD_AUDIO_SOURCES; from the Bible source B returns to
+SCREEN_DOWNLOAD_AUDIO_BOOKS instead (App._pending_audio_source tracks
+which), so picking a different book doesn't require re-opening Audio
+from scratch. Full button-driven end-to-end test this session: Library
+Menu -> Download Books -> JW -> Categories -> Audio -> each of the 3
+sources -> real download, for all three; confirmed B navigation lands
+correctly in both cases; confirmed a real downloaded MP3 (Watchtower
+Study audio, 9,762,559 bytes) matches the API's reported filesize
+exactly, landed in find_music_dir()'s real path. Daily Text audio
+(es26 pub) was checked and does NOT work via this same booknum/issue
+shape (404) -- not included in AUDIO_SOURCES, flagged here in case a
+future session finds the right param shape for it.
+
+v26.07.09.22: disk-cache-read loading screen (v26.07.09.19) upgraded from
+a flat "Loading cached page..." message to a live elapsed-seconds counter
+("Loading cached page... Ns") -- the open idea flagged at the end of the
+v26.07.09.21 session. Unlike the fresh-wrap path (_wrap()'s progress_cb,
+called at natural per-paragraph chunk points), a single pickle.load()
+call has no chunk points to hook a percentage into. Solved instead by
+moving the actual disk read onto a background thread
+(App._load_wrap_from_disk_with_progress()) and polling from the main
+thread every ~0.25s to redraw the elapsed count + pump SDL events --
+safe to background because pickle.load()/file I/O never touches
+SDL_ttf, same reasoning _prerender_extreme_pages_scan() already relies
+on for ITS background thread (unlike the wrap itself, which stays
+synchronous/main-thread per the existing SDL_ttf-off-main-thread
+constraint). Verified with an artificially-slowed disk read (1.2s) in
+this session's harness: counter correctly showed 0s -> 1s across the
+simulated wait, updating every ~0.25s as designed.
+
+Also this session: independently re-verified the v26.07.09.21 claims
+against real EPUBs rather than taking the prior session's numbers on
+faith. Two corrections to what was previously reported: (1) the
+uploaded lffi_E.epub ("Enjoy Life Forever!--Brochure") is the short
+21-file introductory brochure, NOT the source of the previously-cited
+4.5M-character "Track Your Bible Reading" page -- its real largest
+page is only 61,981 characters. That extreme page must have come from
+a different/fuller edition not present in this session's uploads, so
+its exact timing numbers are Kaleb's on-device reports, not something
+re-confirmed here. (2) NWT's real largest page (108,741 chars, of
+3941 spine files) sits under BOTH real thresholds (133K/266K) -- so at
+real thresholds this session's two available books produce zero
+loading-screen/prerender activity, exactly matching the "NWT: zero
+candidates" claim from v26.07.09.21's own regression note. To actually
+exercise the loading-screen/disk-cache/prerender MECHANISM (not
+available at real thresholds with these two books), thresholds were
+temporarily lowered in the test harness only (never in shipped code)
+so NWT's real 108,741-char page crossed both tiers. Confirmed: (a)
+cold wrap shows the percentage loading screen and persists to disk;
+(b) a completely fresh App() instance (simulated restart) loads that
+same page from disk in a fraction of the cold-wrap time, with
+byte-identical wrapped-line output; (c) the background prerender scan
+finds the page, queues it, and drains the queue only on a frame where
+the CURRENTLY-viewed page needs no work of its own -- confirmed it
+never delays real navigation to a DIFFERENT page. Full spine regression
+(3941 NWT + 21 Enjoy Life Forever pages, two passes each) at REAL
+thresholds: zero lockups, zero exceptions.
+
+v26.07.09.21: two changes together. (1) CORRECTED
+LARGE_PAGE_LOADING_THRESHOLD -- v26.07.09.20's 50K was based on a
+mistaken cross-book comparison (Kaleb clarified all his real timing
+numbers were the SAME Enjoy Life Forever page throughout, at two font
+sizes, not two different books as assumed). Real numbers (85s/78s cold
+wrap for that one 4.5M-char page, ~17-19 us/char, confirmed linear via
+direct sandbox measurement) -> 133K chars for the loading-screen tier
+(~2.5s), 266K for a new pre-render tier. (2) NEW: pages over
+PRERENDER_THRESHOLD are now wrapped proactively when a book is opened
+(App._prerender_extreme_pages_scan()/_prerender_one_extreme_page()),
+not waited for on first navigation -- background-scanned (safe: no
+SDL_ttf calls) then processed one at a time on the main thread only
+when the currently-viewed page doesn't itself need work that frame.
+Verified live: Enjoy Life Forever's background scan found 6 qualifying
+pages on open; by the 2nd-3rd draw_reader() call during ordinary
+reading (never navigating to the extreme page), its disk cache already
+existed. Full regression across NWT's 3941-file spine (worst case,
+background scan correctly found zero candidates, matching its real max
+page size) plus 3 other books: no lockups, no exceptions.
+
+v26.07.09.20: lowered LARGE_PAGE_LOADING_THRESHOLD from 100K to 50K
+characters -- see its own module-level comment for the real reasoning
+(Kaleb's on-device cold-wrap time for Daily Text's 461K-char page,
+40-50s, scales to ~8-10s for a 90K-char page, which was previously
+UNDER the old threshold and got zero warning for a real, felt wait).
+Real consequence, confirmed via sampling: this roughly triples scope on
+some books -- Enjoy Life Forever goes from 7 to 21 sampled pages over
+threshold (~13%), Courage from 4 to 16 (~12%) -- no longer the "~2%
+extreme outliers" the original 100K was calibrated for, but a
+deliberate tradeoff toward catching real wait time over just rarity.
+
+v26.07.09.19: two follow-ups from Kaleb's on-device test of v26.07.09.18
+(real numbers: 40-50s -> 4s). (1) The wrap-computation loading screen
+now shows a live percentage, throttled to ~4x/second -- _wrap() takes an
+optional progress_cb(fraction) called each paragraph, _ensure_page_
+built() wires it up only when a renderer is available and the page is
+over threshold. Also pumps SDL_PumpEvents() on each update -- doesn't
+make input actionable mid-wrap (still can't be, same SDL_ttf-off-main-
+thread constraint, confirmed via real research this session: FreeType's
+own docs are explicit that concurrent access needs a separate FT_Library
+per thread, not just "unverified" -- a real redesign, not a small
+change, so left alone), but keeps the OS from considering the process
+fully unresponsive during the wait. (2) The disk-cache-LOAD path (reading
+an already-cached extreme page back, ~4s on real hardware per Kaleb's
+report) now ALSO shows a loading message ("Loading cached page...",
+distinct wording from the fresh-computation one) -- previously this path
+showed nothing at all for its own real duration, which is exactly what
+prompted this fix ("4 seconds is long enough to be like hmmm I wonder if
+it broke").
+
+v26.07.09.18: added a disk cache for extreme pages ONLY (see
+WRAP_CACHE_DIR/LARGE_PAGE_LOADING_THRESHOLD -- same 100K-char threshold
+as the v26.07.09.17 loading screen, deliberately narrow, NOT a general-
+purpose cache -- Kaleb's explicit request). A page over threshold is
+wrapped once (still synchronous, still main-thread -- no new SDL_ttf
+threading risk) and persisted to disk; every visit after that, even
+after closing the book or restarting the app, loads instantly instead
+of re-wrapping. Verified live: Enjoy Life Forever's "Track Your Bible
+Reading" page (4.5M characters, the largest page found in this
+project's testing) -- cold wrap 7.99s -> loaded from disk in a totally
+fresh App() instance (simulating an app restart) in 0.91s, with
+byte-identical content confirmed line-by-line. Cleaned up automatically
+on book deletion via the same {book_id}__ prefix convention/glob
+pattern IMG_CACHE_DIR already uses (scan_library()'s stale-entry
+cleanup, and delete_book_cache() -- both updated).
+expensive to build even after the v26.07.09.15/.16 algorithmic fixes
+(some pages are just genuinely huge -- e.g. Enjoy Life Forever's
+4.5M-character page still takes several seconds even with zero
+remaining O(n x m) blowups, per profiling: it's now proportional to
+real word count, not a bug). draw_reader() peeks at the upcoming page's
+text length BEFORE calling _ensure_page_built() -- if it exceeds
+LARGE_PAGE_LOADING_THRESHOLD (50K chars as of v26.07.09.20 -- see its
+own module-level comment for why it moved down from the original 100K:
+frequency data alone wasn't calibrated against real device wait time) AND isn't already wrap-cached, shows "Rendering
+large page..." and presents that frame BEFORE doing the actual
+(still synchronous, still main-thread) wrap. Deliberately NOT
+backgrounded -- _wrap() calls into SDL_ttf, and calling SDL_ttf off the
+main thread has never been verified safe on this hardware (see
+_ensure_page_built()'s v0.1.69 comment), so this only adds visible
+feedback around the existing synchronous cost, not a threading change.
+
+v26.07.09.15/.16: fixed THREE instances of the same O(n x m) blowup
+pattern in text layout, all found in one sweep after Kaleb asked whether
+other books could hit a similar bug to the confirmed Daily Text lockup.
+They could, and worse: (1) main.py's style_at() -- linear scan over
+every style span per character, 35s alone on a 2697-span page; (2)
+main.py's _compute_line_style_runs() -- same shape per LINE instead of
+per character, found a page in Enjoy Life Forever with 31,390 style
+spans across 4.5M characters that TIMED OUT past 30s before this fix;
+(3) epub_engine.py's remap() -- a partial-linear-scan over collapsed-
+blank-line ranges, called once per offset being remapped (134,097 times
+on that same huge page). All three fixed via bisect + a precomputed
+cumulative/prefix array instead of a scan. That worst-case page: was
+uncompletable (30s+ timeout) -> 16.2s (fix 1+2) -> 8.8s (fix 3). Full
+regression across all 6 available books (Daily Text, Enjoy Life Forever,
+Courage, NWT, another Bible translation, a Watchtower issue), 10 R2
+presses each with real draws: zero lockups.
 There is no separate changelog file or historical version log anymore
--- non-obvious behavior is explained via inline "# v0.1.X" comments
+-- non-obvious behavior is explained via inline "# vYY.MM.DD.XX" comments
 directly above the relevant code as you read through the file, not in
 one big block up here. What follows is a snapshot of current
 architecture, conventions, and known trouble spots.
+
+VERSIONING SCHEME CHANGE (v26.07.09.01): switched from the old
+sequential v0.1.X counter (last value: v0.1.162) to a date-based scheme:
+YY.MM.DD.XX, where YY.MM.DD is today's date and XX is a same-day counter
+starting at 01 and incrementing per change, resetting to 01 each new
+calendar day. No more major/minor/patch semantics -- the date IS the
+version. All prior "v0.1.X" references throughout this file are historical
+and untouched; only new changes going forward use the new format.
 
 Current screen/feature set: 5 color themes, 7 Font Size steps, JW.org +
 Project Gutenberg download plugins, Image Maximize Mode (fullscreen
@@ -67,11 +503,369 @@ zoom/pan on a selected image), Library with sort/pin/finished/filter,
 bookmarks with history, Chapters (TOC) navigation, per-book Storage/
 cache controls, and JW video browsing (all four video categories --
 Enjoy Life Forever, JW Broadcasting, Governing Body Updates, The Good
-News According to Jesus -- unified under one "Videos" entry reached via
-Download Books > JW). Multi-resolution letterboxing (v0.1.148) lets the
+News According to Jesus -- plus a 5th "Search Videos" entry (v26.07.09.08)
+for live free-text search against jw.org's own search API, all unified
+under one "Videos" entry reached via Download Books > JW). v26.07.09.09:
+this whole picker is now driven entirely by jw_fetch.py's own
+VIDEO_SOURCES registry (label + loader function name + args per entry)
+instead of main.py hardcoding JW titles/pub codes and four near-duplicate
+opener methods -- see open_plugin_video_list() and VIDEO_SOURCE_BY_LABEL
+for the generic replacement. Falls back to the old hardcoded behavior if
+an older jw_fetch.py lacks VIDEO_SOURCES. "Search Videos" only appears if
+the loaded jw_fetch.py actually has search_jw() (same hasattr-gating
+convention as JW_VIDEO_SUPPORTED) -- see jw_fetch.py's own search_jw()/
+resolve_search_video_item() docstrings for the full design (why video
+resolution is lazy, why this is scoped to the JW Videos picker only and
+not a general search feature, per Kaleb's explicit instruction). v26.07.09.10/.11: leaving the JW plugin entirely (not just backing
+out of a sub-screen within it) now clears the cached OmniSearch bearer
+token -- see jw_fetch.py's clear_search_token_cache(). Search (Y) and
+Manual Code (SELECT, JW only) are now reachable directly from the
+Categories screen too, not just after opening a category -- same
+SUPPORTS_SEARCH/SUPPORTS_MANUAL_CODE gating as Browse already used.
+jw_fetch.py's old "What's New (RSS)" category is now labeled "New
+Issues" -- unchanged behavior (still only detects new periodical
+issues via RSS), renamed because the old label implied general JW.org
+news and was confirmed confusing. Multi-resolution letterboxing (v0.1.148) lets the
 app run on any muOS screen size while keeping its fixed 720x720 layout
 untouched -- see the SDL_RenderSetLogicalSize()/window-creation comments
-in main() for how.
+in main() for how. v0.1.149: two small fixes from Kaleb's photo review --
+the status/toast bar (_draw_status_bar()) now rounds its BOTTOM corners
+to COL_HINT_BG (was square, only the top was rounded -- see
+_round_image_bottom_corners_to_hint() call site); and epub_engine.py
+substitutes the rare U+2024 "one dot leader" meter glyph (seen in some
+JW.org magazine content) for U+00B7, since Liberation Sans has no glyph
+for U+2024 and was drawing missing-glyph boxes -- see
+_sub_missing_glyphs() in epub_engine.py's text walker. v0.1.150:
+bundled font switched from Liberation Sans to Inter (OFL 1.1) -- see
+FONT_PATHS comment in this file and FONT_LICENSE.txt for full
+reasoning/provenance. Confirmed via direct cmap checks (not
+assumption) against all 15 of Kaleb's real EPUBs across a dozen
+open-source candidates -- no body-text font checked (Liberation,
+Arimo, Nimbus Sans, Noto Sans, Carlito, Work Sans, Manrope, Readex
+Pro, Hanken Grotesk; DejaVu was the one exception that covered every
+gap but was rejected on visual grounds) natively covers the 5
+confirmed-missing glyphs (index bullet U+2750, discussion-bullet
+U+25B8, schedule-bullet U+25FC, breadcrumb-arrow U+27A4, checkbox-tick
+U+2714). Inter was chosen for best available substitute shapes (real
+check mark and triangle-bullet glyphs) plus visual preference, not
+because it solves the gap outright. Full regression (all 15 books x 7
+Font Sizes, all UI screens, hint bar, toast bar) passed clean before
+the switch. Liberation Sans remains as an on-device system-path
+fallback in FONT_PATHS (not bundled) in case the bundled Inter files
+are ever missing. v0.1.151: superseded by a switch to DejaVu Sans,
+after side-by-side on-device screenshot comparison -- DejaVu covers
+every glyph gap found (the 5 above, plus box-drawing divider lines and
+the full Hebrew block used in Bible acrostic headers) with REAL native
+glyphs, not substitutes. The substitution system itself was also
+reworked from a hardcoded per-font table to a dynamic one: main.py now
+checks the active font's actual cmap via TTF_GlyphIsProvided32 at
+startup (see the block right after FONT_PATH is resolved) and only
+populates epub_engine.set_active_glyph_subs() with entries the active
+font is actually missing -- for DejaVu that's an empty table, so real
+glyphs render untouched. If a future font swap reintroduces a gap,
+this adapts automatically instead of needing another manual audit.
+v0.1.152: switched again, from DejaVu Sans to DejaVu Sans Condensed --
+narrower letterforms closer to Liberation Sans's original proportions
+(Kaleb's preference), same full glyph coverage confirmed via direct
+cmap check (5,918 glyphs, identical to regular DejaVu Sans -- NOT the
+same as DejaVu SERIF Condensed, which was also checked and rejected:
+smaller glyph set, missing 4 of the 6 target glyphs, zero Hebrew).
+v0.1.153: hint bar padding fix (Kaleb's photo report). DejaVu Sans
+Condensed is still wider than Liberation Sans/Inter at the same pt, so
+at 18pt the Library screen's longest hint string tipped over into 2
+reserved lines where it used to fit in 1 -- and because hint_height()
+reserves ONE shared bar height across every screen (v0.1.52 invariant),
+every screen's bar got bumped to that 2-line height, even ones whose
+own hint only ever draws 1 line. Confirmed via SDL_RenderReadPixels:
+~40% empty padding above AND below the text at 18pt. _hint_pt() now
+does a cheap (<=3pt) tie-break shrink after its existing floor-11
+fallback: if a small pt reduction gets the calibration strings to wrap
+into fewer lines, it takes it. Fixes 18pt (60px bar -> 36px, back to a
+true 1-line bar) and 32pt (131px -> 86px, 3 lines -> 2, freeing real
+body-text space) without touching 21/24/28pt, whose 2-line bars were
+already proportionate (a 4pt+ trim would've been needed there to drop
+a line, out of the cheap-shrink budget -- left alone deliberately).
+Also v0.1.153: toast/status bar (_draw_status_bar()) redesigned from a
+full-width bar to a text-hugging pill, per Kaleb's photo annotation --
+was filling the full screen width with COL_PANEL even for a short
+message like "Bookmark added", leaving a large empty band to the
+right of the text. Now sized to the widest wrapped line + padding,
+left-anchored at TOAST_PILL_MARGIN_X, fully rounded (stadium-shape,
+radius=bar_h//2) via the existing fill_rect_rounded() -- no longer
+needs the old erase-to-background corner helpers since it's a
+floating pill, not a bar touching the screen edges. Also tightened
+TOAST_ROW_PAD/TOAST_LINE_GAP (10->4, 6->3): DejaVu Sans Condensed's
+TTF_FontHeight runs notably taller than its real glyph ink (confirmed
+via pixel readback: ~17px reported vs ~10px actual ink at 18pt), so
+the old flat padding (tuned for Liberation/Inter) compounded on top of
+that into visible excess. Confirmed via pixel readback across all 7
+Font Sizes and 4 real toast strings (including descenders) that
+nothing clips at any size.
+Also v0.1.153: tightened the shared list-row padding used by Library,
+Bookmarks, the Menu popup, TOC, Storage's action list, and all 3
+Download screens (Kaleb: "feel natural yet minimal"). All but TOC
+route through _row_h()'s DEFAULT pad, dropped 20->14; TOC's own
+explicit pad dropped 14->10; draw_download_browse()'s two-line
+title+subtitle row (which predates/bypasses _row_h(), own separate
+formula) dropped its matching +20->+14. Same root cause as the hint/
+toast fixes: DejaVu Sans Condensed's TTF_FontHeight runs taller than
+Liberation Sans/Inter's did, so the old flat pads (tuned pre-switch)
+were compounding into ~46-62% dead space per row. New values restore
+the original ~8px-per-side breathing room the v0.1.74 comment
+describes, confirmed via pixel readback across all 7 Font Sizes with
+NO clipping in any selection-highlight box or row text on any of
+these screens. Storage's own info-line stats block (pad=6) was
+checked and left alone -- already tight/correct, not part of this bug.
+Reader body text (_reader_body_layout()) was also reviewed at Kaleb's
+request: unlike the UI chrome above, its line_h is NOT built from
+TTF_FontHeight() -- it uses the raw point size + a small flat leading
+(6-8px), a v0.1.116 design that's independent of any one font's real
+metrics, so it isn't subject to the same over-padding bug. Real risk
+checked instead: at max Font Size (32pt) DejaVu's actual FontHeight
+(38px) now exactly equals line_h (38px) -- zero theoretical slack,
+where Liberation Sans had comfortable headroom. Stress-tested against
+all 8 of Kaleb's real EPUBs at 32pt via real consecutive-line ink-gap
+measurement: no overlap in any book (smallest observed gap 7px, real
+text rarely hits the font's absolute ascent+descent bounding box on
+both adjacent lines at once). No change made -- confirmed safe as-is,
+but worth re-checking if a future font swap makes FontHeight exceed
+line_h outright.
+
+v0.1.154 BUG FIX (Kaleb's report: "%age indicator goes over 100%"):
+ReaderState.page_down() (the L/R page-turn method) clamped its final
+scroll position to `min(li, max(0, n - 1))` -- n-1 is the last LINE
+index, a completely different (and wrong) ceiling than every other
+scroll path in the app uses. UP/DOWN d-pad scrolling, and the reader's
+%-complete indicator's own denominator, both correctly use
+`max(0, n - body_rows)` (the scroll position that shows the final full
+screen). Letting page_down() land anywhere up to n-1 meant repeated
+L/R at the end of a book kept advancing scroll well past that correct
+ceiling straight through to the last line -- confirmed via real
+page_down() simulation against all 8 of Kaleb's books at 3 Font Sizes:
+short books (front-matter-only, or under one screenful) reached pct=
+300-900% before this fix. This was also the direct cause of Kaleb's
+second question ("clamp so it doesn't scroll past the end of a
+chapter's image or text") -- the same overshoot scrolled the last
+screen mostly blank instead of stopping with content flush to the
+bottom. Fixed by using the same `max(0, n - body_rows)` ceiling
+page_up() and the d-pad handlers already use. Confirmed via the same
+real-book simulation: all 8 books x 3 Font Sizes now land at exactly
+scroll <= ceiling and pct <= 100% every time, and a direct pixel
+check on the final page (New World Translation, 18pt) shows text ink
+ending only 31px above the body's bottom edge -- essentially flush,
+not scrolled past. Mid-document forward/backward paging re-verified
+unaffected (5 pages forward + 5 back returns to the exact starting
+scroll).
+
+v0.1.155: two changes from a broader JW download/search bug-check
+(downloaded and tested against "Walk Courageously With God" and the
+NWT specifically, plus live network calls against every category and
+all 4 video sources).
+(1) BUG FIX: jw_fetch.py's lookup_pub_code() (the manual pub-code
+entry path) pulled the publication title straight from the API's raw
+pubName field with no HTML-unescaping. Confirmed live: the "nwt" pub
+code's own pubName contains a literal "&nbsp;" entity, so the Download
+Browse screen showed "...(2013&nbsp;Revision)" instead of a real
+space. Fixed with html.unescape() at the 3 call sites that surface
+this field (the main title, plus 2 "no EPUB available" error
+messages). Confirmed the resulting real U+00A0 non-breaking-space
+character IS natively provided by DejaVu Sans Condensed (checked via
+TTF_GlyphIsProvided32, not assumed) before shipping, so this doesn't
+trade one display bug for a missing-glyph box. Scanned 181 real items
+across 3 other categories (regular browse/search path, not the manual-
+code path) for the same issue -- came back clean, so this was isolated
+to lookup_pub_code().
+(2) NEW: X-Help overlay (SCREEN_DOWNLOAD_HELP / draw_download_help())
+on the Download Sources, Categories, and Browse screens -- Kaleb: "this
+code thing is confusing". Plain-language explanation of Search (Y) vs.
+manual Pub Code entry (SELECT -- see v0.1.156 below for why this isn't
+Y), with real examples (wcg, nwt) and where to find a pub code (the
+last segment of a wol.jw.org publication URL). Scrolls if it overflows
+at large Font Size (confirmed via pixel readback across all 7 sizes --
+only 28pt/32pt actually need it, 4 and 10 lines respectively, both
+clamp correctly). B returns to whichever of the 3 screens opened it
+(app.dl_help_return_screen), not always the same one.
+
+v0.1.156 BUG FIX (Kaleb's follow-up question on the Help text: "when
+can you use title: search, I thought it was all codes all the time?"):
+that confusion turned out to be a REAL, pre-existing bug the Help
+screen had unknowingly documented as if it were correct behavior.
+jw_fetch.py declares BOTH SUPPORTS_CATEGORIES=True and
+SUPPORTS_MANUAL_CODE=True. handle_button()'s Y-button elif chain
+checked SUPPORTS_CATEGORIES before SUPPORTS_MANUAL_CODE, so for the
+live JW_PLUGIN config, Y ALWAYS took the category-search branch --
+manual pub-code entry was completely unreachable through normal
+navigation. Confirmed directly: simulated pressing Y on a real
+category ("Books & Brochures") landed on "Search Books & Brochures",
+never the code screen. Worse, the hint bar's OWN text (built
+separately, a different elif chain that never checked
+SUPPORTS_CATEGORIES at all) claimed "Y Enter Code" in this exact
+situation -- the displayed hint and the real Y behavior had drifted
+apart, which is exactly what made this feel confusing rather than
+simply undiscoverable. Fixed by moving manual code entry to its own
+button, SELECT (unused on this screen), so category-scoped search (Y)
+and manual pub-code lookup (SELECT) are both independently reachable
+instead of one silently shadowing the other; corrected the hint-bar
+logic to add the missing SUPPORTS_CATEGORIES branch (now correctly
+shows "Y Search") and to advertise "SELECT Code" as its own item.
+Updated the Help screen text to match (PUB CODE is now documented
+under SELECT, not Y). Confirmed via direct simulation: Y now opens
+"Search Books & Brochures", SELECT independently opens the pub-code
+prompt, and a real code (wcg) submitted through the SELECT path still
+resolves correctly end-to-end. Also confirmed the new, slightly
+longer Browse hint string (84 chars) stays comfortably under both
+existing hint-bar calibration strings (98/106 chars), so no additional
+calibration change was needed for it to display without clipping.
+
+v0.1.157: same shadowing pattern as v0.1.156, found from Kaleb asking
+"so when does category topic search even get used?" -- gutenberg_fetch.py
+declares BOTH SUPPORTS_SEARCH=True and SUPPORTS_CATEGORIES=True, and
+the Y-button elif chain checked SUPPORTS_SEARCH first, so Gutenberg
+always hit the generic "Search Project Gutenberg" branch -- the
+category-scoped "Search {category}" branch was unreachable for it,
+mirroring exactly how SUPPORTS_CATEGORIES had shadowed
+SUPPORTS_MANUAL_CODE for JW. Confirmed directly: opened Gutenberg's
+"Adventure" category, pressed Y -- prompt said "Search Project
+Gutenberg", not "Search Adventure". UNLIKE the JW case, this was
+cosmetic rather than functional: both branches call the identical
+app.start_search(value), which already threads self.dl_category
+through regardless of which branch's prompt opened the box --
+confirmed by actually searching "island" inside Adventure and getting
+correctly-scoped results (Treasure Island, etc.) even with the
+mislabeled prompt. Fixed anyway since a mismatched label is exactly
+the kind of thing that reads as confusing even when nothing is
+actually broken: merged the two elif branches into one -- label is
+now "Search {category}" whenever a category is currently open
+(regardless of which flag(s) got the plugin there), else "Search
+{plugin name}", matching what start_search() actually does either
+way. Confirmed via direct simulation: Gutenberg/Adventure now shows
+"Search Adventure" and searches stay correctly scoped; JW/Books &
+Brochures is unaffected ("Search Books & Brochures", as before); the
+no-category fallback (plain plugin name) still works too. Also
+checked jw_fetch.py's MANUAL_CODE_HINT text (the pub-code entry
+screen's own on-screen format hint) for the same kind of confusion --
+already solid (concrete worked examples, previously revised for
+exactly this reason per its own comment history), no change needed.
+
+v0.1.158: added 12 new publications to STATIC_PUBLICATIONS, per Kaleb's
+request. All 12 verified LIVE against GETPUBMEDIALINKS before being
+added (real pubName + confirmed EPUB availability via an actual API
+round-trip for each) -- pub codes were NOT just taken on faith from the
+download URLs Kaleb supplied, matching this project's standing rule.
+6 of Kaleb's requested titles (rr, ia, jr, jd, bt, mbs) were already
+present from an earlier session -- only the missing 12 (lr, my, th,
+rj, ypq, hf, yc, mb, hl, ll, lc, lf) were added. All filed under
+CATEGORY_BOOKS ("Books & Brochures") since that's the only category
+this plugin has for both books and brochures -- there's no separate
+CATEGORY_BROCHURES to split Kaleb's two supplied lists into. Confirmed
+no duplicate pub codes anywhere in the resulting 46-entry list, that
+all 12 appear correctly in a real list_items(category=CATEGORY_BOOKS)
+call (36 items total, up from 24), and that the Books & Brochures
+Download Browse screen renders the larger list cleanly at all 7 Font
+Sizes with no errors.
+
+v0.1.159: extended Awake! ("g") back issues to Sept 2011, per Kaleb's
+request to check Watchtower/Awake!/Watchtower Study back to 2011.
+EVERY month 2011-2015 individually checked against GETPUBMEDIALINKS
+for all three pub codes (w, wp, g) -- not spot-checked, all 180
+month-checks done live. Result at the time: Watchtower ("w") and
+Public Watchtower ("wp") appeared 100% 404 for the entire 2011-2015
+range. Awake! ("g") IS available: 404 through Aug 2011, then HTTP 200
+every month from Sept 2011 through Dec 2015 (52 consecutive months,
+zero gaps). Added AWAKE_MONTHLY_START/END and
+generate_awake_monthly_issues(), wired into list_items()'s Awake
+branch alongside the existing 2016+ AWAKE_BACK_ISSUES list -- Awake!
+category now shows 80 total back issues (up from 28), no duplicates.
+IMPORTANT CORRECTION -- see v0.1.160 immediately below: the "w"/"wp"
+100%-404 finding above was actually a false negative caused by testing
+the wrong issue-code FORMAT, not a real absence of EPUB content.
+
+v0.1.160 BUG FIX / CORRECTION to v0.1.159: Kaleb supplied a real
+working URL (w_E_20151215.epub) that revealed the true pre-2016
+Watchtower issue-code format is DAY-based (YYYYMMDD), not month-only
+(YYYYMM) -- the v0.1.159 check used month-only for the pre-2016 sweep
+too (copied from the 2016+ format) and got 100% 404 as a result, wrongly
+concluding EPUB didn't exist before 2016 for either edition. Re-swept
+EVERY month 2011-2015 with the corrected day-based format for both
+pub codes: Study Watchtower ("w") always uses day 15
+(w_E_YYYYMM15.epub), Public Watchtower ("wp") always uses day 1
+(wp_E_YYYYMM01.epub) -- both confirmed HTTP 200 with a real EPUB for
+all 52 consecutive months, Sept 2011 through Dec 2015, zero gaps
+(Aug 2011 and earlier still genuinely 404 for both). Also confirmed
+the Jan 2016 boundary is clean: the day-based codes 404 from Jan 2016
+on, while the existing month-only codes succeed from exactly that
+point -- no overlap between the two eras. Added
+WATCHTOWER_MONTHLY_START/END, W_DAY/WP_DAY constants, and
+generate_w_pre2016_issues()/generate_wp_pre2016_issues(), wired into
+list_items()'s Watchtower branch alongside the existing 2016+
+generators. CATEGORY_WATCHTOWER now shows 259 total items (179 "w" +
+80 "wp", up from roughly a third that before), no duplicate issues.
+Confirmed via real list_items(category=CATEGORY_WATCHTOWER) call and
+rendered the full 259-item list through draw_download_browse() at all
+7 Font Sizes with no errors.
+
+v0.1.161 BUG FIX (Kaleb's report: NWT chapters -- especially Psalms --
+opening "a couple lines in" rather than at the true top, worse for
+Hebrew/poetry-heavy formatting). Root cause traced structurally (char
+offsets and line counts only -- never the actual scripture text):
+_ensure_page_built()'s anchor-based scroll positioning (used by
+_jump_chapter() and TOC taps) unconditionally applied a "look back 2
+lines from the target" adjustment, regardless of how far the target
+actually was from the top of the page. Each Bible chapter already
+lives in its own split file with a "chapterN" anchor placed at verse
+1 -- so any heading/superscription content BEFORE that anchor was
+silently hidden except for its last 2 lines. Checked all 150 Psalms
+structurally: 120 of 150 (80%) have MORE than 2 lines of such content
+before their anchor -- Psalm 1 alone has 8, landing scroll at 6
+instead of 0. This is NOT actually Hebrew-specific -- it's a general
+property of anchor-vs-heading placement that only becomes visible
+once there's more than 2 lines of pre-anchor content, which happens
+to be common in Psalms/poetry but isn't caused by the Hebrew glyph
+support itself. Confirmed Bible-wide, not just Psalms, per Kaleb's
+request to check recursively: swept ALL 1189 anchor-based chapter nav
+points across the entire NWT (every book, not a sample) -- before the
+fix, many were nonzero; after the fix, zero exceptions. Fix: only
+apply the 2-line lookback when the anchor target is actually off-
+screen (target_line >= body_rows) -- when it's already within the
+first screen (the overwhelming majority of fresh chapter-opens), scroll
+stays 0, showing all heading content from the true top, matching what
+_jump_chapter() already intended (it explicitly sets self.scroll = 0
+right after goto(), which this code was silently overwriting).
+Confirmed the legitimate deep-anchor case (bookmark restore, a
+same-file link far down a long combined page) still gets the helpful
+lookback: synthetic off-screen target in Psalm 119 (chosen for being
+the Bible's longest chapter) still landed at exactly target_line - 2,
+unaffected. Full app regression and the Courage+NWT deep bug-check
+both re-run clean after this change.
+
+v0.1.162 BUG FIX (Kaleb's question: "would a reference at the complete
+end of an article scroll back off the screen now that we have the
+100% scroll fix?"). Turned out to be a real, related bug -- same class
+as v0.1.154 (page_down()'s pct>100% overshoot), reachable through a
+DIFFERENT path that v0.1.154 never touched. Confirmed directly: a
+target on the very last line of Psalm 119 (737 lines, body_rows=24)
+landed scroll at 734 via the anchor/bookmark-restore path -- but the
+ceiling page_down()/the pct display both use is only 713, so pct read
+102% again, just via a footnote/cross-reference jump instead of a
+page-turn button press. The target itself stayed visible either way
+(mathematically guaranteed for a true end-of-chapter position), so
+this was a pct-display bug, not a content-hiding one. Root cause:
+neither of _ensure_page_built()'s two scroll-setting branches
+(bookmark-restore, anchor-jump) clamped their result against the same
+ceiling page_down() respects -- each computed target_line from raw
+document position with no awareness of it. Fix: added one clamp,
+`self.scroll = min(self.scroll, max(0, len(self._lines) - body_rows))`,
+applied once after both branches, matching page_down()'s own formula
+exactly. Confirmed via the same real Psalm 119 test: scroll now clamps
+to exactly 713, pct reads exactly 100% (never over), and the target
+is still fully visible -- now at the bottom of the screen rather than
+near the top, which is the more natural place for the literal last
+thing in a chapter to sit. Reran the full recursive Bible-wide check
+from v0.1.161 with this same end-of-chapter scenario: swept all 1189
+anchor-based chapters, testing a jump to each chapter's own last line
+-- zero problems across the board (no pct>100%, no scroll exceeding
+the ceiling, target always visible). Full app regression and the
+Courage+NWT deep bug-check both re-run clean after this change too.
 
 UI: 5 color themes (Default, Dim Warm, Deep Amber, Red Shift, Adventure)
 via THEMES list + apply_theme(index) -- rebinds module-level COL_*
@@ -269,12 +1063,17 @@ or intended behavior is not fully clear from evidence already gathered
 present theories as confirmed fixes. Don't start editing code on an
 ambiguous request -- ask first, then act once confirmed.
 
-VERSION NUMBERING: The "CURRENT STATE (vX)" line near the top of this
-docstring is the single source of truth for the current version number
-now that there's no separate changelog to cross-check against. Before
-assigning a new version number, confirm that line, then grep this file
-for "# v0.1." to sanity-check no inline comment references a higher
-number (would mean the header itself went stale).
+VERSION NUMBERING (scheme changed v26.07.09.01): format is YY.MM.DD.XX
+-- today's date plus a same-day counter (01, 02, 03...) that resets each
+new calendar day. The "CURRENT STATE" line near the top of this docstring
+is the single source of truth for the current version. Before assigning
+a new version number: (1) confirm today's real date rather than assuming,
+(2) grep this file for inline "# vYY.MM.DD." comments to find the
+highest existing date+counter and sanity-check the header line hasn't
+gone stale, (3) if it's the same calendar day as the last entry,
+increment XX; if it's a new day, reset to 01. Pre-scheme-change history
+(v0.1.1 through v0.1.162) stays in old format, untouched -- don't
+renumber it.
 
 START is deliberately unbound outside the Reader screen -- reserved for
 the downloader plugin trigger, which ended up bound to Library-screen L2
@@ -300,6 +1099,7 @@ import json
 import time
 import threading
 import bisect
+import pickle
 import hashlib
 import glob
 import queue
@@ -350,6 +1150,7 @@ threading.excepthook = _thread_excepthook
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
+    import epub_engine
     from epub_engine import EpubDocument, ReaderState, TocEntry
     from mini_jpeg import decode_jpeg as _decode_jpeg_pure_python, peek_jpeg_size
 except Exception:
@@ -482,6 +1283,47 @@ LIBRARY_CACHE_PATH = os.path.join(DATA_DIR, "library_cache.json")
 PINNED_PATH = os.path.join(DATA_DIR, "pinned.json")
 ANCHOR_CACHE_DIR = os.path.join(DATA_DIR, "anchor_cache")
 IMG_CACHE_DIR = os.path.join(DATA_DIR, "img_cache")
+# v26.07.09.18: disk cache for WRAPPED (laid-out) page results, but ONLY
+# for genuinely extreme pages (see LARGE_PAGE_LOADING_THRESHOLD) -- NOT
+# a general-purpose cache like IMG_CACHE_DIR. Confirmed via real
+# measurement: this only ever applies to ~2% of pages across a real
+# library (2 pages found across 6 whole books tested), and costs single-
+# digit MB per page (6.37MB for the single largest page found, Enjoy
+# Life Forever's "Track Your Bible Reading"). Kaleb's explicit request:
+# keep this narrow -- extreme pages only, not a blanket disk cache.
+WRAP_CACHE_DIR = os.path.join(DATA_DIR, "wrap_cache")
+# v26.07.09.17/.18/.20/.21: threshold (in characters) above which a page
+# (a) shows a loading screen with a live percentage before the
+# synchronous wrap (draw_reader()) and (b) is persisted to WRAP_CACHE_DIR
+# so that cost is only ever paid ONCE per (book, page, font size), not
+# every visit. v26.07.09.21 CORRECTION: v26.07.09.20's 50K was based on
+# a mistaken cross-book comparison (Kaleb clarified all his real timing
+# numbers were actually Enjoy Life Forever's "Track Your Bible Reading"
+# page throughout, at two font sizes -- not two different books/pages as
+# I'd assumed). Real, consistent numbers for that ONE 4,532,633-char
+# page: 85s cold wrap at the largest font, 78s at 21pt -- both ~17-19
+# microseconds/char, and confirmed via direct sandbox measurement
+# (same page, same two font sizes) that this scales linearly and
+# consistently, no anomaly. Kaleb's own criteria: pages estimated over
+# ~2.5s get the loading screen+counter; pages over ~5s get pre-rendered
+# at book-open instead of waited for on-demand (see
+# PRERENDER_THRESHOLD below). Using the slightly-slower 18.8 us/char
+# (largest-font) rate for both, conservatively:
+#   2.5s / 18.8us = ~133,000 chars -- LARGE_PAGE_LOADING_THRESHOLD
+#   5.0s / 18.8us = ~266,000 chars -- PRERENDER_THRESHOLD
+LARGE_PAGE_LOADING_THRESHOLD = 133_000
+# v26.07.09.21: pages over this size are wrapped proactively when the
+# book is OPENED (see App._prerender_extreme_pages_scan(), backgrounded
+# since it's pure XML parsing/zip reads -- no SDL_ttf calls, unlike the
+# wrap itself -- see that method's docstring for why this needed its own
+# background-thread safety check, same class of risk the chapter-nav
+# scan already ran into once), rather than waited for on first
+# navigation. Both extremely rare in practice: exhaustive scan across
+# Kaleb's whole tested library (4,980 real pages) found only 14 pages
+# over the OLD 100K threshold, so pre-rendering the handful over 266K
+# adds negligible book-open cost for the vast majority of books that
+# have zero qualifying pages at all.
+PRERENDER_THRESHOLD = 266_000
 # Deliberately a sibling of library/ and data/, not buried inside data/ --
 # the whole point of a backup is being easy to find and copy off the
 # device (SD card swap, USB, another file manager) without having to know
@@ -606,6 +1448,16 @@ TTF.TTF_SizeUTF8.restype = ctypes.c_int
 TTF.TTF_CloseFont.argtypes = [ctypes.c_void_p]
 TTF.TTF_FontHeight.restype = ctypes.c_int
 TTF.TTF_FontHeight.argtypes = [ctypes.c_void_p]
+# v0.1.151: for runtime "does the ACTIVE font actually have this glyph"
+# checks (drives the glyph-substitution system below) rather than
+# hardcoding substitutions based on whichever font happened to be
+# bundled at the time someone last checked. TTF_GlyphIsProvided32 takes
+# a full Uint32 codepoint (unlike the older 16-bit TTF_GlyphIsProvided,
+# which can't represent anything above the Basic Multilingual Plane
+# ceiling some of these symbols sit near) and returns the glyph index,
+# or 0 if the font has no glyph for that codepoint.
+TTF.TTF_GlyphIsProvided32.restype = ctypes.c_int32
+TTF.TTF_GlyphIsProvided32.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
 SDL.SDL_CreateRGBSurfaceFrom.restype = ctypes.c_void_p
 SDL.SDL_CreateRGBSurfaceFrom.argtypes = [
     ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -616,16 +1468,28 @@ HAS_TTF = TTF.TTF_Init() == 0
 _boot_log(f"TTF_Init: {'OK' if HAS_TTF else 'FAILED -- ' + SDL.SDL_GetError().decode('utf-8', errors='replace')}\n")
 
 FONT_PATHS = [
-    # Bundled first now -- per explicit request to bundle rather than
-    # depend on system paths "to prevent issues". Justified by real
-    # device evidence (not assumption): a file-manager screenshot of this
-    # exact device showed /usr/share/fonts/truetype/dejavu/ completely
-    # empty (just .uuid) -- DejaVu was NEVER actually present on this
-    # hardware in either Sans or Mono form, meaning every earlier
-    # DejaVu-first FONT_PATHS ordering was silently falling through to
-    # later entries the whole time. Liberation Sans (proportional, not
-    # Mono) confirmed present on-device and is the actual look the person
-    # asked for, matching the original v0.1.0-era screenshots they liked.
+    # v0.1.152: switched from DejaVu Sans to DejaVu Sans Condensed --
+    # same 5,918-glyph coverage (confirmed via direct cmap check, not
+    # assumption -- unlike DejaVu SERIF Condensed, which was also
+    # checked and rejected: smaller glyph set, missing 4 of our 6 target
+    # glyphs, and zero Hebrew coverage. "Condensed" doesn't mean the
+    # same thing across DejaVu's Sans vs Serif branches). Narrower
+    # letterforms than regular DejaVu Sans, closer in spirit to the
+    # original Liberation Sans proportions Kaleb preferred, while
+    # keeping every glyph gap closed (Dingbats/Geometric Shapes,
+    # box-drawing dividers, full Hebrew block) with real native glyphs
+    # -- no substitution table entries are active for this font either
+    # (see the dynamic TTF_GlyphIsProvided32 check below).
+    # v0.1.151: bundled font switched from Inter to DejaVu Sans (public
+    # domain-ish Bitstream Vera-derived license, see FONT_LICENSE.txt).
+    # Confirmed via direct cmap inspection: DejaVu covers every glyph
+    # gap found across all 15 of Kaleb's real EPUBs natively (index/
+    # schedule bullets, discussion-bullets, breadcrumb arrows, checkbox
+    # ticks, box-drawing divider lines, and the full Hebrew block used
+    # in Psalm acrostic headers). Inter and Arimo were both checked and
+    # rejected for this role specifically because neither bundles
+    # Dingbats/Geometric Shapes or Hebrew -- that's a real, verified gap
+    # in those fonts, not a bundling oversight.
     os.path.join(APP_DIR, "assets", "font.ttf"),
     "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -685,6 +1549,62 @@ if FONT_PATH is None:
         "--- END ---\n"
     )
 
+# v0.1.151: DYNAMIC glyph-substitution table -- replaces the old
+# hardcoded-per-font approach (v0.1.149/150 assumed Liberation Sans,
+# then Inter, lacked these glyphs; each font swap needed a manual
+# re-audit of every known problem book). Instead, this checks the
+# ACTIVE bundled font's real cmap via TTF_GlyphIsProvided32 once at
+# startup and only substitutes codepoints it's actually missing --
+# e.g. DejaVu Sans (as of v0.1.151) has every one of these natively, so
+# this table ends up empty and epub_engine.py renders the real glyphs
+# untouched. If a future font swap brings back a gap, this catches it
+# automatically without another manual per-book audit.
+# candidate -> (substitute, human label for the boot log)
+_GLYPH_SUB_CANDIDATES = {
+    0x2024: (0x00B7, "ONE DOT LEADER -> MIDDLE DOT"),
+    0x2750: (0x25A0, "UPPER RIGHT DROP-SHADOWED WHITE SQUARE -> BLACK SQUARE"),
+    0x25B8: (0x2023, "BLACK RIGHT-POINTING SMALL TRIANGLE -> TRIANGULAR BULLET"),
+    0x25FC: (0x25A0, "BLACK MEDIUM SQUARE -> BLACK SQUARE"),
+    0x27A4: (0x2192, "BLACK RIGHTWARDS ARROWHEAD -> RIGHTWARDS ARROW"),
+    0x2714: (0x2713, "HEAVY CHECK MARK -> CHECK MARK"),
+}
+_ACTIVE_GLYPH_SUBS = {}
+if HAS_TTF and FONT_PATH:
+    _probe_font = TTF.TTF_OpenFont(FONT_PATH.encode(), 18)
+    if _probe_font:
+        for _cp, (_sub_cp, _label) in _GLYPH_SUB_CANDIDATES.items():
+            if not TTF.TTF_GlyphIsProvided32(_probe_font, _cp):
+                _ACTIVE_GLYPH_SUBS[chr(_cp)] = chr(_sub_cp)
+                _boot_log(f"glyph sub ACTIVE: {_label} (font lacks U+{_cp:04X})\n")
+            else:
+                _boot_log(f"glyph sub not needed: font has U+{_cp:04X} natively\n")
+        TTF.TTF_CloseFont(_probe_font)
+    else:
+        # Can't probe -- fail safe by assuming all candidates need
+        # substituting, same as the old hardcoded behavior, rather than
+        # risking tofu boxes with no fallback at all.
+        _boot_log("glyph sub: probe font failed to open, substituting all candidates as a safe default\n")
+        _ACTIVE_GLYPH_SUBS = {chr(cp): chr(sub) for cp, (sub, _l) in _GLYPH_SUB_CANDIDATES.items()}
+
+# Also verify the three hardcoded Library-screen icon glyphs (pin heart,
+# continue-reading pointer, finished checkmark -- drawn directly in
+# draw_library(), not routed through the substitution table above since
+# they're app UI chrome, not EPUB content). No fallback is wired up for
+# these today because every font checked so far (Liberation, Inter,
+# DejaVu) has all three -- but this logs a boot warning rather than
+# staying silent if a future font swap ever breaks that assumption, so
+# it surfaces immediately instead of needing another manual screenshot
+# audit to notice.
+if HAS_TTF and FONT_PATH:
+    _probe_font2 = TTF.TTF_OpenFont(FONT_PATH.encode(), 18)
+    if _probe_font2:
+        for _cp, _label in [(0x2665, "pin heart"), (0x25BA, "continue-reading pointer"), (0x2713, "finished checkmark")]:
+            if not TTF.TTF_GlyphIsProvided32(_probe_font2, _cp):
+                _boot_log(f"WARNING: Library icon glyph U+{_cp:04X} ({_label}) missing from active font -- will render as tofu, no fallback wired up\n")
+        TTF.TTF_CloseFont(_probe_font2)
+
+epub_engine.set_active_glyph_subs(_ACTIVE_GLYPH_SUBS)
+
 # ============================================================
 # Screen size / scaling (matches sorter's 720x720 reference-scale pattern)
 # ============================================================
@@ -715,7 +1635,18 @@ def _sy(n): return max(1, int(n * _SY))
 THEMES = [
     {
         "name": "Default",
-        "bg": (18, 18, 22), "panel": (28, 28, 34), "text": (225, 225, 230),
+        # v26.07.10.10: bg lightened from (18,18,22) to (43,43,50) --
+        # Kaleb's request, after iterating live through several contrast
+        # targets (3:1 -> 2.7:1 -> 2.2:1 -> 1.9:1 -> settled on 1.5:1,
+        # "subtle but just barely noticeable") so _draw_screen_frame()'s
+        # corner mask (reverted to pure black this same session, see its
+        # own docstring) reads as a visible edge instead of disappearing
+        # into an almost-identical near-black bg. Measured: 1.49:1
+        # against pure black -- deliberately BELOW the WCAG 3:1 UI
+        # minimum discussed earlier in the session; this was an explicit
+        # aesthetic choice (subtle, not a strong edge), not an
+        # accessibility target.
+        "bg": (43, 43, 50), "panel": (28, 28, 34), "text": (225, 225, 230),
         "dim": (140, 140, 150), "link": (61, 125, 118), "link_sel": (222, 178, 108),
         # v0.1.130: hint_bg/hint_text dimmed (Kaleb: hint bar felt too bright/
         # prominent) -- hint_bg lifted from "bg minus ~8" to "bg minus 3" so
@@ -742,7 +1673,9 @@ THEMES = [
         # ~2700K-ish warm gray/amber -- gentle general night reading,
         # not as aggressive as the two below.
         "name": "Dim Warm",
-        "bg": (26, 20, 16), "panel": (36, 29, 23), "text": (201, 184, 150),
+        # v26.07.10.10: bg lightened, same reasoning/session as Default
+        # theme above -- see its comment. 1.50:1 against pure black.
+        "bg": (52, 42, 33), "panel": (36, 29, 23), "text": (201, 184, 150),
         "dim": (140, 120, 95), "link": (217, 148, 74), "link_sel": (240, 190, 120),
         # v0.1.130: see Default theme's comment. This theme's exact "dim"
         # tone (140,120,95) only measured 4.43:1 against the new hint_bg --
@@ -761,7 +1694,9 @@ THEMES = [
     {
         # Strong blue-light reduction, sepia/candlelight feel.
         "name": "Deep Amber",
-        "bg": (20, 16, 12), "panel": (30, 23, 16), "text": (184, 122, 61),
+        # v26.07.10.10: bg lightened, same reasoning/session as Default
+        # theme above -- see its comment. 1.50:1 against pure black.
+        "bg": (53, 42, 30), "panel": (30, 23, 16), "text": (184, 122, 61),
         "dim": (130, 92, 55), "link": (201, 120, 46), "link_sel": (230, 165, 80),
         # v0.1.130: see Default theme's comment. This theme's exact "dim"
         # tone only measured 3.26:1 against the new hint_bg -- well under
@@ -778,7 +1713,12 @@ THEMES = [
         # Near-zero blue channel -- the most aggressive option, meant
         # for right before sleep.
         "name": "Red Shift",
-        "bg": (16, 8, 8), "panel": (24, 12, 12), "text": (176, 90, 74),
+        # v26.07.10.10: bg lightened, same reasoning/session as Default
+        # theme above -- see its comment. 1.50:1 against pure black.
+        # Specifically called out by Kaleb during this session as the
+        # theme to double-check ("if they were in red shift it will
+        # render properly") -- confirmed via direct pixel readback.
+        "bg": (62, 37, 37), "panel": (24, 12, 12), "text": (176, 90, 74),
         "dim": (120, 60, 50), "link": (196, 90, 70), "link_sel": (214, 120, 90),
         # v0.1.130: see Default theme's comment. This theme's exact "dim"
         # tone only measured 2.39:1 against the new hint_bg -- the worst
@@ -800,7 +1740,9 @@ THEMES = [
         # no official studio palette exists, so treat as close
         # approximations, not exact brand colors.
         "name": "Adventure",
-        "bg": (14, 14, 16), "panel": (26, 26, 30), "text": (180, 200, 190),
+        # v26.07.10.10: bg lightened, same reasoning/session as Default
+        # theme above -- see its comment. 1.49:1 against pure black.
+        "bg": (43, 43, 50), "panel": (26, 26, 30), "text": (180, 200, 190),
         "dim": (140, 145, 142), "link": (68, 176, 151), "link_sel": (255, 236, 71),
         # v0.1.130: see Default theme's comment.
         # v0.1.147: same "grey, not near-black" request as the other 4
@@ -1006,6 +1948,17 @@ class FontManager:
     @property
     def ui_heading(self):
         return self.heading
+
+    @property
+    def splash_title(self):
+        """v26.07.10.07: boot splash's "PICO READER" title, 50% bigger
+        than ui_heading (Kaleb's request -- title only, not the face or
+        subtitle above/below it). Built the same way heading/ui_heading
+        already are (a plain _get() call off SIZE_STEPS[size_index]),
+        not a fixed pixel value, so it still scales with the Font Size
+        setting like every other UI font in this app -- confirmed via
+        this session's test sweep that it fits SW at every step."""
+        return self._get(int((self.SIZE_STEPS[self.size_index] + 6) * 1.5))
 
     def bigger(self):
         self.size_index = min(len(self.SIZE_STEPS) - 1, self.size_index + 1)
@@ -1320,6 +2273,15 @@ def delete_book_cache(book_id_value):
                     os.remove(path)
                 except OSError:
                     pass
+    if os.path.isdir(WRAP_CACHE_DIR):
+        for fname in os.listdir(WRAP_CACHE_DIR):
+            if fname.startswith(prefix):
+                path = os.path.join(WRAP_CACHE_DIR, fname)
+                try:
+                    freed += os.path.getsize(path)
+                    os.remove(path)
+                except OSError:
+                    pass
     return freed
 
 
@@ -1378,10 +2340,26 @@ class ImageLoader:
                   # below chooses per-image based on its actual dimensions.
     MAX_CACHE_BYTES = 500 * 1024 * 1024  # 500MB cap on the on-disk image cache
                                           # (raised from 200MB v0.1.51 -- 32GB SD)
-    MAX_INMEMORY_IMAGES = 80  # ~80 decoded images kept in RAM at once (at
-                               # typical real sizes from _pick_scale_n, that's
-                               # roughly 20-32MB) -- raised from 60 v0.1.51.
-                               # Unbounded before v0.1.48.
+    MAX_INMEMORY_IMAGES = 32  # v26.07.09.13: raised from 24 -- Kaleb wanted
+                               # more headroom for fewer CPU-costly re-
+                               # decodes when scrolling back through
+                               # recently-viewed images (real concern given
+                               # Disk Cache is OFF by default, so a cache
+                               # miss means a full re-decode, not a cheap
+                               # disk re-read). Worst case (every slot a
+                               # native ~11MB decode) is ~352MB -- stacked
+                               # with the separate GPU texture cache's own
+                               # ~178MB worst case (MAX_IMAGE_TEXTURES=12),
+                               # that's ~530MB before the rest of the app/
+                               # OS. Considered 50 (~550MB alone, ~728MB+
+                               # stacked) but that starts crowding the 1GB
+                               # budget in a genuinely bad case; 32 is a
+                               # real increase over the previous 24 without
+                               # reaching that territory. Real average use
+                               # is far below either worst case -- most
+                               # entries are ordinary inline images
+                               # (~250-400KB), not native maximize-mode
+                               # decodes.
 
     # Target size used to PICK a decode resolution. Through v0.1.79 this
     # was deliberately smaller than the real on-screen image box
@@ -1626,7 +2604,13 @@ class ImageLoader:
         cache_file = self._cache_path(key, "full")
         return os.path.exists(cache_file) and os.path.exists(cache_file + ".meta")
 
-    def request(self, key, jpeg_bytes, priority=PRIORITY_VISIBLE):
+    def request(self, key, jpeg_bytes, priority=PRIORITY_VISIBLE, force_scale_n=None):
+        """v26.07.09.07: force_scale_n lets a caller bypass _pick_scale_n()'s
+        target-box-based choice and demand a specific decode scale
+        instead -- used by Image Maximize Mode to request scale_n=8
+        (true native resolution) regardless of what the shared inline
+        target box would otherwise pick. None (default) preserves every
+        existing caller's behavior unchanged."""
         with self._lock:
             existing = self._results.get(key)
             if existing is not None:
@@ -1640,12 +2624,12 @@ class ImageLoader:
                 if priority < existing.get("priority", self.PRIORITY_PREFETCH):
                     existing["priority"] = priority
                     self._pending_counts[priority] += 1
-                    self._queue.put((priority, next(self._seq_counter), key, jpeg_bytes))
+                    self._queue.put((priority, next(self._seq_counter), key, jpeg_bytes, force_scale_n))
                 return
             self._results[key] = {"thumb": "loading", "full": None, "priority": priority,
                                    "requested_at": time.time()}
             self._pending_counts[priority] += 1
-        self._queue.put((priority, next(self._seq_counter), key, jpeg_bytes))
+        self._queue.put((priority, next(self._seq_counter), key, jpeg_bytes, force_scale_n))
 
     # v0.1.66 -- Small sleep inserted between PRERENDER decodes only.
     # Doesn't slow down real reading (VISIBLE/PREFETCH are never delayed),
@@ -1657,7 +2641,7 @@ class ImageLoader:
 
     def _worker_loop(self):
         while True:
-            priority, _seq, key, jpeg_bytes = self._queue.get()
+            priority, _seq, key, jpeg_bytes, force_scale_n = self._queue.get()
             with self._lock:
                 self._pending_counts[priority] -= 1
 
@@ -1675,13 +2659,13 @@ class ImageLoader:
                 if urgent_waiting:
                     with self._lock:
                         self._pending_counts[priority] += 1
-                    self._queue.put((priority, next(self._seq_counter), key, jpeg_bytes))
+                    self._queue.put((priority, next(self._seq_counter), key, jpeg_bytes, force_scale_n))
                     self._queue.task_done()
                     time.sleep(0.01)  # brief yield, avoid a busy spin
                     continue
 
             try:
-                self._process(key, jpeg_bytes, priority)
+                self._process(key, jpeg_bytes, priority, force_scale_n=force_scale_n)
                 self._evict_if_needed()
             except Exception as e:
                 _boot_log(f"image worker error for {key}: {e}\n")
@@ -1711,14 +2695,27 @@ class ImageLoader:
                     continue  # still in flight, don't evict
                 del self._results[k]
 
-    def _process(self, key, jpeg_bytes, priority):
+    def _process(self, key, jpeg_bytes, priority, force_scale_n=None):
+        """v26.07.09.07: force_scale_n bypasses _pick_scale_n() below --
+        used for Image Maximize Mode's native-resolution requests. Both
+        is_relevant() checks in this method are ALSO skipped when
+        force_scale_n is set: is_relevant is keyed against
+        App._visible_image_keys, which only ever tracks the CURRENT
+        page's INLINE image keys -- a native-suffixed key
+        (App._img_key(src) + _IMGVIEW_NATIVE_KEY_SUFFIX) can never appear
+        in that set, so without this bypass every native request would
+        look "irrelevant" and get silently dropped or refused its
+        full-res upgrade the instant it was requested. A native request
+        is inherently "the one image the user is looking at right now"
+        -- there's no equivalent of "scrolled past it already" the way
+        there is for inline images arriving off-screen."""
         with self._lock:
             entry = self._results.get(key)
             if entry is not None and isinstance(entry.get("full"), tuple):
                 return  # already fully resolved by an earlier queue entry for this key
 
-        if priority == self.PRIORITY_VISIBLE and self.is_relevant is not None \
-                and not self.is_relevant(key):
+        if force_scale_n is None and priority == self.PRIORITY_VISIBLE \
+                and self.is_relevant is not None and not self.is_relevant(key):
             # user has already navigated away from this page -- drop the
             # placeholder so a fresh request can be made if it becomes
             # visible again later, and skip decoding entirely
@@ -1743,7 +2740,8 @@ class ImageLoader:
             return
 
         peeked = peek_jpeg_size(jpeg_bytes)
-        full_n = self._pick_scale_n(*peeked) if peeked else self.FULL_N
+        full_n = force_scale_n if force_scale_n is not None else (
+            self._pick_scale_n(*peeked) if peeked else self.FULL_N)
 
         if full_n <= 4:
             # Small enough on-screen that the "instant DC-only thumb, then
@@ -1780,8 +2778,8 @@ class ImageLoader:
         # thumb decode takes a fraction of a second, but if the user has
         # already scrolled past by the time it's done, don't burn the
         # remaining ~1-2s on the upgrade
-        if priority == self.PRIORITY_VISIBLE and self.is_relevant is not None \
-                and not self.is_relevant(key):
+        if force_scale_n is None and priority == self.PRIORITY_VISIBLE \
+                and self.is_relevant is not None and not self.is_relevant(key):
             with self._lock:
                 self._results[key]["full"] = "error"  # thumb stays visible, just won't upgrade
             return
@@ -1972,7 +2970,7 @@ def render_text_cached(app, renderer, font, text, color, x, y):
     return w
 
 
-def _row_h(font, pad=20):
+def _row_h(font, pad=14):
     """Row height in real pixels: current font's rendered height plus
     padding (scaled). v0.1.50 -- list/menu rows used to be fixed _sy(NN)
     constants tuned for the old fixed 18pt UI font; now that UI text
@@ -1983,7 +2981,21 @@ def _row_h(font, pad=20):
     a consistent 4px at every Font Size, which read as cramped once
     that edge became a visible curve (rounded-corner highlights, Kaleb's
     report) rather than a plain straight line. 20 gives ~8px of
-    breathing room instead, comfortably more than CORNER_RADIUS."""
+    breathing room instead, comfortably more than CORNER_RADIUS.
+    v0.1.153: default dropped 20->14 (Kaleb: "feel natural yet minimal"
+    after the DejaVu Sans Condensed switch). DejaVu's own TTF_FontHeight
+    already runs taller than Liberation Sans/Inter's did at the same pt
+    (confirmed via pixel readback across all 7 Font Sizes), so the old
+    flat +20 -- originally sized to ADD ~8px of breathing room on top of
+    a tighter font's metrics -- was now compounding on top of DejaVu's
+    already-larger box, landing at ~23-27px of dead space per row
+    (46-62% of row_h) instead of the intended ~8px. 14 restores that
+    same ~8-10px clearance per side against DejaVu's real metrics,
+    confirmed via the same pixel-readback method, no clipping at any
+    size. Affects every screen that calls _row_h() with its default pad
+    (Library, Bookmarks, Menu popup, Storage's action list, all 3
+    Download list screens) -- TOC and Storage's info-line block pass
+    their own explicit pad and are unaffected by this default change."""
     if not font:
         return _sy(44)
     return TTF.TTF_FontHeight(font) + _sy(pad)
@@ -2365,6 +3377,7 @@ def scan_library():
         for pattern in (
             os.path.join(IMG_CACHE_DIR, f"{stale_id}__*"),
             os.path.join(ANCHOR_CACHE_DIR, f"{stale_id}.json"),
+            os.path.join(WRAP_CACHE_DIR, f"{stale_id}__*"),
         ):
             for path in glob.glob(pattern):
                 try:
@@ -2492,6 +3505,10 @@ def sort_library(books, mode, pinned):
 # ============================================================
 SCREEN_LIBRARY = "library"
 SCREEN_READER = "reader"
+SCREEN_SPLASH = "splash"  # v26.07.10.05: boot splash, shown before whatever
+                    # App.__init__ would otherwise land on (Library, or
+                    # Reader if Open Last Book on Launch resolved one) --
+                    # see App.__init__'s tail and draw_splash().
 SCREEN_MENU = "menu"
 SCREEN_TOC = "toc"
 SCREEN_BOOKMARKS = "bookmarks"
@@ -2507,8 +3524,24 @@ SCREEN_DOWNLOAD_VIDEO_SOURCES = "download_video_sources"  # v0.1.110: pick
                                                # CATEGORY_VIDEOS) -- replaces
                                                # the four separate Library
                                                # Menu video entries
+SCREEN_DOWNLOAD_AUDIO_SOURCES = "download_audio_sources"  # v26.07.10.01:
+                                               # same idea as
+                                               # SCREEN_DOWNLOAD_VIDEO_SOURCES,
+                                               # reached from CATEGORY_AUDIO
+SCREEN_DOWNLOAD_AUDIO_BOOKS = "download_audio_books"  # v26.07.10.01: the
+                                               # Bible-book sub-picker for
+                                               # AUDIO_SOURCES entries
+                                               # marked "books": True --
+                                               # unlike every video source,
+                                               # NWT audio needs a booknum
+                                               # before it can list anything
 SCREEN_DOWNLOAD_BROWSE = "download_browse"    # browse/download from the
                                                # selected plugin
+SCREEN_DOWNLOAD_HELP = "download_help"  # v0.1.155: static help overlay
+                        # explaining Search vs. manual pub-code entry --
+                        # Kaleb: "this code thing is confusing". Opened
+                        # with X from Sources/Categories/Browse, returns
+                        # to whichever of those opened it.
 SCREEN_LIBRARY_MENU = "library_menu"          # START on Library -- sort
                                                # shortcuts + Download +
                                                # Storage (v0.1.29)
@@ -2526,16 +3559,61 @@ SCREEN_TEXT_ENTRY = "text_entry"              # generic D-pad letter-grid
                                                # feature; anything needing
                                                # typed input can reuse it
 
-# v0.1.110: the four things that used to each be a separate Library Menu
-# entry (Enjoy Life Forever Book Videos / Check JW Broadcasting / Check
-# Governing Body Updates / The Good News According to Jesus) -- now one
-# small picker reached via Download Books > JW > Videos. Order is
-# Kaleb's original menu order.
-VIDEO_SOURCE_ITEMS = ["Enjoy Life Forever", "JW Broadcasting",
-                      "Governing Body Updates", "The Good News According to Jesus",
-                      "Back"]
+# v26.07.09.09: VIDEO_SOURCE_ITEMS and VIDEO_SOURCE_BY_LABEL are now
+# built FROM jw_fetch.py's own VIDEO_SOURCES registry (see that file's
+# docstring) instead of hardcoding JW titles/pub codes here -- this is
+# the whole point of the registry: adding/removing a JW video source in
+# the future is a jw_fetch.py-only change, zero main.py touch needed.
+# Falls back to the OLD hardcoded 4-item list (+ conditional Search
+# Videos) if the loaded jw_fetch.py predates VIDEO_SOURCES -- same
+# defensive gating philosophy as JW_VIDEO_SUPPORTED above, so an older
+# jw_fetch.py build still works exactly as it did before this change.
+if JW_PLUGIN and hasattr(JW_PLUGIN, "VIDEO_SOURCES"):
+    VIDEO_SOURCE_BY_LABEL = {src["label"]: src for src in JW_PLUGIN.VIDEO_SOURCES}
+else:
+    # Fallback registry, used only if the loaded jw_fetch.py predates
+    # VIDEO_SOURCES -- kept so an older jw_fetch.py paired with this
+    # main.py still actually works, not just avoids crashing. In normal
+    # use this whole branch is dead code: the jw_fetch.py shipped
+    # alongside this main.py always has VIDEO_SOURCES.
+    VIDEO_SOURCE_BY_LABEL = {
+        "Enjoy Life Forever": {"loader": "list_video_items", "args": {"pub": "lffv"}},
+        "JW Broadcasting": {"loader": "list_broadcast_items", "args": {}},
+        "Governing Body Updates": {"loader": "check_new_gb_updates", "args": {}},
+        "The Good News According to Jesus": {"loader": "list_good_news_items", "args": {}},
+    }
+    if JW_PLUGIN and hasattr(JW_PLUGIN, "search_jw"):
+        VIDEO_SOURCE_BY_LABEL["Search Videos"] = {"search": True}
 
-LIBRARY_MENU_ITEMS = ["Continue Reading", "Sort: Title A-Z", "Sort: Author A-Z", "Sort: Last Read",
+if JW_PLUGIN and hasattr(JW_PLUGIN, "VIDEO_SOURCES"):
+    VIDEO_SOURCE_ITEMS = [src["label"] for src in JW_PLUGIN.VIDEO_SOURCES]
+else:
+    VIDEO_SOURCE_ITEMS = list(VIDEO_SOURCE_BY_LABEL.keys())
+VIDEO_SOURCE_ITEMS.append("Back")
+
+# v26.07.10.01: AUDIO_SOURCE_BY_LABEL/AUDIO_SOURCE_ITEMS -- same registry-
+# driven pattern as VIDEO_SOURCE_BY_LABEL above, built from jw_fetch's
+# AUDIO_SOURCES. No hardcoded-fallback branch here (unlike VIDEO_SOURCE_
+# BY_LABEL's old-jw_fetch.py compatibility path) -- AUDIO_SOURCES is new
+# in this same jw_fetch.py version, there's no older build to stay
+# compatible with.
+if JW_PLUGIN and hasattr(JW_PLUGIN, "AUDIO_SOURCES"):
+    AUDIO_SOURCE_BY_LABEL = {src["label"]: src for src in JW_PLUGIN.AUDIO_SOURCES}
+    AUDIO_SOURCE_ITEMS = [src["label"] for src in JW_PLUGIN.AUDIO_SOURCES]
+else:
+    AUDIO_SOURCE_BY_LABEL = {}
+    AUDIO_SOURCE_ITEMS = []
+AUDIO_SOURCE_ITEMS.append("Back")
+
+# v26.07.09.02: added "Pin/Unpin Selected" and "Mark Finished/Unfinished"
+# -- moved off the Library screen's persistent hint bar (X and SELECT
+# respectively) to declutter it down to the 4-5 highest-frequency
+# actions. The X/SELECT button mappings themselves are UNCHANGED and
+# still work exactly as before -- this just gives the same actions a
+# second, discoverable path via the menu, matching Delete Book's
+# existing "acts on whichever book was highlighted at START" pattern.
+LIBRARY_MENU_ITEMS = ["Continue Reading", "Pin/Unpin Selected", "Mark Finished/Unfinished",
+                       "Sort: Title A-Z", "Sort: Author A-Z", "Sort: Last Read",
                        "Sort: Recently Added", "Filter: Cycle", "Clear All Finished", "Theme +", "Theme -",
                        "Download Books", "Settings", "Delete Book", "Back"]
 
@@ -2556,7 +3634,7 @@ TEXT_ENTRY_GRID = [
 ]
 
 MENU_ITEMS = ["Chapters", "Bookmarks", "Add Bookmark", "Font Size +", "Font Size -",
-              "Theme +", "Theme -", "Library", "Settings", "Resume"]
+              "Theme +", "Theme -", "Immersive Mode", "Library", "Settings", "Resume"]
 
 STORAGE_ACTIONS = ["Clear Image Cache", "Clean Up Orphaned Bookmarks",
                     "Backup Bookmarks Now", "Restore Latest Backup",
@@ -2633,7 +3711,12 @@ class App:
         # and _menu_delete_armed is the same "press again to confirm"
         # pattern the old _lib_delete_confirm_idx used, just scoped to
         # the menu instead of the list.
-        self._menu_delete_target = None
+        # v26.07.09.02: renamed from _menu_delete_target -- now shared by
+        # Delete Book, Pin/Unpin Selected, and Mark Finished/Unfinished,
+        # all of which act on whichever book was highlighted at the
+        # moment START opened the Library Menu (there's no book list
+        # inside the menu itself to re-select from).
+        self._menu_target_book = None
         self._menu_delete_armed = False
         # v0.1.122: same two-press confirm pattern as _menu_delete_armed,
         # for the new bulk "Clear All Finished" action (Kaleb's request
@@ -2674,6 +3757,13 @@ class App:
         # Downloader plugin UI state.
         self.dl_source_index = 0     # selection on SCREEN_DOWNLOAD_SOURCES
         self.dl_cat_index = 0        # selection on SCREEN_DOWNLOAD_CATEGORIES
+        self.dl_help_return_screen = SCREEN_DOWNLOAD_CATEGORIES  # v0.1.155:
+                                      # which screen X-Help was opened from,
+                                      # so B returns to the right place
+                                      # instead of always the same screen.
+        self.dl_help_scroll = 0      # v0.1.155: scroll offset on the help
+                                      # overlay, in case it overflows the
+                                      # screen at large Font Size.
         self.dl_category = None      # active category (plugin-defined string),
                                       # or None = no category scoping
         self.dl_plugin = None        # the module currently being browsed
@@ -2694,6 +3784,18 @@ class App:
                                    # rather than an EPUB catalog -- start_download()
                                    # and the B-back handler both branch on this
                                    # instead of duplicating the whole browse screen.
+        # v26.07.10.01: audio-source state, mirroring the video fields just
+        # above exactly -- dl_is_audio is start_download()/the B-back
+        # handler's audio branch, audio_source_index is the selection on
+        # SCREEN_DOWNLOAD_AUDIO_SOURCES, audio_book_index is the selection
+        # on SCREEN_DOWNLOAD_AUDIO_BOOKS (the Bible-book sub-picker), and
+        # _pending_audio_source remembers WHICH AUDIO_SOURCES entry opened
+        # the book picker so choosing a book knows which loader/args to
+        # call with booknum added in.
+        self.audio_source_index = 0
+        self.audio_book_index = 0
+        self.dl_is_audio = False
+        self._pending_audio_source = None
 
         self.status_msg = None   # brief on-screen feedback (bookmark saved/
         self.status_until = 0    # updated/limit-reached, delete confirmed, etc.
@@ -2724,6 +3826,13 @@ class App:
         # since it changes what screen greets you on startup, unlike the
         # other Settings toggles which are all in-session behavior tweaks.
         self.open_last_book_enabled = load_settings().get("open_last_book_enabled", False)
+        # v26.07.09.04: Immersive Mode -- hides the Reader screen's hint
+        # bar (visuals only; the reserved bottom margin/body_rows are
+        # UNCHANGED, so pagination math can't drift out of sync with what
+        # v0.1.86 already fixed once). Persisted like the other reader
+        # toggles above. X still opens the Menu even with the bar hidden
+        # -- only the on-screen TEXT disappears, not the button mapping.
+        self.immersive_mode = load_settings().get("immersive_mode", False)
         self.image_loader = ImageLoader(
             IMG_CACHE_DIR,
             is_relevant=lambda key: key in self._visible_image_keys,
@@ -2733,7 +3842,14 @@ class App:
         self._image_textures = OrderedDict()   # key -> (texture, w, h, is_full_res)
         self._image_dims_cache = {}   # img_key -> (w,h) or (0,0)/None if
                                        # unreadable -- see App._image_dims()
-        self.MAX_IMAGE_TEXTURES = 24            # bounded LRU: caps GPU texture memory
+        # v26.07.09.07: lowered from 24 -- GPU-side texture memory is a
+        # smaller, separate budget from the RAM decode cache above, and
+        # each texture is uncompressed RGBA (4 bytes/pixel, bigger than
+        # the 3-byte RGB24 decode buffer). A native 2400x1543 texture is
+        # ~14.8MB; worst case at 12 if every slot held one: ~178MB.
+        # Frees headroom for Image Maximize Mode's native-res textures
+        # without the old 24-slot cap risking ~355MB worst case.
+        self.MAX_IMAGE_TEXTURES = 12            # bounded LRU: caps GPU texture memory
         self.storage_index = 0
         self.quit_requested = False
 
@@ -2758,8 +3874,12 @@ class App:
         self._images = []
         self._anchors = {}
         self._styles = []
+        self._styles_starts = []
+        self._styles_prefix_max_end = []
         self._para_spans = []
         self._chapter_nav_points = []
+        self._nav_scan_book_id = None
+        self._extreme_page_queue = []
         self._text_texture_cache = {}
         # RAM-only LRU cache of raw get_page() results (v0.1.48, raised
         # to 200 entries in v0.1.68 -- see changelog).
@@ -2815,7 +3935,36 @@ class App:
         if self.open_last_book_enabled:
             self.open_continue_reading()
 
+        # v26.07.10.05: boot splash (Kaleb's request) -- by this point
+        # self.screen already holds the REAL destination (Library, or
+        # Reader if Open Last Book on Launch just resolved one two lines
+        # up) -- save it and show the splash first, letting draw_splash()
+        # hand off to it once the animation finishes. Deliberately the
+        # very last thing __init__ does, same reasoning as Open Last
+        # Book above: nothing here depends on anything defined later.
+        self._splash_dest_screen = self.screen
+        self.screen = SCREEN_SPLASH
+        self._splash_start = time.time()
+
     # -------- library --------
+    # v26.07.09.07: appended to _img_key()'s output to form a SEPARATE
+    # cache key for Image Maximize Mode's native-resolution decode --
+    # deliberately distinct from the plain inline-purpose key for the
+    # same image, so the two never collide, shadow, or evict each other.
+    # See the request()/_process() docstrings above for why sharing one
+    # key would silently break both requesting native res at all AND
+    # the is_relevant() relevance check.
+    _IMGVIEW_NATIVE_KEY_SUFFIX = "__native"  # NOT "::native" -- this key
+                                              # flows straight into the
+                                              # on-disk cache filename
+                                              # (_cache_path()), and
+                                              # muOS SD cards are commonly
+                                              # FAT32, which disallows ":"
+                                              # in filenames. Underscore
+                                              # is safe on every
+                                              # filesystem this app runs
+                                              # on.
+
     def _img_key(self, src):
         """Namespaces an image's internal epub path with the current book's
         id, so the shared ImageLoader can never confuse two different
@@ -2921,13 +4070,24 @@ class App:
         self.screen = SCREEN_DOWNLOAD_BROWSE
         self._load_dl_page()
 
-    def open_video_downloader(self, pub):
-        """v0.1.90: opens SCREEN_DOWNLOAD_BROWSE showing jw_fetch's video
-        catalog for `pub` (e.g. "lffv") instead of an EPUB catalog.
-        Reuses the exact same browse screen/draw code as open_downloader()
-        -- dl_is_video is the only thing that changes behavior (in
-        start_download() and the B-back handler), so there's no
-        duplicated screen to keep in sync."""
+    def open_plugin_video_list(self, loader_name, **kwargs):
+        """v26.07.09.09: generic replacement for the four near-identical
+        open_video_downloader()/open_broadcast_downloader()/
+        open_gb_update_downloader()/open_good_news_downloader() methods
+        this used to be -- each did the exact same 15 lines of state
+        setup and background-thread loading, differing only in WHICH
+        JW_PLUGIN function they called. Now driven entirely by
+        JW_PLUGIN.VIDEO_SOURCES (see jw_fetch.py's docstring for that
+        registry's shape): main.py doesn't need to know the JW-specific
+        function names or pub codes up front, it just calls whichever
+        one the plugin declared, by name, via getattr().
+
+        loader_name: name of a JW_PLUGIN function, e.g. "list_video_items"
+        kwargs: passed straight through to that function, e.g. pub="lffv"
+
+        Same dl_is_video=True reuse of SCREEN_DOWNLOAD_BROWSE as before --
+        the browse screen and start_download()'s video branch don't know
+        or care which specific loader populated the list."""
         self.dl_plugin = JW_PLUGIN
         self.dl_is_video = True
         self.dl_category = None
@@ -2943,7 +4103,8 @@ class App:
 
         def _do_load():
             try:
-                items, err = JW_PLUGIN.list_video_items(pub)
+                loader = getattr(JW_PLUGIN, loader_name)
+                items, err = loader(**kwargs)
             except Exception as e:
                 items, err = [], str(e)
             if self.dl_is_video:  # guard: person didn't back out meanwhile
@@ -2956,21 +4117,16 @@ class App:
 
         threading.Thread(target=_do_load, daemon=True).start()
 
-    def open_broadcast_downloader(self):
-        """v0.1.110: THE MISSING METHOD -- this is the actual root cause
-        of "JW Broadcasting crashes the app" (Kaleb). The Library Menu's
-        "Check JW Broadcasting" entry called self.open_broadcast_downloader()
-        (added when that menu item was wired up), but this method itself
-        was never actually written -- the session that added
-        jw_fetch.list_broadcast_items() and the menu entry ended before
-        adding the App method connecting them, so selecting that menu
-        item raised AttributeError and crashed. Same dl_is_video=True
-        pattern as open_video_downloader()/open_gb_update_downloader()/
-        open_good_news_downloader() -- see list_broadcast_items()'s own
-        docstring in jw_fetch.py for what it returns (up to 12 most
-        recent JW Broadcasting monthly programs, newest first)."""
+    def open_plugin_audio_list(self, loader_name, **kwargs):
+        """v26.07.10.01: audio equivalent of open_plugin_video_list() --
+        same generic getattr(JW_PLUGIN, loader_name)(**kwargs) shape, same
+        background-thread loading. Reuses SCREEN_DOWNLOAD_BROWSE via
+        dl_is_audio=True instead of dl_is_video=True -- the browse screen
+        and start_download() branch on dl_is_audio the same way they
+        already branch on dl_is_video, just routing to find_music_dir()/
+        download_audio() instead of find_movies_dir()/download_video()."""
         self.dl_plugin = JW_PLUGIN
-        self.dl_is_video = True
+        self.dl_is_audio = True
         self.dl_category = None
         self.dl_items = []
         self.dl_index = 0
@@ -2984,79 +4140,11 @@ class App:
 
         def _do_load():
             try:
-                items, err = JW_PLUGIN.list_broadcast_items()
+                loader = getattr(JW_PLUGIN, loader_name)
+                items, err = loader(**kwargs)
             except Exception as e:
                 items, err = [], str(e)
-            if self.dl_is_video:  # guard: person didn't back out meanwhile
-                self._dl_video_all_items = items
-                self.dl_items = items
-                self.dl_load_error = err
-                self.dl_index = 0
-                self.dl_loading = False
-                self.dirty = True
-
-        threading.Thread(target=_do_load, daemon=True).start()
-
-    def open_gb_update_downloader(self):
-        """v0.1.107: opens SCREEN_DOWNLOAD_BROWSE showing recent Governing
-        Body Update videos (found via the news RSS feed, not the Video
-        Library category tree -- see jw_fetch.check_new_gb_updates()'s
-        docstring for why). Same dl_is_video=True reuse as the other two
-        video-browse openers."""
-        self.dl_plugin = JW_PLUGIN
-        self.dl_is_video = True
-        self.dl_category = None
-        self.dl_items = []
-        self.dl_index = 0
-        self.dl_page = 1
-        self.dl_query = None
-        self.dl_has_next = False
-        self.dl_load_error = None
-        self.dl_loading = True
-        self.dl_loading_start = time.time()
-        self.screen = SCREEN_DOWNLOAD_BROWSE
-
-        def _do_load():
-            try:
-                items, err = JW_PLUGIN.check_new_gb_updates()
-            except Exception as e:
-                items, err = [], str(e)
-            if self.dl_is_video:  # guard: person didn't back out meanwhile
-                self._dl_video_all_items = items
-                self.dl_items = items
-                self.dl_load_error = err
-                self.dl_index = 0
-                self.dl_loading = False
-                self.dirty = True
-
-        threading.Thread(target=_do_load, daemon=True).start()
-
-    def open_good_news_downloader(self):
-        """v0.1.109: opens SCREEN_DOWNLOAD_BROWSE showing "The Good News
-        According to Jesus" episodes (SeriesGoodNews category -- a
-        small, slow-growing dramatized series about Jesus's life, 6
-        episodes as of this writing). Same dl_is_video=True reuse as
-        the other video-browse openers."""
-        self.dl_plugin = JW_PLUGIN
-        self.dl_is_video = True
-        self.dl_category = None
-        self.dl_items = []
-        self.dl_index = 0
-        self.dl_page = 1
-        self.dl_query = None
-        self.dl_has_next = False
-        self.dl_load_error = None
-        self.dl_loading = True
-        self.dl_loading_start = time.time()
-        self.screen = SCREEN_DOWNLOAD_BROWSE
-
-        def _do_load():
-            try:
-                items, err = JW_PLUGIN.list_good_news_items()
-            except Exception as e:
-                items, err = [], str(e)
-            if self.dl_is_video:  # guard: person didn't back out meanwhile
-                self._dl_video_all_items = items
+            if self.dl_is_audio:  # guard: person didn't back out meanwhile
                 self.dl_items = items
                 self.dl_load_error = err
                 self.dl_index = 0
@@ -3186,8 +4274,20 @@ class App:
 
             def _do_video_download():
                 try:
+                    video_item = item
+                    if not video_item.get("_video_url") and video_item.get("_raw_lank"):
+                        # v26.07.09.08: "Search Videos" results are lazily
+                        # resolved -- search_jw() doesn't hit
+                        # GETPUBMEDIALINKS for every result up front (one
+                        # extra round-trip per result just to BROWSE would
+                        # be wasteful); only resolve the one actually
+                        # chosen, right here, right before downloading it.
+                        resolved, rerr = JW_PLUGIN.resolve_search_video_item(video_item)
+                        if not resolved:
+                            raise RuntimeError(rerr or "Could not resolve video")
+                        video_item = resolved
                     movies_dir = JW_PLUGIN.find_movies_dir()
-                    ok, msg, _path = JW_PLUGIN.download_video(item, movies_dir)
+                    ok, msg, _path = JW_PLUGIN.download_video(video_item, movies_dir)
                 except Exception as e:
                     ok, msg = False, f"Download failed: {e}"
                 self._dl_downloading_idx = None
@@ -3198,6 +4298,42 @@ class App:
                 self.dirty = True
 
             threading.Thread(target=_do_video_download, daemon=True).start()
+            return
+
+        if self.dl_is_audio:
+            # v26.07.10.01: audio path -- saves into muOS's native GMU
+            # Music Player content folder (ROMS/Music), same shape as the
+            # video branch just above (no refresh_library(), not an EPUB).
+            # No lazy-resolve step needed (unlike Search Videos' _raw_lank
+            # handling) -- every AUDIO_SOURCES loader already returns a
+            # ready _audio_url per item, confirmed live this session.
+            self.set_status(f'Downloading "{item["title"]}"...', duration=60)
+
+            def _do_audio_download():
+                try:
+                    audio_item = item
+                    if not audio_item.get("_audio_url") and audio_item.get("_raw_lank"):
+                        # v26.07.10.02: "Search Audio" results are lazily
+                        # resolved -- same reasoning as the video branch's
+                        # identical check just above (one extra round-trip
+                        # per result just to BROWSE would be wasteful;
+                        # only resolve the one actually chosen).
+                        resolved, rerr = JW_PLUGIN.resolve_search_audio_item(audio_item)
+                        if not resolved:
+                            raise RuntimeError(rerr or "Could not resolve audio")
+                        audio_item = resolved
+                    music_dir = JW_PLUGIN.find_music_dir()
+                    ok, msg, _path = JW_PLUGIN.download_audio(audio_item, music_dir)
+                except Exception as e:
+                    ok, msg = False, f"Download failed: {e}"
+                self._dl_downloading_idx = None
+                if ok:
+                    msg = (f'"{item["title"]}" downloaded. Exit PicoReader and open '
+                           f'ROM Collection -> Music to listen to it.')
+                self.set_status(msg, duration=6.0)
+                self.dirty = True
+
+            threading.Thread(target=_do_audio_download, daemon=True).start()
             return
 
         self.set_status(f'Downloading "{item["title"]}"...', duration=60)
@@ -3309,6 +4445,21 @@ class App:
         if self._prerender_active:
             self.cancel_prerender()
         cache_key = book_id(book["path"])
+        # v26.07.09.12: release the PREVIOUS book's cached images before
+        # loading the new one -- until now nothing ever cleared this on a
+        # book switch, so images (including Image Maximize Mode's ~11MB
+        # native-res entries) from books you've already left could still
+        # be sitting in RAM/GPU memory when a new, heavier book opens.
+        # Confirmed via real measurement: ordinary reading alone (no
+        # maximize) already accumulates 100+ cached entries and tens of
+        # MB of RSS growth in a single session. Skipped when re-opening
+        # the SAME book (e.g. "Continue Reading") -- no reason to throw
+        # away images you're about to need again immediately.
+        if self._book_id is not None and self._book_id != cache_key:
+            self.image_loader._results.clear()
+            for _key, entry in self._image_textures.items():
+                SDL.SDL_DestroyTexture(entry[0])
+            self._image_textures.clear()
         self._book_id = cache_key  # reused to namespace ImageLoader cache keys
         anchor_cache_path = os.path.join(ANCHOR_CACHE_DIR, f"{cache_key}.json")
         try:
@@ -3349,18 +4500,69 @@ class App:
         self._image_dims_cache.clear()       # v0.1.84: img_keys are book-
                                               # namespaced already, but no
                                               # reason to keep growing it
+        # v26.07.09.12: fast path only, always synchronous -- L2/R2 has a
+        # usable (if coarser, for daily-text-shaped books) answer from the
+        # very first press. See _build_chapter_nav_points()'s docstring.
         self._chapter_nav_points = self._build_chapter_nav_points()
+        self._nav_scan_book_id = self._book_id  # staleness guard for the
+                                                  # background thread below
+        if self._daily_nav_scan_gate():
+            # v26.07.09.12: the expensive per-day upgrade scan, backgrounded
+            # -- see _build_daily_nav_points_slow()'s docstring for why.
+            # Runs off the main thread; swaps in the finer nav points when
+            # done, guarded against the person having since closed this
+            # book or opened a different one.
+            scan_book_id = self._book_id
+
+            def _do_daily_scan():
+                try:
+                    result = self._build_daily_nav_points_slow()
+                except Exception as e:
+                    _boot_log(f"background daily-nav scan failed: {e}\n")
+                    return
+                if result and self._nav_scan_book_id == scan_book_id:
+                    self._chapter_nav_points = result
+                    self.dirty = True
+            threading.Thread(target=_do_daily_scan, daemon=True).start()
+
+        # v26.07.09.21: background scan for pages over PRERENDER_THRESHOLD
+        # -- see _prerender_extreme_pages_scan()'s docstring for why this
+        # needs its own background thread (safe: pure XML parsing, no
+        # SDL_ttf calls, unlike the wrap itself) and _extreme_page_queue's
+        # comment for how draw_reader() processes whatever it finds.
+        # Deliberately separate from _prerender_active/cancel_prerender()
+        # above -- that's the existing, unrelated whole-book IMAGE
+        # pre-render feature; this is scoped narrowly to extreme TEXT
+        # pages only.
+        self._extreme_page_queue = []
+        scan_book_id = self._book_id
+
+        def _do_extreme_page_scan():
+            try:
+                found = self._prerender_extreme_pages_scan()
+            except Exception as e:
+                _boot_log(f"background extreme-page scan failed: {e}\n")
+                return
+            if found and self._book_id == scan_book_id:
+                self._extreme_page_queue = found
+                self.dirty = True
+        threading.Thread(target=_do_extreme_page_scan, daemon=True).start()
 
     def _build_chapter_nav_points(self):
         """Build an ordered list of (spine_index, file, anchor) representing
         real 'chapters' for L2/R2 navigation. Prefers structural chapterN
         anchors (e.g. Bible books: Exodus 1, Exodus 2, ...) so navigation
         lands on actual chapters rather than internal split/nav fragments.
-        Falls back to TOC entries, then (if the TOC turns out to be much
-        coarser than the book's real content -- e.g. a daily-text booklet
-        whose TOC only lists 12 months even though every day is its own
-        spine file) to per-day weekday-prefixed entries, then finally to
-        raw spine order for books that don't match any of that."""
+        Falls back to TOC entries. v26.07.09.12: the further fallback (per-
+        day weekday-prefixed entries for daily-text booklets whose TOC is
+        much coarser than their real content) is NO LONGER attempted here
+        -- that scan reads every spine file and was the confirmed cause of
+        a real on-device freeze (see _daily_nav_scan_gate()/
+        _build_daily_nav_points_slow()'s docstrings). This function now
+        ONLY returns the fast path, always synchronously, so L2/R2 has
+        something usable from the very first press. open_book() separately
+        kicks off the slow per-day upgrade in a background thread and
+        swaps it in when ready -- see open_book()'s daily-scan block."""
         import re
         self.doc._build_anchor_index()
 
@@ -3465,94 +4667,186 @@ class App:
                 seen_idx.add(idx)
         toc_points.sort(key=lambda p: p[0])
 
-        # If the TOC gives WAY fewer nav points than the spine actually has
-        # content files (e.g. 17 months vs 741 spine files in a daily-text
-        # booklet), it's worth checking whether each "hidden" file is really
-        # its own standalone entry rather than a pagination fragment of the
-        # one before it. JW daily-text publications (Examining the
-        # Scriptures and similar) reliably open each day's entry with a
-        # weekday name ("Thursday, January 1", "Friday, January 2", ...) --
-        # a strong, low-false-positive signal that's very unlikely to
-        # appear at the start of a Bible chapter or a magazine article, so
-        # this can't accidentally make navigation worse for those. Gated to
-        # only run this extra per-spine-file scan when the TOC already
-        # looks suspiciously coarse, so well-behaved books (TOC roughly
-        # tracks spine granularity 1:1, like magazines) never pay for it.
-        spine_len = len(self.doc.spine)
-        if spine_len > 50 and len(toc_points) < spine_len * 0.1:
-            weekday_re = re.compile(
-                r"(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday),",
-                re.IGNORECASE)
-            # v0.1.77 fix: this used to call self.doc.get_page(fname) for
-            # EVERY spine file -- a full XML parse plus link/style/para-span
-            # walk (see EpubDocument.get_page()) -- just to peek at the
-            # first ~80 characters of plain text. On a real daily-text
-            # epub (es26_E.epub: 740 spine files) that's 740 full parses
-            # done synchronously on the main thread during open_book(),
-            # BEFORE the reader screen can render or process any input.
-            # Confirmed the actual freeze Kaleb hit: on the dev machine
-            # this full scan still only takes ~0.4s, but on the real
-            # ARM device (1GB RAM, no JIT) it ran long enough that no SDL
-            # events were pumped for the whole duration -- indistinguishable
-            # from a hang, forcing the L2+R2+SELECT hard reboot. Fix:
-            # read each file's RAW bytes (self.doc._read(), a plain
-            # zip-read + decode -- no ElementTree, no link/style walk) and
-            # strip tags with a cheap regex instead of a real parse. This
-            # is the same information (plain text of the page start) at a
-            # fraction of the cost.
-            tag_re = re.compile(r"<[^>]+>")
-            daily_points = []
-            for idx, fname in enumerate(self.doc.spine):
-                try:
-                    raw = self.doc._read(fname)
-                except Exception:
-                    continue
-                # only strip the first slice of raw markup -- we only need
-                # ~80 plain-text chars, so there's no need to detag the
-                # whole file
-                snippet = tag_re.sub(" ", raw[:2000])
-                if weekday_re.search(snippet[:200]):
-                    daily_points.append((idx, fname, None))
-            MIN_DAILY_MATCHES = 20  # a real year's worth is ~300+; this just
-                                     # rules out a stray coincidental match
-            if len(daily_points) >= MIN_DAILY_MATCHES:
-                # v0.1.77 fix: front matter before the first real "day"
-                # entry (cover, title page, the Christian Life and
-                # Ministry Bible Reading Schedule, "How to Use This
-                # Booklet") had no nav points at all -- daily_points only
-                # ever contained the days themselves. Symptom Kaleb hit:
-                # R2 from the cover always jumped straight to Jan 1,
-                # permanently skipping the weekly reading schedule and
-                # how-to-use pages (they were simply invisible to
-                # _jump_chapter()'s bisect, same root cause as the NWT
-                # appendix bug above). Fix mirrors the chapterN branch's
-                # front_points logic: pull in TOC entries whose spine
-                # index falls before the first day, so front matter gets
-                # its own steppable nav points too.
-                first_day_idx = daily_points[0][0]
-                front_points = []
-                seen_idx = set()
-                for entry in flat:
-                    f = entry.href.split("#")[0] if "#" in entry.href else entry.href
-                    anchor = entry.href.split("#", 1)[1] if "#" in entry.href else None
-                    idx = self.doc.spine_index(f)
-                    if idx != -1 and idx < first_day_idx and idx not in seen_idx:
-                        front_points.append((idx, f, anchor))
-                        seen_idx.add(idx)
-                front_points.sort(key=lambda p: p[0])
-                return front_points + daily_points
-
         if toc_points:
             return toc_points
 
         # last resort: every spine file is its own "chapter"
         return [(i, f, None) for i, f in enumerate(self.doc.spine)]
 
+    def _daily_nav_scan_gate(self):
+        """True if this book's TOC looks coarse enough relative to its
+        spine that the slow per-day upgrade scan (_build_daily_nav_points_
+        slow()) is worth running at all -- same threshold the old inline
+        check used (e.g. 17 months vs 741 spine files in a daily-text
+        booklet). Cheap: no per-file reads, just counts."""
+        spine_len = len(self.doc.spine) if self.doc else 0
+        toc_len = len(flatten_toc(self.doc.toc)) if self.doc else 0
+        return spine_len > 50 and toc_len < spine_len * 0.1
+
+    def _build_daily_nav_points_slow(self):
+        """v26.07.09.12: the expensive half of the old
+        _build_chapter_nav_points() -- pulled out so it can run on a
+        BACKGROUND thread instead of blocking open_book(). This is the
+        exact scan v0.1.77 already optimized once (raw byte read + cheap
+        regex instead of a full XML parse per file) after it caused a
+        real on-device freeze on a 740-file daily-text epub -- confirmed
+        via Kaleb's report that the v0.1.77 optimization alone still
+        wasn't enough on the real ARM device (1GB RAM, no JIT): even the
+        cheaper per-file cost, done synchronously 740+ times before the
+        reader could process any input, was long enough to read as a full
+        hang requiring a hard reboot. Rather than trying to shrink the
+        per-file cost further, this version keeps the exact same cheap
+        scan but moves it off the main thread entirely -- CPython's GIL
+        means this doesn't run in true parallel with rendering, but it DOES
+        get preempted roughly every 5ms (default sys.getswitchinterval()),
+        so the render/input loop keeps getting slices throughout instead of
+        being frozen solid for the scan's whole duration like before.
+        Returns the same shape _build_chapter_nav_points() does (a nav
+        points list) or None if the daily-weekday heuristic didn't find
+        enough real matches (caller should keep using the fast-path
+        result already in place)."""
+        import re
+        flat = flatten_toc(self.doc.toc)
+        toc_points = []
+        seen_idx = set()
+        for entry in flat:
+            f = entry.href.split("#")[0] if "#" in entry.href else entry.href
+            anchor = entry.href.split("#", 1)[1] if "#" in entry.href else None
+            idx = self.doc.spine_index(f)
+            if idx != -1 and idx not in seen_idx:
+                toc_points.append((idx, f, anchor))
+                seen_idx.add(idx)
+
+        weekday_re = re.compile(
+            r"(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday),",
+            re.IGNORECASE)
+        tag_re = re.compile(r"<[^>]+>")
+        daily_points = []
+        for idx, fname in enumerate(self.doc.spine):
+            try:
+                raw = self.doc._read(fname)
+            except Exception:
+                continue
+            snippet = tag_re.sub(" ", raw[:2000])
+            if weekday_re.search(snippet[:200]):
+                daily_points.append((idx, fname, None))
+        MIN_DAILY_MATCHES = 20  # a real year's worth is ~300+; this just
+                                 # rules out a stray coincidental match
+        if len(daily_points) < MIN_DAILY_MATCHES:
+            return None
+
+        first_day_idx = daily_points[0][0]
+        front_points = []
+        seen_idx = set()
+        for entry in flat:
+            f = entry.href.split("#")[0] if "#" in entry.href else entry.href
+            anchor = entry.href.split("#", 1)[1] if "#" in entry.href else None
+            idx = self.doc.spine_index(f)
+            if idx != -1 and idx < first_day_idx and idx not in seen_idx:
+                front_points.append((idx, f, anchor))
+                seen_idx.add(idx)
+        front_points.sort(key=lambda p: p[0])
+        return front_points + daily_points
+
     # -------- page layout --------
-    def _ensure_page_built(self):
+    class _WrapAbortRequested(Exception):
+        """v26.07.10.03: raised from inside a live wrap's progress_cb
+        when _poll_wrap_abort_button() catches B/L2/R2 mid-wrap.
+        Carries the requested action ("back"/"prev_chapter"/
+        "next_chapter") as args[0]. _wrap() itself has no try/except
+        around its progress_cb call (confirmed by reading it), so this
+        propagates straight out to the caller's try/except -- and
+        _wrap() never mutates self during its loop (only reads
+        self._styles via _word_width()), so an abort at any paragraph
+        boundary leaves self untouched beyond what _ensure_page_built()
+        already explicitly snapshots/restores."""
+        pass
+
+    def _poll_wrap_abort_button(self):
+        """v26.07.10.03: called from the LIVE (non-prerender) wrap's
+        progress_cb at each throttled checkpoint, to let B/L2/R2 break
+        out of an in-progress synchronous wrap instead of only being
+        acted on after it finishes -- Kaleb's request: back out of the
+        book, or skip to the previous/next chapter, while a genuinely
+        expensive page keeps rendering in the background via the
+        existing extreme-page queue (see _handle_wrap_abort()).
+
+        Drains every currently-queued SDL event looking for a
+        JOYBUTTONDOWN matching B/L2/R2; anything else (including plain
+        navigation presses that aren't an abort request) is discarded,
+        not requeued -- same precedent as the main loop's existing
+        STALE_INPUT_MS handling (v0.1.79), which already drops input
+        queued during a stall rather than replaying it once things
+        catch up. No keyboard equivalent for L2/R2 exists anywhere else
+        in this app (see main()'s SDL_KEYDOWN_EV branch), so none is
+        added here either -- this only ever fires from a real joystick
+        on-device, or a synthetic JOYBUTTONDOWN in test harnesses.
+
+        Self-contained (defines its own tiny ctypes struct rather than
+        reaching into main()'s local SDL_JoyButtonEvent) so this can't
+        be affected by, or accidentally affect, the main event loop's
+        own event buffer."""
+        class _JoyButtonEvent(ctypes.Structure):
+            _fields_ = [("type", ctypes.c_uint32), ("timestamp", ctypes.c_uint32),
+                        ("which", ctypes.c_int32), ("button", ctypes.c_ubyte),
+                        ("state", ctypes.c_ubyte), ("padding1", ctypes.c_ubyte),
+                        ("padding2", ctypes.c_ubyte)]
+        ev = (ctypes.c_byte * 56)()
+        action = None
+        while SDL.SDL_PollEvent(ctypes.byref(ev)) != 0:
+            etype = ctypes.cast(ev, ctypes.POINTER(ctypes.c_uint32))[0]
+            if etype != SDL_JOYBUTTONDOWN_EV:
+                continue
+            bev = ctypes.cast(ev, ctypes.POINTER(_JoyButtonEvent))[0]
+            b = bev.button
+            if b == JOY_B:
+                action = "back"
+            elif b == JOY_L2:
+                action = "prev_chapter"
+            elif b == JOY_R2:
+                action = "next_chapter"
+            # keep draining the queue -- last match wins, consistent
+            # with ordinary one-button-per-frame handling elsewhere
+        return action
+
+    def _handle_wrap_abort(self, aborted_key):
+        """v26.07.10.03: called right after a live wrap raises
+        _WrapAbortRequested. Queues the abandoned page for background
+        completion (front of _extreme_page_queue -- priority over the
+        proactively-scanned FIFO entries already there, since this one
+        was actually asked for) unless it's already queued or already
+        disk-cached, then performs the requested navigation via the
+        SAME real methods the button would have called normally
+        (go_back()/prev_chapter()/next_chapter()) -- no new navigation
+        logic, just letting the existing one run before the wrap would
+        otherwise have finished."""
+        if (aborted_key not in self._extreme_page_queue
+                and not os.path.isfile(self._wrap_cache_path(aborted_key))):
+            self._extreme_page_queue.insert(0, aborted_key)
+
+    def _ensure_page_built(self, renderer=None):
         key = self.state.current_file
         if key == self._page_cache_key and self.state.current_anchor is None:
             return
+        # v26.07.10.03: snapshot of the page-scoped fields below, taken
+        # BEFORE any of them get overwritten for the NEW page (key).
+        # Only used if the live wrap further down gets aborted (see
+        # _poll_wrap_abort_button()/_handle_wrap_abort()) -- restored in
+        # that case so self._lines (deliberately left untouched by an
+        # abort, still describing the OLD page) and self._styles/_links/
+        # _images/etc stay a matched pair instead of one describing the
+        # new abandoned page and the other the old one. Same save/
+        # restore shape _prerender_one_extreme_page() already uses
+        # around self._styles for the identical reason.
+        _prev_links = self._links
+        _prev_images = self._images
+        _prev_anchors = self._anchors
+        _prev_styles = self._styles
+        _prev_styles_starts = getattr(self, "_styles_starts", [])
+        _prev_styles_prefix_max_end = getattr(self, "_styles_prefix_max_end", [])
+        _prev_para_spans = self._para_spans
+        _prev_visible_image_keys = self._visible_image_keys
+        _prev_combined_spans = getattr(self, "_combined_spans", [])
         self._clear_text_texture_cache()
         # Check RAM cache first (v0.1.48) -- background prefetch may have
         # already parsed this file, saving the main-thread XML parse cost.
@@ -3592,6 +4886,29 @@ class App:
         self._images = images
         self._anchors = anchors
         self._styles = styles
+        # v26.07.09.15 BUG FIX (Kaleb's report -- real CPU lockup confirmed
+        # via profiling: 42.8s to draw a single page, 35s of it in
+        # style_at()'s linear scan over self._styles, called 377,369 times
+        # on a 2697-style-span page). style_at() (inside _word_width(), used
+        # by _wrap() for every word on the page) used to do a full linear
+        # scan of ALL style spans on EVERY character-position query --
+        # O(chars x spans), catastrophic on any page with both a lot of
+        # text AND a lot of style spans (this one: ~461K chars, 2697 spans,
+        # from 51 footnote citations each contributing bold/italic runs).
+        # Fixed by precomputing a sorted starts[] array (bisect target) and
+        # a running prefix-max-end array ONCE per page here, so style_at()
+        # can binary-search to the right neighborhood and stop scanning
+        # backward as soon as prefix_max_end proves no earlier span could
+        # possibly still cover the query position -- correct even with
+        # overlapping/duplicate spans (confirmed real duplicates exist in
+        # this same page), not just a bounded-window heuristic.
+        self._styles_starts = [sp.start for sp in styles]
+        running_max = 0
+        prefix_max_end = []
+        for sp in styles:
+            running_max = max(running_max, sp.end)
+            prefix_max_end.append(running_max)
+        self._styles_prefix_max_end = prefix_max_end
         self._para_spans = para_spans
         self._visible_image_keys = {self._img_key(im.src) for im in images}
         # v0.1.110: eagerly kick off decode for THIS page's images the
@@ -3624,8 +4941,86 @@ class App:
         if _cached_wrap is not None:
             lines, line_span_map, line_style_runs, line_abs_starts = _cached_wrap
         else:
-            lines, line_span_map, line_style_runs, line_abs_starts = self._wrap(text, combined, avail_w)
-            self._wrapped_cache_put(wrap_key, (lines, line_span_map, line_style_runs, line_abs_starts))
+            # v26.07.09.19: chunked progress counter for the loading
+            # screen, added after Kaleb's on-device test (real numbers:
+            # 40-50s -> 4s with the v26.07.09.15/.16 algorithmic fixes +
+            # v26.07.09.18 disk cache) still felt uncertain with a flat,
+            # unmoving "Rendering large page..." message the whole time.
+            # _wrap() calls progress_cb(fraction) periodically (throttled
+            # to ~4x/second, not every paragraph) -- see _wrap()'s own
+            # progress_cb parameter comment. Also pumps SDL events each
+            # update so the OS doesn't consider the process fully hung
+            # even though input still can't be ACTED on until the page
+            # data is ready (same SDL_ttf-off-main-thread constraint as
+            # before -- see the v26.07.09.17 comment above).
+            progress_cb = None
+            if renderer is not None and len(text) > LARGE_PAGE_LOADING_THRESHOLD:
+                _last_update = [0.0]
+
+                def progress_cb(fraction):
+                    now = time.time()
+                    if now - _last_update[0] < 0.25:
+                        return
+                    _last_update[0] = now
+                    # v26.07.10.03: check for a B/L2/R2 bail-out BEFORE
+                    # drawing this tick's frame -- see
+                    # _poll_wrap_abort_button()'s docstring. Checked at
+                    # the same throttled (~4x/second) cadence as the
+                    # progress redraw itself, not every paragraph, so
+                    # this can't meaningfully slow the wrap down.
+                    _abort_action = self._poll_wrap_abort_button()
+                    if _abort_action:
+                        raise self._WrapAbortRequested(_abort_action)
+                    _draw_large_page_loading_screen(renderer, self, percent=fraction)
+                    SDL.SDL_RenderPresent(renderer)
+                    SDL.SDL_PumpEvents()
+            try:
+                lines, line_span_map, line_style_runs, line_abs_starts = self._wrap(
+                    text, combined, avail_w, progress_cb=progress_cb)
+            except self._WrapAbortRequested as _abort:
+                # v26.07.10.03: restore the page-scoped fields snapshotted
+                # at the top of this function -- self._lines etc were
+                # never touched by this aborted attempt, so restoring
+                # _links/_styles/etc back to the OLD page keeps them a
+                # matched pair again instead of describing two different
+                # pages. Queue this page for background completion, then
+                # perform the requested navigation via the exact same
+                # methods B/L2/R2 already call in handle_button() --
+                # this recomputes self._lines etc for the NEW page via a
+                # fresh call to this same function, so draw_reader()
+                # doesn't render a stale frame this cycle.
+                self._links = _prev_links
+                self._images = _prev_images
+                self._anchors = _prev_anchors
+                self._styles = _prev_styles
+                self._styles_starts = _prev_styles_starts
+                self._styles_prefix_max_end = _prev_styles_prefix_max_end
+                self._para_spans = _prev_para_spans
+                self._visible_image_keys = _prev_visible_image_keys
+                self._combined_spans = _prev_combined_spans
+                self._handle_wrap_abort(key)
+                action = _abort.args[0]
+                if action == "back":
+                    if not self.go_back():
+                        self.save_progress()
+                        self.screen = SCREEN_LIBRARY
+                elif action == "prev_chapter":
+                    self.prev_chapter()
+                elif action == "next_chapter":
+                    self.next_chapter()
+                if self.screen == SCREEN_READER:
+                    self._ensure_page_built(renderer)
+                return
+            result = (lines, line_span_map, line_style_runs, line_abs_starts)
+            self._wrapped_cache_put(wrap_key, result)
+            # v26.07.09.18: persist to disk ONLY for genuinely extreme
+            # pages (see WRAP_CACHE_DIR/LARGE_PAGE_LOADING_THRESHOLD's
+            # module-level comments) -- this is the actual "only pay the
+            # cost once, ever" fix; the RAM cache alone is lost on every
+            # book close/switch (App.open_book() clears it deliberately,
+            # see the v26.07.09.12 cache-cleanup comment there).
+            if len(text) > LARGE_PAGE_LOADING_THRESHOLD:
+                self._save_wrap_to_disk(key, result)
         self._lines = lines
         self._line_span_map = line_span_map
         self._line_style_runs = line_style_runs
@@ -3658,6 +5053,7 @@ class App:
         self._page_cache_key = key
 
         target_char_off = None
+        body_rows = _reader_body_layout(self.fonts)[2]
         if self.state.current_char_off is not None:
             # v0.1.39: exact-position restore (bookmark/resume-reading).
             # Same line-search as the anchor path below, just driven by a
@@ -3694,7 +5090,70 @@ class App:
                     target_line = li
                 else:
                     break
-            self.scroll = max(0, target_line - 2)
+            # v0.1.161 BUG FIX (Kaleb's report: NWT chapters -- especially
+            # Psalms -- opening a "couple lines in" instead of at the true
+            # top). Root cause: this branch always did `target_line - 2`
+            # unconditionally, the same as the bookmark-restore branch
+            # above. That's reasonable for a genuinely deep in-page
+            # anchor (e.g. a footnote/cross-reference link far down a
+            # long combined file) -- but chapter-open navigation
+            # (_jump_chapter(), TOC taps) ALSO goes through this exact
+            # branch, and each Bible chapter already lives in its OWN
+            # split file (confirmed: 1001061123.xhtml, -split2.xhtml,
+            # -split3.xhtml, ... one file per chapter) with its own
+            # "chapterN" anchor placed at verse 1 -- so any heading/
+            # superscription content before that anchor was silently
+            # hidden except for 2 lines of it. Checked structurally (char
+            # offsets and line counts only, not the actual scripture
+            # text) across all 150 Psalms: confirmed 120 of 150 (80%)
+            # have MORE than 2 lines of such content before their
+            # "chapterN" anchor -- Psalm 1 alone has 8, so scroll landed
+            # at 6 instead of 0, hiding the first 6 lines outright.
+            # Root cause wasn't Hebrew-specific formatting itself, but it
+            # only becomes visible with THIS much pre-anchor content --
+            # confirmed the whole rest of the Bible too (next_chapter()/
+            # TOC jump across every book), not just Psalms/poetry, since
+            # this is a general property of how anchors are placed
+            # relative to headings, not a Hebrew-rendering bug.
+            # Fix: only apply the 2-line lookback when the anchor target
+            # is actually off-screen already (target_line >= body_rows) --
+            # in that case a small lookback still helps orient the
+            # reader. When the anchor is already within the first
+            # screen (the overwhelmingly common case for a fresh
+            # chapter-open), just show scroll=0 so ALL heading content
+            # from the true top is visible, matching what _jump_chapter()
+            # already intended by setting self.scroll = 0 right after
+            # goto() -- that intent was being silently overwritten here
+            # before this fix.
+            if target_line >= body_rows:
+                self.scroll = max(0, target_line - 2)
+            else:
+                self.scroll = 0
+        # v0.1.162 BUG FIX (Kaleb's question: "would a reference at the
+        # very end of an article scroll back off the screen now that we
+        # have the 100% scroll fix?"). Answer: the target itself stays
+        # visible either way, but a DIFFERENT symptom of the exact same
+        # bug class as v0.1.154 (page_down's pct>100% overshoot) turned
+        # out to still be reachable through this anchor/char_off path,
+        # which v0.1.154 never touched -- confirmed directly: jumping to
+        # a target on the very last line of Psalm 119 (737 lines,
+        # body_rows=24) landed scroll at 734, while the ceiling
+        # page_down()/the pct display both use is only 713 -- so pct
+        # would read 102% again, just via a footnote/cross-reference
+        # jump instead of a page-turn. Both scroll-setting branches above
+        # (bookmark-restore and anchor-jump) compute target_line from raw
+        # document position with no awareness of the SAME ceiling
+        # page_down() respects, so either could push scroll past it near
+        # the true end of a chapter. Fix: clamp scroll to that same
+        # ceiling here too, once, after both branches -- matches
+        # page_down()'s own max(0, n - body_rows) exactly. Confirmed via
+        # the same real Psalm 119 last-line test that this still leaves
+        # the target fully visible (mathematically guaranteed: the very
+        # last line is always within body_rows of that ceiling), just at
+        # the bottom of the screen instead of near the top -- and that
+        # pct now reads exactly 100%, never over, for any anchor/bookmark
+        # jump landing anywhere in the final screenful of a chapter.
+        self.scroll = min(self.scroll, max(0, len(self._lines) - body_rows))
         self.state.current_anchor = None
         self.state.current_char_off = None
         # v0.1.50: selected_span used to always reset to 0 (document-order
@@ -3795,6 +5254,178 @@ class App:
             self._wrapped_cache.pop(oldest, None)
         self._wrapped_cache[wrap_key] = result
         self._wrapped_cache_order.append(wrap_key)
+
+    def _wrap_cache_path(self, key):
+        """v26.07.09.18: on-disk path for an extreme page's wrap result --
+        see WRAP_CACHE_DIR's module-level comment for scope (extreme
+        pages only, not a general cache). Filename mirrors the existing
+        ImageLoader._cache_path() convention: {book_id}__ prefix (so the
+        existing stale-book cleanup in scan_library()'s glob pattern
+        picks these up automatically, no separate cleanup path needed)
+        + a filesystem-safe encoding of the spine href + the font size
+        index (wrap results genuinely differ per size, same as the RAM
+        cache's (href, size_index) key)."""
+        safe_href = key.replace("/", "_").replace("\\", "_")
+        fname = f"{self._book_id}__{safe_href}__{self.fonts.size_index}.pkl"
+        return os.path.join(WRAP_CACHE_DIR, fname)
+
+    def _load_wrap_from_disk(self, key):
+        """Returns the cached (lines, line_span_map, line_style_runs,
+        line_abs_starts) tuple for this page/font-size if a disk cache
+        entry exists and loads cleanly, else None. Deliberately fails
+        soft (returns None, logs, doesn't raise) on any read/unpickle
+        error -- a corrupt or missing cache entry should just fall back
+        to a normal (slower) wrap, never crash the app."""
+        if not self._book_id:
+            return None
+        path = self._wrap_cache_path(key)
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "rb") as f:
+                return pickle.load(f)
+        except Exception as e:
+            _boot_log(f"wrap cache read failed for {path}: {e}\n")
+            return None
+
+    def _load_wrap_from_disk_with_progress(self, renderer, key):
+        """v26.07.09.22: elapsed-seconds version of _load_wrap_from_disk()
+        for the loading screen's disk-cache-read path. Kaleb's on-device
+        report: ~4s for a 6MB cache file -- long enough to want feedback,
+        but unlike the fresh-wrap path (_wrap()'s progress_cb, called at
+        natural per-paragraph chunk points) a single pickle.load() call
+        has no chunk points to hook into. Runs the actual read in a
+        background thread instead -- SAFE to do (unlike _wrap() itself),
+        since pickle.load()/file I/O never touches SDL_ttf, the same
+        reasoning _prerender_extreme_pages_scan() already relies on for
+        its own background thread. Polls from the main thread, redrawing
+        "Loading cached page... Ns" every ~0.25s (same throttle as the
+        fresh-wrap percentage) and pumping SDL events so the OS doesn't
+        consider the process hung, until the background read finishes.
+        Scoped narrowly to the same extreme-page loading-screen gate as
+        everything else in this feature -- draw_reader() is the only
+        caller."""
+        result_box = {}
+
+        def _do_load():
+            result_box["value"] = self._load_wrap_from_disk(key)
+
+        t = threading.Thread(target=_do_load, daemon=True)
+        start = time.time()
+        t.start()
+        last_update = 0.0
+        while t.is_alive():
+            now = time.time()
+            if now - last_update >= 0.25:
+                last_update = now
+                _draw_large_page_loading_screen(
+                    renderer, self, message=f"Loading cached page... {int(now - start)}s")
+                SDL.SDL_RenderPresent(renderer)
+                SDL.SDL_PumpEvents()
+            time.sleep(0.03)
+        t.join()
+        return result_box.get("value")
+
+    def _prerender_one_extreme_page(self, renderer, href):
+        """v26.07.09.21: wraps ONE page found by
+        _prerender_extreme_pages_scan() and saves it to disk -- called
+        from draw_reader() when app._extreme_page_queue has entries.
+        Deliberately processes the CURRENTLY-viewed page's text/styles
+        via get_page(), NOT self._links/_images/_styles etc (those belong
+        to whatever page is actually on screen right now -- this must not
+        touch them, or the live reading session would show wrong style
+        info until the next real navigation). self._styles/_styles_starts/
+        _styles_prefix_max_end are saved and restored around the _wrap()
+        call for the same reason -- style_at()/_compute_line_style_runs()
+        read those as instance state, not parameters, so this page's
+        wrap would otherwise corrupt the currently-displayed page's."""
+        try:
+            text, links, images, anchors, styles, para_spans = self.doc.get_page(href)
+        except Exception as e:
+            _boot_log(f"prerender scan: could not load {href}: {e}\n")
+            return
+
+        _saved_styles = self._styles
+        _saved_starts = self._styles_starts
+        _saved_prefix = self._styles_prefix_max_end
+        try:
+            self._styles = styles
+            self._styles_starts = [sp.start for sp in styles]
+            running_max = 0
+            prefix_max_end = []
+            for sp in styles:
+                running_max = max(running_max, sp.end)
+                prefix_max_end.append(running_max)
+            self._styles_prefix_max_end = prefix_max_end
+
+            combined = [("link", i, l.start, l.end) for i, l in enumerate(links)]
+            combined += [("image", i, im.start, im.end) for i, im in enumerate(images)]
+            avail_w = SW - _sx(40)
+
+            _last_update = [0.0]
+
+            def progress_cb(fraction):
+                now = time.time()
+                if now - _last_update[0] < 0.25:
+                    return
+                _last_update[0] = now
+                _draw_large_page_loading_screen(renderer, self, percent=fraction,
+                                                 message="Pre-rendering large page...")
+                SDL.SDL_RenderPresent(renderer)
+                SDL.SDL_PumpEvents()
+
+            result = self._wrap(text, combined, avail_w, progress_cb=progress_cb)
+            self._save_wrap_to_disk(href, result)
+        finally:
+            self._styles = _saved_styles
+            self._styles_starts = _saved_starts
+            self._styles_prefix_max_end = _saved_prefix
+
+    def _prerender_extreme_pages_scan(self):
+        """v26.07.09.21: finds every spine file whose text exceeds
+        PRERENDER_THRESHOLD and doesn't already have a disk wrap-cache
+        entry for the current font size -- returns a list of hrefs for
+        draw_reader() to wrap+cache proactively, one per frame, instead
+        of waiting for on-demand navigation to hit them cold.
+
+        SAFE to call from a background thread -- unlike _wrap() (which
+        this does NOT call), this only does self.doc.get_page() (a zip
+        read + XML parse) and a disk-cache-file-exists check, neither of
+        which touch SDL_ttf/FreeType. Confirmed via direct measurement
+        this session that a full-spine scan of get_page() alone (no wrap)
+        can still take real time on a large book (2.5s for NWT's 3941
+        spine files, in this sandbox -- real ARM hardware likely slower
+        given the pattern seen elsewhere this session), which is exactly
+        why this is backgrounded rather than run synchronously in
+        open_book() the way the (much cheaper) chapter-nav fast-path is."""
+        found = []
+        if not self.doc:
+            return found
+        for f in self.doc.spine:
+            try:
+                text = self.doc.get_page(f)[0]
+            except Exception:
+                continue
+            if len(text) > PRERENDER_THRESHOLD and not os.path.isfile(self._wrap_cache_path(f)):
+                found.append(f)
+        return found
+
+    def _save_wrap_to_disk(self, key, result):
+        """Persists an extreme page's freshly-computed wrap result to
+        WRAP_CACHE_DIR so it's never recomputed for this exact (book,
+        page, font size) again -- not even after closing the book or
+        restarting the app. Fails soft (logs, doesn't raise) on any
+        write error -- this is a pure optimization, never something that
+        should be able to break reading if the disk is full/read-only."""
+        if not self._book_id:
+            return
+        try:
+            os.makedirs(WRAP_CACHE_DIR, exist_ok=True)
+            path = self._wrap_cache_path(key)
+            with open(path, "wb") as f:
+                pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception as e:
+            _boot_log(f"wrap cache write failed for {key}: {e}\n")
 
     def _prefetch_adjacent_chapters(self):
         """Background-parse the prev and next chapter files into
@@ -4035,16 +5666,32 @@ class App:
         bold_flags = [False] * n
         italic_flags = [False] * n
         line_end = abs_start + n
-        for sp in self._styles:
-            if sp.end <= abs_start or sp.start >= line_end:
-                continue
-            s = max(sp.start, abs_start) - abs_start
-            e = min(sp.end, line_end) - abs_start
-            for c in range(s, e):
-                if sp.bold:
-                    bold_flags[c] = True
-                if sp.italic:
-                    italic_flags[c] = True
+        # v26.07.09.16 BUG FIX: same O(lines x spans) shape as style_at()'s
+        # v26.07.09.15 fix, found via Kaleb's follow-up question about
+        # whether other books could hit the same class of bug -- they
+        # could, and worse: Enjoy Life Forever has a single page with
+        # 31,390 style spans across 4.5M characters (~56,000 wrapped
+        # lines), which timed out past 30 SECONDS with the old linear
+        # scan here (this function iterated every one of 31,390 spans for
+        # EVERY line -- ~1.7 billion iterations). Same fix: bisect to the
+        # spans that could possibly overlap [abs_start, line_end), using
+        # self._styles_prefix_max_end for a correct backward early-exit,
+        # instead of scanning the whole list every time.
+        upper_idx = bisect.bisect_left(self._styles_starts, line_end)
+        j = upper_idx - 1
+        while j >= 0:
+            sp = self._styles[j]
+            if sp.end > abs_start:
+                s = max(sp.start, abs_start) - abs_start
+                e = min(sp.end, line_end) - abs_start
+                for c in range(s, e):
+                    if sp.bold:
+                        bold_flags[c] = True
+                    if sp.italic:
+                        italic_flags[c] = True
+            if self._styles_prefix_max_end[j] <= abs_start:
+                break
+            j -= 1
         runs = []
         run_start = 0
         for c in range(1, n + 1):
@@ -4079,12 +5726,29 @@ class App:
         def style_at(i):
             abs_i = abs_word_start + i
             b = it = False
-            for sp in self._styles:
+            # v26.07.09.15: binary search + prefix-max-end early exit,
+            # replacing a full linear scan over every style span on the
+            # page -- see self._styles_starts/_styles_prefix_max_end's
+            # assignment comment (_ensure_page_built()) for the full
+            # story. bisect_right finds the rightmost span whose start
+            # is <= abs_i; walking backward from there is safe to stop
+            # the moment prefix_max_end proves no span at or before that
+            # index could possibly still cover abs_i (its end would have
+            # to exceed abs_i, and prefix_max_end is the max end seen so
+            # far in start-order) -- correct even with overlapping or
+            # duplicate spans, not just a bounded-window guess.
+            idx = bisect.bisect_right(self._styles_starts, abs_i) - 1
+            j = idx
+            while j >= 0:
+                sp = self._styles[j]
                 if sp.start <= abs_i < sp.end:
                     if sp.bold:
                         b = True
                     if sp.italic:
                         it = True
+                if self._styles_prefix_max_end[j] <= abs_i:
+                    break
+                j -= 1
             return b, it
 
         total = 0
@@ -4132,7 +5796,7 @@ class App:
             i = best
         return chunks
 
-    def _wrap(self, text, combined, avail_w_px):
+    def _wrap(self, text, combined, avail_w_px, progress_cb=None):
         """Word-wrap text to fit avail_w_px pixels, measuring each word's
         actual rendered width rather than approximating via a fixed
         character count -- character-count wrapping (using a wide
@@ -4143,7 +5807,15 @@ class App:
         absolute character offset of each returned line in the original
         text -- instead of leaving callers to reconstruct it themselves.
         See _ensure_page_built()'s note on why that reconstruction was
-        wrong for wrapped (multi-line) paragraphs."""
+        wrong for wrapped (multi-line) paragraphs.
+
+        v26.07.09.19: progress_cb(fraction), if given, is called after
+        each paragraph with offset/len(text) as a rough completion
+        fraction -- NOT called every paragraph unconditionally (the
+        caller in _ensure_page_built() throttles to ~4x/second itself,
+        this just gives it the chance every paragraph boundary, which is
+        frequent enough to feel smooth without being every single word)."""
+        text_len = len(text) or 1
         span_ranges = [(s, e) for (_, _, s, e) in combined]
         char_span = [-1] * len(text)
         for i, (s, e) in enumerate(span_ranges):
@@ -4158,6 +5830,8 @@ class App:
         line_abs_starts = []
         offset = 0
         for para in text.split("\n"):
+            if progress_cb is not None:
+                progress_cb(offset / text_len)
             if para.strip() == "":
                 lines.append("")
                 line_span_map.append([])
@@ -4295,8 +5969,15 @@ class App:
             except Exception as e:
                 _boot_log(f"could not pre-request image bytes for {key}: {e}\n")
 
-    def get_image_texture(self, renderer, image_span):
-        key = self._img_key(image_span.src)
+    def get_image_texture(self, renderer, image_span, full_native=False):
+        """v26.07.09.07: full_native=True (Image Maximize Mode only) uses a
+        SEPARATE cache key (_IMGVIEW_NATIVE_KEY_SUFFIX) and requests
+        force_scale_n=8 (true native resolution) instead of the shared
+        inline target-box scale. Never reuses or overwrites the plain
+        inline-purpose entry for the same image -- see
+        _IMGVIEW_NATIVE_KEY_SUFFIX's own comment for why that matters."""
+        base_key = self._img_key(image_span.src)
+        key = base_key + self._IMGVIEW_NATIVE_KEY_SUFFIX if full_native else base_key
         cached = self._image_textures.get(key)
         if cached:
             self._image_textures.move_to_end(key)  # mark as recently used
@@ -4319,7 +6000,9 @@ class App:
             else:
                 try:
                     jpeg_bytes = self.doc.get_image_bytes(image_span.src)
-                    self.image_loader.request(key, jpeg_bytes)
+                    self.image_loader.request(
+                        key, jpeg_bytes,
+                        force_scale_n=8 if full_native else None)
                 except Exception as e:
                     _boot_log(f"could not read image bytes for {key}: {e}\n")
             return cached  # nothing yet, caller shows placeholder
@@ -4449,8 +6132,16 @@ class App:
         at whatever Font Size is currently active. hint_height() returns
         pre-_sy-scaling design units (same convention every other screen
         already follows -- see hint_height()'s own docstring), hence the
-        _sy() wrap here."""
-        return SH - _sy(hint_height(self.fonts))
+        _sy() wrap here.
+
+        v26.07.09.06: now passes _IMGVIEW_HINT_CALIBRATION instead of
+        using the app-wide default -- this screen's hint text is much
+        shorter than any other screen's, and every pixel reclaimed here
+        is a pixel of actual image, not just body text. draw_image_view()
+        MUST pass the same calibration to every draw_hint() call it
+        makes, or the bar drawn on screen won't match the space reserved
+        here."""
+        return SH - _sy(hint_height(self.fonts, calibration=_IMGVIEW_HINT_CALIBRATION))
 
     def _imgview_reset(self, iw, ih):
         """(Re)computes zoom bounds and centers the crop for a native image
@@ -4662,7 +6353,25 @@ class App:
             li += 1
             if row >= body_rows:
                 break
-        self.scroll = min(li, max(0, n - 1))
+        # v0.1.154 BUG FIX (Kaleb's report): was `min(li, max(0, n - 1))` --
+        # a DIFFERENT, wrong ceiling than every other scroll path in the
+        # app uses (UP/DOWN d-pad clamps to `max(0, n - body_rows)`, and
+        # the reader's %-complete indicator divides by that exact same
+        # value). n-1 is the last LINE index, not the scroll position that
+        # shows the final full screen -- letting page_down() (L/R
+        # page-turn) land anywhere up to n-1 meant repeated page-turns
+        # could scroll well past the last real screenful into blank
+        # space, AND pushed the % indicator's denominator (n-body_rows)
+        # below the numerator (scroll), so pct could read over 100%.
+        # Confirmed via real page_down() simulation on Kaleb's own books:
+        # repeated L/R at end of book reached pct=900% on some titles
+        # before this fix (short books, or ones with front matter, where
+        # n-1 sat far past n-body_rows). Now clamped to the same
+        # `max(0, n - body_rows)` ceiling as everywhere else, so the last
+        # page-turn always lands exactly on the final screenful -- text
+        # or image flush to the bottom, nothing beyond it -- and pct
+        # cannot exceed 100%.
+        self.scroll = min(li, max(0, n - body_rows))
 
     def page_up(self, line_h, body_rows):
         """Backward counterpart to page_down() -- walks li's downward
@@ -4864,17 +6573,31 @@ HINT_H_MAX_LINES = 3  # Absolute ceiling on hint bar lines. In practice the
 
 # The two longest hint strings in the app, used only to calibrate hint
 # font size (_hint_pt()) and line count (_hint_lines_needed()) per global
-# Font Size step -- NOT drawn directly. Keep in sync if a hint string grows.
-# v0.1.119: the Library one was out of sync -- "LEFT/RIGHT Jump 10" was
-# added to the real lib_hint string in v0.1.110 (quick-scroll) but never
-# added here, so _hint_pt()/_hint_lines_needed() were calibrated against
-# a shorter string than what actually gets drawn. That made both
-# undershoot the space the real hint needed, and the real hint's tail
-# got clipped mid-word ("START Menu" -> "START M", "B Quit" dropped
-# entirely) -- confirmed via Kaleb's on-device screenshot.
+# Font Size step -- NOT drawn directly. Keep in sync if any real hint
+# string grows past these -- including the download Browse screen's
+# worst-case combination (Page + Search + Code + Help all present at
+# once), which is currently shorter than the Reader hint below and so
+# isn't one of the two calibration strings itself, but would need to
+# become one if it ever grows further.
 _HINT_CALIBRATION_TEXTS = (
-    "D-PAD Select/Scroll  A Follow  B Back  L/R Page  L2/R2 Chapter  Y Fast x10  X Menu  START Bookmark",
-    "A Open  Y Sort  X Pin  LEFT/RIGHT Jump 10  SELECT Finished  L/R Font Size  L2 Download  START Menu  B Quit",
+    "D-PAD Scroll  A Follow  B Back  L/R Page  L2/R2 Chap  Y Fast x10  X Menu  START Bookmark",
+    "A Open  Y Sort  LEFT/RIGHT Jump 10  L/R Font Size  L2 Download  START Menu  B Quit",
+)
+
+# v26.07.09.06: Image Maximize Mode's OWN calibration -- deliberately NOT
+# part of _HINT_CALIBRATION_TEXTS above. This screen's hint text is much
+# shorter than any other screen's, and unlike a text screen (where a
+# taller reserved bar just costs one fewer body-text row), here the
+# reserved strip subtracts directly from image display area -- worth a
+# dedicated, smaller calibration. Safe because this screen never layers
+# on top of another screen's already-drawn hint bar (see _hint_pt()'s
+# docstring for why that matters for the anti-overlap invariant). Must
+# contain the actual full hint text this screen ever draws -- if that
+# text ever changes, update this too, or the shrink-loop will calibrate
+# against a stale (now-wrong) string, same class of bug the main
+# calibration tuple above just had.
+_IMGVIEW_HINT_CALIBRATION = (
+    "D-PAD Pan  L/R Zoom Out/In  B Back",
 )
 
 
@@ -4917,7 +6640,7 @@ def _wrap_hint_text(font, text, max_w, max_lines=HINT_H_MAX_LINES):
     return lines
 
 
-def _hint_pt(fonts):
+def _hint_pt(fonts, calibration=None):
     """v0.1.60: point size to use for the hint bar at the CURRENT global
     Font Size setting -- normally just fonts.ui_small's size, but stepped
     down (floor 11pt) if even HINT_H_MAX_LINES=3 lines at max width isn't
@@ -4926,12 +6649,59 @@ def _hint_pt(fonts):
     (same value everywhere, still), it just may pick a smaller hint font at
     the top 1-2 Font Size steps than the rest of the UI uses. Cached per
     size_index on the FontManager instance so this isn't recomputed every
-    frame."""
+    frame.
+
+    v26.07.09.06: calibration is an OPTIONAL override (defaults to the
+    module-level _HINT_CALIBRATION_TEXTS, i.e. every existing caller is
+    unaffected). A caller can pass its OWN calibration tuple instead --
+    used by Image Maximize Mode, whose hint text is far shorter than any
+    other screen's, so calibrating against the app-wide worst case wasted
+    real image display area for no reason (that reserved strip subtracts
+    directly from image pixels on THIS screen, unlike text screens where
+    it just costs a body-text row). Safe to do only because Image
+    Maximize Mode does its own full-screen redraw every frame and never
+    overlays on top of another screen's already-drawn hint bar the way
+    e.g. the popup Menu does over Reader -- so the v0.1.52 anti-overlap
+    invariant (every screen reserves the SAME height) doesn't apply here;
+    that invariant exists to stop a REUSED draw call's taller bar from
+    bleeding through a shorter one layered on top of it, which this
+    screen structurally can't do. Cached separately (keyed by whether an
+    override was given) so the two calibrations never collide in the
+    same FontManager instance's cache.
+
+    v0.1.153 BUG FOUND (Kaleb's photo report, after the DejaVu Sans
+    Condensed switch): DejaVu Sans Condensed is still noticeably wider
+    than Liberation Sans/Inter were at the same pt, so at 18pt the LIBRARY
+    screen's calibration string (_HINT_CALIBRATION_TEXTS[1]) now needs 2
+    lines where it used to fit on 1 -- and because hint_height() reserves
+    ONE shared bar height across every screen (the v0.1.52 anti-overlap
+    invariant), EVERY screen's hint bar got bumped to the 2-line reserved
+    height at 18pt, even screens whose own hint (e.g. the reader's) only
+    ever draws 1 line. Confirmed via real SDL_RenderReadPixels: at 18pt
+    the reader hint bar reserved 60px for a single ~13px-tall line of
+    text -- ~40% empty padding above AND below. Root cause was that the
+    old shrink-loop only ever stepped pt down when HINT_H_MAX_LINES=3
+    wasn't enough; it never considered stepping down to reclaim a lost
+    line when a SMALL pt reduction would do it.
+    Fix: after the existing floor-11 fallback, try a cheap (<=3pt) further
+    reduction -- if some pt within that budget gets the calibration set
+    to wrap into fewer lines than the current pt does, take the LARGEST
+    such pt (least visual size cost) instead. Confirmed via the same
+    real-font search: 18pt needs only a 1pt trim (14->13) to drop from 2
+    lines back to 1; 32pt needs only a 3pt trim (28->25) to drop from 3
+    lines to 2 -- both well within budget. 21pt/24pt/28pt would need a
+    4pt+ trim to drop a line (out of budget) and are deliberately left
+    alone -- their 2-line hint bars were already only ~20% padding
+    (proportionate, not a bug) because those screens' hints genuinely
+    span 2 real lines at that size."""
     if not fonts:
         return None
-    cache = getattr(fonts, "_hint_pt_cache", None)
+    calib_texts = calibration if calibration is not None else _HINT_CALIBRATION_TEXTS
+    cache_attr = "_hint_pt_cache" if calibration is None else "_hint_pt_cache_alt"
+    cache = getattr(fonts, cache_attr, None)
     if cache is None:
-        cache = fonts._hint_pt_cache = {}
+        cache = {}
+        setattr(fonts, cache_attr, cache)
     if fonts.size_index in cache:
         return cache[fonts.size_index]
     base_pt = max(11, FontManager.SIZE_STEPS[fonts.size_index] - 4)  # == ui_small's pt
@@ -4942,16 +6712,30 @@ def _hint_pt(fonts):
                         # this calibration would pick a font size that
                         # doesn't actually fit in what draw_hint() really
                         # has available.
+
+    def _lines_at(candidate_pt):
+        f = fonts._get(candidate_pt)
+        if not f:
+            return HINT_H_MAX_LINES
+        return max(
+            len(_wrap_hint_text_unbounded(f, t, max_w))
+            for t in calib_texts
+        )
+
     pt = base_pt
-    while pt >= 11:
-        font = fonts._get(pt)
-        if font and all(
-            len(_wrap_hint_text_unbounded(font, t, max_w)) <= HINT_H_MAX_LINES
-            for t in _HINT_CALIBRATION_TEXTS
-        ):
-            break
+    while pt >= 11 and _lines_at(pt) > HINT_H_MAX_LINES:
         pt -= 2
     pt = max(11, pt)
+
+    # v0.1.153: cheap tie-break shrink -- see docstring above.
+    HINT_TIEBREAK_MAX_SHRINK = 3
+    lines_at_pt = _lines_at(pt)
+    floor_budget = max(11, pt - HINT_TIEBREAK_MAX_SHRINK)
+    for candidate in range(pt - 1, floor_budget - 1, -1):
+        if _lines_at(candidate) < lines_at_pt:
+            pt = candidate
+            break
+
     cache[fonts.size_index] = pt
     return pt
 
@@ -5071,7 +6855,7 @@ def _wrap_hint_text_unbounded(font, text, max_w):
     return lines
 
 
-def _hint_lines_needed(fonts):
+def _hint_lines_needed(fonts, calibration=None):
     """v0.1.61: how many lines the hint bar actually needs at the CURRENT
     global Font Size -- calibrated against the two longest hint strings in
     the app (_HINT_CALIBRATION_TEXTS), capped at HINT_H_MAX_LINES. Still a
@@ -5082,22 +6866,31 @@ def _hint_lines_needed(fonts):
     didn't want a permanently 3-line-thick bar on the 720x720 screen at
     small/medium Font Sizes where 1 line is all that's ever needed (only
     24pt+ actually needs 2; nothing needs 3 once _hint_pt()'s shrink-first
-    step is applied). Cached per size_index."""
+    step is applied). Cached per size_index.
+
+    v26.07.09.06: calibration override, same as _hint_pt() above -- see
+    that docstring for why this is safe to override for Image Maximize
+    Mode specifically without breaking the anti-overlap invariant for
+    every other screen (which still uses the default, app-wide
+    calibration)."""
     if not fonts:
         return 1
-    cache = getattr(fonts, "_hint_lines_cache", None)
+    calib_texts = calibration if calibration is not None else _HINT_CALIBRATION_TEXTS
+    cache_attr = "_hint_lines_cache" if calibration is None else "_hint_lines_cache_alt"
+    cache = getattr(fonts, cache_attr, None)
     if cache is None:
-        cache = fonts._hint_lines_cache = {}
+        cache = {}
+        setattr(fonts, cache_attr, cache)
     if fonts.size_index in cache:
         return cache[fonts.size_index]
-    pt = _hint_pt(fonts)
+    pt = _hint_pt(fonts, calibration=calibration)
     font = fonts._get(pt) if pt else None
     max_w = SW - 2 * HINT_SIDE_PAD  # v0.1.137: kept in sync with _hint_pt()
                         # and draw_hint() -- see _hint_pt()'s comment.
     if font:
         needed = max(
             len(_wrap_hint_text_unbounded(font, t, max_w))
-            for t in _HINT_CALIBRATION_TEXTS
+            for t in calib_texts
         )
     else:
         needed = HINT_H_MAX_LINES
@@ -5146,7 +6939,7 @@ def _reader_body_layout(fonts):
     return body_top, line_h, body_rows
 
 
-def hint_height(fonts):
+def hint_height(fonts, calibration=None):
     """Hint bar height in design units (pre-_sy scaling) -- v0.1.52:
     reserves the SAME height for the CURRENT font size regardless of what
     text any particular screen's hint bar actually needs. This is a
@@ -5161,9 +6954,13 @@ def hint_height(fonts):
     v0.1.61: uses _hint_lines_needed() (1-3, calibrated per Font Size)
     instead of always the HINT_H_MAX_LINES worst case -- was making the
     hint bar permanently 3 lines thick on the 720x720 screen even at
-    small Font Size where 1 line is all that's ever needed."""
-    pt = _hint_pt(fonts)
-    lines = _hint_lines_needed(fonts)
+    small Font Size where 1 line is all that's ever needed.
+
+    v26.07.09.06: optional calibration override, passed straight through
+    to _hint_pt()/_hint_lines_needed() -- see _hint_pt()'s docstring for
+    which screen uses this and why it's safe."""
+    pt = _hint_pt(fonts, calibration=calibration)
+    lines = _hint_lines_needed(fonts, calibration=calibration)
     if fonts and pt:
         font = fonts._get(pt)
         # v0.1.133 BUG FIX: was TTF_FontHeight(font)/_SY alone -- draw_hint()
@@ -5210,33 +7007,142 @@ def _draw_status_bar(renderer, fonts, msg, color, bottom_y):
     draw_reader()/draw_library()/draw_download_browse() that each
     independently called _status_bar_h() + one render_text() -- keeping
     this in one place means a future tweak can't drift out of sync
-    between the three screens the way three hand-copied blocks could."""
+    between the three screens the way three hand-copied blocks could.
+
+    v0.1.153 DESIGN CHANGE (Kaleb's photo annotation): was a full-width
+    (x=0, w=SW) bar -- looked like a large empty band whenever the
+    message was short ("Bookmark added" etc.), since the panel color
+    filled the whole screen width regardless of how little text it held.
+    Now a pill: width hugs the widest wrapped line (+ TOAST_PILL_PAD_X
+    each side), left-anchored at TOAST_PILL_MARGIN_X from the screen
+    edge (matching where the old bar's text used to start), with fully
+    rounded (stadium-shape) ends via fill_rect_rounded's radius=bar_h//2
+    -- no need for the old erase-to-background corner helpers, since a
+    floating pill that doesn't touch the bottom/side screen edges
+    doesn't need them.
+    v0.1.153: also tightened vertical padding -- see TOAST_ROW_PAD/
+    TOAST_LINE_GAP comments (DejaVu Sans Condensed's real glyph ink runs
+    notably shorter than its own TTF_FontHeight metric).
+    v26.07.10.03: passes msg through _kaomoji_for_status() here (one
+    choke point -- every toast in the app draws through this single
+    function) so "Downloading..."/"...downloaded"/"...already ..."
+    messages get their face without touching the ~6 individual
+    set_status() call sites."""
+    msg = _kaomoji_for_status(msg)
     lines = _status_msg_lines(fonts, msg)
-    line_h = TTF.TTF_FontHeight(fonts.ui_small) + _sy(6)
-    bar_h = max(_status_bar_h(fonts), line_h * len(lines) + _sy(10))
+    line_h = TTF.TTF_FontHeight(fonts.ui_small) + _sy(TOAST_LINE_GAP)
+    bar_h = max(_status_bar_h(fonts), line_h * len(lines) + _sy(TOAST_ROW_PAD))
     top_y = bottom_y - bar_h
-    fill_rect(renderer, 0, top_y, SW, bar_h, COL_PANEL)
-    # v0.1.139: Kaleb's photo annotations -- wants the toast/status bar
-    # ("Theme: Dim Warm", "Font size: 14pt", etc.) curved to match the
-    # hint bar's own enlarged corners (v0.1.137), not just the screen's
-    # outer frame. Was still CORNER_RADIUS (6px) -- explicitly left
-    # alone in v0.1.137 since it wasn't part of that request; now
-    # matched to the same HINT_CORNER_RADIUS, same bar_h // 2 clamp
-    # (this bar is often even thinner than the hint bar at small Font
-    # Sizes, so the clamp matters here too).
-    corner_radius = min(HINT_CORNER_RADIUS, bar_h // 2)
-    _round_top_corners_to_bg(renderer, 0, top_y, SW, corner_radius)
-    # v0.1.131: center the actual line block vertically -- bar_h is a max()
-    # against a fixed single-line floor (_status_bar_h), so a 1-line
-    # message can have a couple px of slack above the old fixed _sy(6)
-    # top offset; centering makes that correct in every case rather than
-    # relying on the floor happening to match line_h+pad exactly.
+
+    text_w = max((text_width(fonts.ui_small, line) for line in lines), default=0)
+    max_pill_w = SW - 2 * TOAST_PILL_MARGIN_X
+    pill_w = min(max_pill_w, text_w + 2 * TOAST_PILL_PAD_X)
+    pill_x = TOAST_PILL_MARGIN_X
+
+    fill_rect_rounded(renderer, pill_x, top_y, pill_w, bar_h, COL_PANEL,
+                       radius=bar_h // 2)
+
     content_h = line_h * len(lines)
     start_y = top_y + max(0, (bar_h - content_h) // 2)
     for i, line in enumerate(lines):
         render_text(renderer, fonts.ui_small, line, color,
-                     HINT_SIDE_PAD, start_y + i * line_h + _sy(3))
+                     pill_x + TOAST_PILL_PAD_X, start_y + i * line_h + _sy(3))
     return bar_h
+
+
+TOAST_ROW_PAD = 4  # v0.1.153: was a flat 10 (see _status_bar_h/_draw_status_bar
+                    # docstrings) -- reduced because DejaVu Sans Condensed's
+                    # TTF_FontHeight already runs well taller than its real
+                    # glyph ink (confirmed via pixel readback: ~17px reported
+                    # height vs ~10px actual ink for "Bookmark added" at
+                    # 18pt), so the old Liberation/Inter-tuned padding piled
+                    # on top of that was excessive. Confirmed via pixel
+                    # readback across all 7 Font Sizes and several real
+                    # toast strings (including descenders) that this does
+                    # NOT clip any glyph at any size before shipping.
+TOAST_LINE_GAP = 3  # v0.1.153: was 6, same reasoning as TOAST_ROW_PAD above.
+TOAST_PILL_MARGIN_X = _sx(14)  # gap from the screen's left edge to the
+                    # pill's own left edge (v0.1.153, new pill-shape toast --
+                    # Kaleb's photo annotation: the old bar spanned the full
+                    # screen width even when the message was short, leaving a
+                    # large empty band to the right of the text).
+TOAST_PILL_PAD_X = _sx(16)  # internal padding from the pill's edge to the
+                    # text itself, each side.
+
+# v26.07.10.03: small kaomoji-style faces for loading/status feedback
+# (Kaleb's request). Built ONLY from glyphs confirmed present in the
+# bundled DejaVu Sans Condensed font -- the originally requested faces
+# used Kannada (U+0CB0) and Malayalam (U+0D26/U+0D4D/U+0D3F) script
+# characters plus U+02F5, none of which this font covers. Confirmed via
+# direct cmap inspection (fontTools) this session: this font's runtime
+# glyph-substitution table is empty (see FONT_LICENSE.txt/module notes
+# elsewhere), so a missing glyph renders as a blank box with no
+# fallback -- not a cosmetic risk worth taking for a loading-screen
+# decoration. Every character below was individually verified present
+# in font.ttf's cmap before use.
+FACE_THINKING_A = "(\u00ac\u203f\u00ac)"      # (¬‿¬)
+FACE_THINKING_B = "(\u2299_\u2299)?"          # (⊙_⊙)?
+FACE_DONE = "\u0669(\u25d5\u203f\u25d5)\u06f6 \u2727"  # ٩(◕‿◕)۶ ✧
+FACE_CYCLE_SECONDS = 0.6  # how often the thinking face swaps A/B
+
+# v26.07.10.04: two more faces (Kaleb's request) -- the Menu screen's
+# logo, and the exit-toast face. Same reasoning as above: the ORIGINAL
+# requests used U+02F6 (MODIFIER LETTER MIDDLE DOUBLE ACUTE ACCENT,
+# missing from this font), U+15DC (Canadian Aboriginal Syllabics,
+# missing), and halfwidth katakana U+FF89/U+FF9E (missing) -- confirmed
+# via the same fontTools cmap check as before. Substitutes below use
+# only glyphs individually confirmed present: ˚ (U+02DA, small ring)
+# stands in for the missing sparkle-cheek mark, ◡ (U+25E1, lower half
+# circle) stands in for the missing compressed "w" mouth, and a plain
+# ASCII "~" replaces the missing katakana hand-wave, keeping the same
+# "waving off" feel.
+FACE_MENU_LOGO = "(\u02da\u1d54 \u1d55 \u1d54\u02da)"    # (˚ᵔ ᵕ ᵔ˚)
+EXIT_TOAST_SECONDS = 0.9  # how long the "Exiting..." toast shows before
+                    # the window actually closes -- long enough to
+                    # register as a deliberate goodbye, short enough
+                    # not to feel like the app is hanging on exit.
+
+# v26.07.10.05/.06: boot splash timing (Kaleb's request) -- title types
+# over SPLASH_TYPE_SECONDS, then the subtitle types over SPLASH_
+# SUBTITLE_TYPE_SECONDS, then everything holds for SPLASH_HOLD_SECONDS
+# before handing off to the real destination screen. 2 + 2 + 3 = 7s
+# total, matching Kaleb's exact spec. See draw_splash().
+SPLASH_TYPE_SECONDS = 2.0
+SPLASH_SUBTITLE_TYPE_SECONDS = 2.0
+SPLASH_HOLD_SECONDS = 3.0
+SPLASH_TITLE_END = SPLASH_TYPE_SECONDS
+SPLASH_SUBTITLE_END = SPLASH_TITLE_END + SPLASH_SUBTITLE_TYPE_SECONDS
+SPLASH_TOTAL_SECONDS = SPLASH_SUBTITLE_END + SPLASH_HOLD_SECONDS
+SPLASH_TITLE = "PICO READER"
+# v26.07.10.06/.09: subtitle face. v26.07.10.09's requested string
+# (⸜(｡˃ ᵕ ˂ )⸝♡) uses U+2E1C/U+2E1D (decorative low double-quote
+# brackets) and U+FF61 (halfwidth ideographic full stop), all three
+# absent from this font (confirmed via fontTools cmap) -- ♡ (U+2661)
+# IS present and kept as-is. Substituted the three missing marks with
+# ˋ/ˊ (modifier letter grave/acute, confirmed present) standing in for
+# the ⸜/⸝ sparkle-hand brackets, and ˚ for the ｡ dot -- same "hands
+# framing a happy face" shape, all confirmed-present glyphs.
+SPLASH_SUBTITLE = "Designed with Love by: Kaleb Fabsik \u02cb(\u02da\u02c3 \u1d55 \u02c2 )\u02ca\u2661"
+
+
+def _kaomoji_for_status(msg):
+    """Appends a small face to certain status/loading strings -- a
+    cycling 'thinking' face for anything still in progress
+    (Downloading/Rendering/Pre-rendering/Loading), a fixed 'done' face
+    for anything reporting completion or an already-satisfied request
+    (downloaded/already). Purely cosmetic and text-based -- does not
+    change what these messages say, only appends to them, so it can't
+    affect any logic elsewhere that inspects msg content. See
+    FACE_THINKING_A/_B/FACE_DONE for why these specific glyphs were
+    chosen over the originally requested ones."""
+    low = msg.lower()
+    if low.startswith(("downloading", "rendering", "pre-rendering", "loading")):
+        face = (FACE_THINKING_A if int(time.time() / FACE_CYCLE_SECONDS) % 2 == 0
+                else FACE_THINKING_B)
+        return f"{msg}  {face}"
+    if "downloaded" in low or "already" in low:
+        return f"{msg}  {FACE_DONE}"
+    return msg
 
 
 def _status_bar_h(fonts):
@@ -5246,8 +7152,13 @@ def _status_bar_h(fonts):
     no longer fit inside that fixed box and visually spilled into the
     hint bar directly below it (confirmed via Kaleb's on-device
     screenshot: 'Font size: 32pt (largest)' overlapping the hint text).
-    Scales the same way _row_h() does."""
-    return _row_h(fonts.ui_small, pad=10)
+    Scales the same way _row_h() does.
+    v0.1.153: pad dropped 10->TOAST_ROW_PAD (4) -- see _draw_status_bar's
+    docstring for why (DejaVu Sans Condensed's real glyph ink runs well
+    short of its own TTF_FontHeight; the old flat padding was tuned for
+    Liberation Sans/Inter's tighter metrics and became excessive on top
+    of DejaVu's already-taller FontHeight)."""
+    return _row_h(fonts.ui_small, pad=TOAST_ROW_PAD)
 
 
 IMG_BOX_ROWS = 14  # v0.1.87: no longer the normal-case box size (that's
@@ -5365,10 +7276,10 @@ def _round_image_bottom_corners_to_hint(renderer, img_bottom_y, radius):
         SDL.SDL_RenderFillRect(renderer, ctypes.byref(right))
 
 
-def _draw_screen_frame(renderer):
+def _draw_screen_frame(renderer, bottom_radius=None):
     """v0.1.131: BMO-style outer screen frame -- masks all FOUR corners of
-    the whole 720x720 canvas with solid black quarter-circles, always,
-    regardless of theme (Kaleb's request, see SCREEN_FRAME_RADIUS above).
+    the whole 720x720 canvas with a quarter-circle cut, always, on every
+    screen (Kaleb's request, see SCREEN_FRAME_RADIUS above).
     Called exactly once per frame, right before SDL_RenderPresent, AFTER
     every screen's own draw_*() has finished -- this is deliberately NOT
     baked into individual draw_*() functions so it can never be
@@ -5379,6 +7290,26 @@ def _draw_screen_frame(renderer):
     applied to all 4 corners of the physical screen instead of one
     panel's edge, and with its own larger SCREEN_FRAME_RADIUS instead of
     the small per-panel CORNER_RADIUS.
+
+    COLOR HISTORY (Kaleb's report -- corners invisible on the real splash
+    screen, traced to a real measured problem: pure black against every
+    theme's original COL_BG measured ~1.06-1.15:1 WCAG contrast, well
+    under the 3:1 UI minimum, so corners were near-invisible on EVERY
+    screen/theme since v0.1.131, not something newly broken by the
+    splash). v26.07.10.08 tried lightening the CORNER instead (COL_BG
+    +85, theme-tinted) to fix this without touching any theme's palette.
+    v26.07.10.10 reverted that -- Kaleb explicitly wanted corners
+    "totally black" -- and lightened each theme's own COL_BG instead
+    (see THEMES' bg comments), settling on 1.5:1 contrast against pure
+    black after live-iterating through several targets (3:1 -> 2.7:1 ->
+    2.2:1 -> 1.9:1 -> 1.5:1, "subtle but just barely noticeable" was
+    the explicit brief) -- deliberately below the WCAG 3:1 UI minimum,
+    an aesthetic choice, not an accessibility target. COL_PANEL and
+    COL_ACCENT were both evaluated as alternatives to a bg change during
+    the v26.07.10.08 pass -- panel measured equally poor to black
+    (~1.03-1.11:1, a subtle surface-elevation shade, not built for bold
+    edges), accent gave real contrast but turned corners into a bold
+    theme-color cut, abandoning the black-bezel look entirely.
 
     v0.1.135 added a FRAME_EDGE_COLOR stroke along the curve boundary
     (Image Maximize Mode's bottom corners had near-zero contrast against
@@ -5395,44 +7326,81 @@ def _draw_screen_frame(renderer):
     (Image Maximize Mode's bottom corners have low contrast against the
     dark hint bar there specifically) -- Kaleb's instruction was clear
     and direct, so honored as-is; that screen can be revisited
-    separately if it turns out to matter in practice."""
-    radius = SCREEN_FRAME_RADIUS
-    radius = max(0, min(radius, SW // 2, SH // 2))
-    if radius <= 0:
+    separately if it turns out to matter in practice.
+
+    v26.07.09.14 BUG FIX (Kaleb's report -- hint bar corners "come to a
+    point" at small Font Size steps): root cause wasn't the hint bar's
+    OWN corner-rounding math (draw_hint()/_round_top_corners_to_bg() --
+    traced through by hand, genuinely a smooth quarter-circle at every
+    radius). It's that THIS function's bottom-corner mask is always the
+    same fixed SCREEN_FRAME_RADIUS (28px), regardless of how tall the
+    hint bar underneath it actually is. Confirmed: the hint bar is only
+    ~33px tall at the smallest Font Size step vs ~92px at the largest --
+    a fixed 28px cut consumes ~85% of the bar's height at the smallest
+    size but only ~30% at the largest, which reads as a disproportionate,
+    steep-looking cut rather than a gentle curve at small sizes.
+    bottom_radius now lets the caller (the main render loop, which knows
+    the current hint bar height via app.fonts) scale the BOTTOM corners
+    down to match; top corners are untouched (always the full fixed
+    radius) since they're never adjacent to the hint bar."""
+    top_radius = max(0, min(SCREEN_FRAME_RADIUS, SW // 2, SH // 2))
+    if bottom_radius is None:
+        bottom_radius = top_radius
+    else:
+        bottom_radius = max(0, min(bottom_radius, SW // 2, SH // 2))
+    max_radius = max(top_radius, bottom_radius)
+    if max_radius <= 0:
         return
-    SDL.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)  # always black, not theme-dependent
-    for row in range(radius):
-        dy = radius - row
-        dx = int(math.sqrt(max(0, radius * radius - dy * dy)))
-        inset = radius - dx
-        if inset <= 0:
-            continue
-        # top-left / top-right
-        tl = Rect(0, row, inset, 1)
-        SDL.SDL_RenderFillRect(renderer, ctypes.byref(tl))
-        tr = Rect(SW - inset, row, inset, 1)
-        SDL.SDL_RenderFillRect(renderer, ctypes.byref(tr))
-        # bottom-left / bottom-right
-        bl = Rect(0, SH - 1 - row, inset, 1)
-        SDL.SDL_RenderFillRect(renderer, ctypes.byref(bl))
-        br = Rect(SW - inset, SH - 1 - row, inset, 1)
-        SDL.SDL_RenderFillRect(renderer, ctypes.byref(br))
+    # v26.07.10.10: reverted to pure black (Kaleb's request: "totally
+    # black" corners) -- the v26.07.10.08 theme-tinted +85 approach is
+    # no longer needed now that each theme's bg itself was lightened
+    # (see THEMES' bg comments) specifically to give pure black
+    # something to contrast against, rather than lightening the corner
+    # to contrast against an unchanged near-black bg.
+    SDL.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)
+    for row in range(max_radius):
+        if row < top_radius:
+            dy = top_radius - row
+            dx = int(math.sqrt(max(0, top_radius * top_radius - dy * dy)))
+            inset = top_radius - dx
+            if inset > 0:
+                tl = Rect(0, row, inset, 1)
+                SDL.SDL_RenderFillRect(renderer, ctypes.byref(tl))
+                tr = Rect(SW - inset, row, inset, 1)
+                SDL.SDL_RenderFillRect(renderer, ctypes.byref(tr))
+        if row < bottom_radius:
+            dy = bottom_radius - row
+            dx = int(math.sqrt(max(0, bottom_radius * bottom_radius - dy * dy)))
+            inset = bottom_radius - dx
+            if inset > 0:
+                bl = Rect(0, SH - 1 - row, inset, 1)
+                SDL.SDL_RenderFillRect(renderer, ctypes.byref(bl))
+                br = Rect(SW - inset, SH - 1 - row, inset, 1)
+                SDL.SDL_RenderFillRect(renderer, ctypes.byref(br))
 
 
-def draw_hint(renderer, fonts, text, skip_top_corners=False):
+def draw_hint(renderer, fonts, text, skip_top_corners=False, calibration=None):
     """v0.1.136: skip_top_corners lets a caller suppress this function's
     own top-corner erase-to-COL_BG (_round_top_corners_to_bg) -- needed
     by Image Maximize Mode, which now rounds the IMAGE's bottom corners
     into COL_HINT_BG instead (see _round_image_bottom_corners_to_hint()
     and its docstring for why that's the correct direction there, unlike
     every other screen where erasing to COL_BG is correct because the
-    content directly above the hint bar really is COL_BG)."""
-    pt = _hint_pt(fonts)
+    content directly above the hint bar really is COL_BG).
+
+    v26.07.09.06: calibration override, passed straight through to
+    _hint_pt()/hint_height()/_hint_lines_needed() -- see _hint_pt()'s
+    docstring. A caller passing this MUST use the exact same calibration
+    value on every draw_hint() call it makes (Image Maximize Mode's 3
+    call sites all do), so the bar height this function draws always
+    matches whatever the caller's own layout math (e.g.
+    App._imgview_viewport_h()) reserved for it."""
+    pt = _hint_pt(fonts, calibration=calibration)
     font = fonts._get(pt) if pt else fonts.ui_small
     max_w = SW - 2 * HINT_SIDE_PAD  # v0.1.137: kept in sync with _hint_pt()
                         # and _hint_lines_needed() -- see _hint_pt()'s comment.
-    h = hint_height(fonts)
-    max_lines = _hint_lines_needed(fonts)
+    h = hint_height(fonts, calibration=calibration)
+    max_lines = _hint_lines_needed(fonts, calibration=calibration)
     lines = _wrap_hint_text(font, text, max_w, max_lines) or [""]
     bar_h = _sy(h)
     top_y = SH - bar_h
@@ -5487,7 +7455,12 @@ def draw_library(renderer, app):
     # screenshot). Now spaced using each line's actual font height.
     heading_y = _sy(16)
     render_text(renderer, app.fonts.ui_heading, "LIBRARY", COL_ACCENT, _sx(20), heading_y)
-    sort_y = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(4)
+    # v26.07.09.02: tightened gap under heading (4->2) -- this line was
+    # already COL_DIM + ui_small (smallest UI font), i.e. already treated
+    # as secondary metadata; the only remaining minimalism tweak was
+    # spacing it closer to the heading it belongs to, rather than floating
+    # with an even gap top and bottom like body content would.
+    sort_y = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(2)
     sort_line = f"Sort: {LIBRARY_SORT_LABELS[app.lib_sort_mode]}"
     if app.lib_filter_mode != "all":
         sort_line += f"   Filter: {LIBRARY_FILTER_LABELS[app.lib_filter_mode]}"
@@ -5518,6 +7491,20 @@ def draw_library(renderer, app):
     # variable row heights, no wrapping, no chapter-label cache).
     continue_book = app.most_recent_book()
     continue_filename = continue_book["filename"] if continue_book else None
+
+    # v26.07.09.02: fixed-width icon gutter for resume/pin/finished
+    # markers -- reserves room for the worst case (all three glyphs +
+    # inter-glyph spaces) once, up front, so every row's title starts at
+    # the same x regardless of which icons that particular book shows.
+    # v26.07.09.14: Kaleb's report -- the fixed-width gutter above (kept
+    # for reference in the comment history just below) reserved room for
+    # the WORST case on every single row, even rows with zero icons,
+    # which read as wasted space on the left of most titles. Reverted to
+    # a per-row dynamic width: icons (if any) push the title right by
+    # exactly their own width + a small gap; a row with no icons starts
+    # its title right at the left margin. Trade-off, explicitly chosen by
+    # Kaleb over the v26.07.09.02 alignment guarantee: titles no longer
+    # all start at the same x, but no row wastes space it isn't using.
 
     start = max(0, app.lib_index - visible // 2)
     for i in range(visible):
@@ -5551,13 +7538,32 @@ def draw_library(renderer, app):
         #   finished: U+2713 -> U+221A (SQUARE ROOT, √) -- common
         #             checkmark substitute in fonts lacking a true check
         #             glyph; reads clearly as "done" at this size.
-        continue_prefix = "\u25ba " if is_continue else ""  # v0.1.125: unambiguous
-                                                              # "resume here" marker,
-                                                              # leftmost so it reads
-                                                              # before pin/finished/title
-        pin_prefix = "\u2665 " if book["filename"] in app.pinned else ""
-        finished_prefix = "\u221a " if book["filename"] in app.finished else ""
-        prefix = continue_prefix + pin_prefix + finished_prefix
+        # v0.1.150: finished indicator restored to the originally-intended
+        # U+2713 (real CHECK MARK, ✓) now that the bundled font is Inter,
+        # which has it -- re-verified via TTF_RenderUTF8_Blended (not
+        # just cmap presence) that it rasterizes a real, non-empty glyph
+        # before switching back. The √ compromise above was specifically
+        # a Liberation Sans limitation, not a permanent design choice.
+        # v26.07.09.02: status icons (resume/pin/finished) moved out of
+        # the title text and into a fixed-width left gutter (icon_gutter_w,
+        # computed once above the loop). Previously these were plain text
+        # prepended to the title string, which meant the title's fit
+        # budget shrank or grew row-by-row depending on which icons that
+        # particular book happened to have -- titles didn't line up
+        # visually, and the v0.1.128 fix above had to reserve THIS row's
+        # exact icon width out of THIS row's title budget. Now every row
+        # reserves the SAME fixed gutter regardless of which icons (if
+        # any) it actually shows, so titles start at the same x on every
+        # row and the reserved-width math below only has to account for
+        # the suffix, not icons.
+        icons_str = ""
+        if is_continue:
+            icons_str += "\u25ba"  # unambiguous "resume here" marker,
+                                    # leftmost so it reads before pin/finished
+        if book["filename"] in app.pinned:
+            icons_str += ("\u2665" if not icons_str else " \u2665")
+        if book["filename"] in app.finished:
+            icons_str += ("\u2713" if not icons_str else " \u2713")
         suffix = ""
         if app.lib_sort_mode == "author" and book.get("author"):
             # v0.1.128: cap the author fragment itself (not just the
@@ -5588,17 +7594,20 @@ def draw_library(renderer, app):
         # and "Continue Reading"/author/relative-time now always survive
         # in full at every Font Size; if anything has to give, it's the
         # title getting an ellipsis, never the suffix.
-        reserved_w = text_width(app.fonts.ui_body, prefix) + text_width(app.fonts.ui_body, suffix)
-        title_budget = max(_sx(40), row_max_w - reserved_w)
+        suffix_w = text_width(app.fonts.ui_body, suffix)
+        icon_w = (text_width(app.fonts.ui_body, icons_str) + _sx(10)) if icons_str else 0
+        title_budget = max(_sx(40), row_max_w - icon_w - suffix_w)
         fitted_title = _fit_text(app.fonts.ui_body, book["title"], title_budget)
-        title_line = prefix + fitted_title + suffix
+        title_line = fitted_title + suffix
         # v0.1.125: the continue-book row also gets its own accent color
         # (unless it's ALSO the current selection highlight, which
         # already gets COL_ACCENT) so the marker reads clearly even at
         # the smallest Font Size step where the glyph itself is tiny.
         if is_continue and bi != app.lib_index:
             color = COL_ACCENT
-        render_text(renderer, app.fonts.ui_body, title_line, color, _sx(24), y + _sy(8))
+        if icons_str:
+            render_text(renderer, app.fonts.ui_body, icons_str, color, _sx(24), y + _sy(8))
+        render_text(renderer, app.fonts.ui_body, title_line, color, _sx(24) + icon_w, y + _sy(8))
 
     if not app.books:
         # v0.1.73: this used to be a single un-wrapped render_text() call
@@ -5623,15 +7632,132 @@ def draw_library(renderer, app):
         _draw_status_bar(renderer, app.fonts, app.status_msg, COL_WARNING,
                           SH - _sy(hint_height(app.fonts)))
 
-    lib_hint = "A Open  Y Sort  X Pin  LEFT/RIGHT Jump 10  SELECT Finished  L/R Font Size  START Menu  B Quit"
+    # v26.07.09.02: X Pin and SELECT Finished dropped from this bar (was
+    # 8-9 shortcuts, often wrapping to 2+ lines at larger Font Sizes).
+    # X and SELECT still work exactly as before -- unchanged -- and both
+    # actions are now ALSO reachable via the Library Menu (START) as
+    # "Pin/Unpin Selected" and "Mark Finished/Unfinished", same pattern
+    # as Delete Book. Sort keeps its bar shortcut (Y) since it's used
+    # often enough to justify staying dual-access; Jump 10 stays too,
+    # since it's a scroll aid, not a toggle, and doesn't fit the menu's
+    # "configure" pattern the same way.
+    lib_hint = "A Open  Y Sort  LEFT/RIGHT Jump 10  L/R Font Size  START Menu  B Quit"
     if DOWNLOAD_PLUGINS:
-        lib_hint = "A Open  Y Sort  X Pin  LEFT/RIGHT Jump 10  SELECT Finished  L/R Font Size  L2 Download  START Menu  B Quit"
+        lib_hint = "A Open  Y Sort  LEFT/RIGHT Jump 10  L/R Font Size  L2 Download  START Menu  B Quit"
     draw_hint(renderer, app.fonts, lib_hint)
+
+
+def _draw_large_page_loading_screen(renderer, app, percent=None, message=None):
+    """v26.07.09.17/.19: centered loading message shown before
+    draw_reader() commits to building (or disk-loading) a genuinely
+    expensive page. percent (0.0-1.0), if given, appends a live "NN%" --
+    added after Kaleb's on-device test: a flat, unmoving message across
+    several real seconds reads as "did this break?" without one. message
+    lets the disk-cache-load path (App._load_wrap_from_disk(), a single
+    fast-ish but non-trivial file read -- also flagged by Kaleb as long
+    enough to want feedback) show its own wording instead of implying a
+    fresh computation is happening.
+    v26.07.10.03: appends the cycling thinking face via
+    _kaomoji_for_status() whenever this screen is actually showing
+    progress (percent given) -- every wording variant used here
+    ("Rendering...", "Pre-rendering...", "Loading cached page...")
+    starts with a word _kaomoji_for_status() already matches."""
+    font = app.fonts.ui_heading
+    msg = message or "Rendering large page..."
+    if percent is not None:
+        msg = f"{msg}  {int(percent * 100)}%"
+        msg = _kaomoji_for_status(msg)
+    w = text_width(font, msg)
+    x = max(_sx(20), (SW - w) // 2)
+    y = (SH - TTF.TTF_FontHeight(font)) // 2
+    render_text(renderer, font, msg, COL_TEXT, x, y)
 
 
 def draw_reader(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
-    app._ensure_page_built()
+
+    # v26.07.09.17: for the (rare) case where the page about to be built
+    # is expensive enough that _ensure_page_built() below will take a
+    # real, felt amount of time -- show a loading message and present it
+    # FIRST, so the person gets feedback instead of an apparent freeze.
+    # This can't move the actual work to a background thread (see
+    # _ensure_page_built()'s v0.1.69 comment: _wrap() calls into SDL_ttf,
+    # and calling SDL_ttf off the main thread has never been verified
+    # safe on this hardware) -- the wrap itself stays synchronous, this
+    # just adds visible feedback around it. Threshold picked from real
+    # measurement across 4 books (506 sampled pages): median page is
+    # ~5.6K characters, 90th percentile ~44K -- only genuine outlier
+    # pages (2% of sampled pages) exceed 100K, so this can't flash on
+    # ordinary reading, only the pages that actually need it.
+    key = app.state.current_file
+    needs_build = app.doc and (key != app._page_cache_key or app.state.current_anchor is not None)
+    if needs_build:
+        wrap_key = (key, app.fonts.size_index)
+        if wrap_key not in app._wrapped_cache:
+            # v26.07.09.18: check the on-disk extreme-page cache before
+            # deciding a fresh wrap is needed at all -- if this exact
+            # (book, page, font size) was already wrapped once before
+            # (even in a previous session), load it straight into RAM
+            # instead of redoing the wrap. See App._load_wrap_from_disk()/
+            # _save_wrap_to_disk() and WRAP_CACHE_DIR's module-level
+            # comment for scope/threshold.
+            # v26.07.09.19: this disk read is itself non-trivial on real
+            # hardware (Kaleb's on-device report: ~4s for a 6MB file) --
+            # show a loading message for THIS path too, distinct wording
+            # ("Loading cached page...") since it's not doing a fresh
+            # computation, just reading one back.
+            # v26.07.09.22: upgraded from a static message to a live
+            # elapsed-seconds counter -- see
+            # App._load_wrap_from_disk_with_progress()'s docstring for why
+            # this is safe to background (pickle.load()/file I/O never
+            # touches SDL_ttf, unlike _wrap() itself).
+            if os.path.isfile(app._wrap_cache_path(key)):
+                _disk_loaded = app._load_wrap_from_disk_with_progress(renderer, key)
+            else:
+                _disk_loaded = None
+            if _disk_loaded is not None:
+                app._wrapped_cache_put(wrap_key, _disk_loaded)
+        if wrap_key not in app._wrapped_cache:
+            cached = app._page_text_cache.get(key)
+            if cached is not None:
+                peek_text = cached[0]
+            else:
+                try:
+                    page_result = app.doc.get_page(key)
+                    app._page_text_cache_put(key, page_result)
+                    peek_text = page_result[0]
+                except Exception:
+                    peek_text = ""
+            if len(peek_text) > LARGE_PAGE_LOADING_THRESHOLD:
+                # v26.07.10.03: if this exact page is sitting in
+                # _extreme_page_queue (either from the proactive
+                # book-open scan, or re-queued after a B/L2/R2 bail-out
+                # -- see _handle_wrap_abort()), say so, with its
+                # position, instead of a plain "Rendering..." that gives
+                # no sense of whether background progress has been
+                # happening. Purely informational -- this frame still
+                # goes on to call _ensure_page_built() below either way,
+                # same as always.
+                if key in app._extreme_page_queue:
+                    _qpos = app._extreme_page_queue.index(key)
+                    _qmsg = ("Rendering large page... (queued, next up)" if _qpos == 0
+                             else f"Rendering large page... (queued, {_qpos} ahead)")
+                    _draw_large_page_loading_screen(renderer, app, message=_qmsg)
+                else:
+                    _draw_large_page_loading_screen(renderer, app)
+                SDL.SDL_RenderPresent(renderer)
+    elif app._extreme_page_queue:
+        # v26.07.09.21: only touch the background pre-render queue when
+        # the CURRENTLY-viewed page didn't itself need any work this
+        # frame -- never delay the person's own navigation to do
+        # proactive work for a page they haven't asked for yet. One
+        # candidate per draw_reader() call (not the whole queue at once)
+        # so this can't itself become a multi-page synchronous stall.
+        href = app._extreme_page_queue.pop(0)
+        if not os.path.isfile(app._wrap_cache_path(href)):
+            app._prerender_one_extreme_page(renderer, href)
+
+    app._ensure_page_built(renderer)
 
     body_top, line_h, body_rows = _reader_body_layout(app.fonts)
 
@@ -5891,8 +8017,22 @@ def draw_reader(renderer, app):
         _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
                           SH - _sy(hint_height(app.fonts)))
 
-    draw_hint(renderer, app.fonts,
-              "D-PAD Select/Scroll  A Follow  B Back  L/R Page  L2/R2 Chapter  Y Fast x10  X Menu  START Bookmark")
+    # v26.07.09.04: Immersive Mode hides this bar's TEXT/GRAPHICS only --
+    # the reserved bottom margin body_rows accounts for via
+    # _reader_body_layout() is completely untouched, so pagination can
+    # never disagree with what's drawn (see that function's docstring
+    # for the exact historical bug this sidesteps). X still opens the
+    # Menu even with nothing drawn here.
+    if not app.immersive_mode:
+        draw_hint(renderer, app.fonts,
+                  "D-PAD Scroll  A Follow  B Back  L/R Page  L2/R2 Chap  Y Fast x10  X Menu  START Bookmark")
+                  # v26.07.09.03: "Select/Scroll" -> "Scroll" and "Chapter" ->
+                  # "Chap" -- wording-only trim for a bit of extra width
+                  # headroom at 21pt+ (still wraps to 2 lines there, same as
+                  # before -- this screen's bar was never actually 3+ lines
+                  # or overflowing, unlike the old Library bar; every item
+                  # here is a core reading control, not a toggle/setting, so
+                  # nothing was moved into the Menu).
 
 
 IMGVIEW_ZOOM_STEP = 1.15       # multiplicative zoom per L/R press
@@ -5918,19 +8058,19 @@ def draw_image_view(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     image_span = app._imgview_span
     if image_span is None:
-        draw_hint(renderer, app.fonts, "B Back")
+        draw_hint(renderer, app.fonts, "B Back", calibration=_IMGVIEW_HINT_CALIBRATION)
         return
 
     vh = app._imgview_viewport_h()
 
-    entry = app.get_image_texture(renderer, image_span)
+    entry = app.get_image_texture(renderer, image_span, full_native=True)
     if not entry or entry == "error":
         msg = "Image failed to load" if entry == "error" else "Loading image..."
         color = COL_DIM
         tw = text_width(app.fonts.ui_small, msg)
         render_text(renderer, app.fonts.ui_small, msg, color,
                     (SW - tw) // 2, vh // 2)
-        draw_hint(renderer, app.fonts, "B Back")
+        draw_hint(renderer, app.fonts, "B Back", calibration=_IMGVIEW_HINT_CALIBRATION)
         return
 
     tex, iw, ih, is_full, _buf = entry
@@ -5980,16 +8120,111 @@ def draw_image_view(renderer, app):
     # not COL_BG.
     _round_image_bottom_corners_to_hint(renderer, vh, IMG_MAXIMIZE_CORNER_RADIUS)
     draw_hint(renderer, app.fonts,
-              "D-PAD Pan  L/R Zoom Out/In  B Back", skip_top_corners=True)
+              "D-PAD Pan  L/R Zoom Out/In  B Back", skip_top_corners=True,
+              calibration=_IMGVIEW_HINT_CALIBRATION)
+
+
+def draw_splash(renderer, app):
+    """v26.07.10.05/.06: boot splash (Kaleb's request) -- FACE_MENU_LOGO
+    above SPLASH_TITLE (spells left-to-right over SPLASH_TYPE_SECONDS),
+    then SPLASH_SUBTITLE near the bottom (spells left-to-right over the
+    following SPLASH_SUBTITLE_TYPE_SECONDS), then everything holds for
+    SPLASH_HOLD_SECONDS before handing off to app._splash_dest_screen
+    (whatever App.__init__ actually resolved -- Library, or Reader if
+    Open Last Book on Launch found one). Skippable via START/A/B --
+    see handle_button()'s SCREEN_SPLASH branch.
+
+    Both typed strings are drawn at a FIXED x, computed once from each
+    string's OWN full final width, so the block is centered as if
+    already complete rather than re-centering every frame as it grows
+    -- a recentering prefix visibly drifts/jitters instead of reading
+    as text being typed in place (confirmed while building the title
+    animation last session).
+
+    Delegates straight to draw_library()/draw_reader() once finished,
+    rather than just flipping app.screen and returning blank, so this
+    frame doesn't paint one empty frame before the real screen appears."""
+    elapsed = time.time() - app._splash_start
+    if elapsed >= SPLASH_TOTAL_SECONDS:
+        app.screen = app._splash_dest_screen
+        if app.screen == SCREEN_READER:
+            draw_reader(renderer, app)
+        else:
+            draw_library(renderer, app)
+        return
+
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    face_font = app.fonts.ui_heading
+    title_font = app.fonts.splash_title  # v26.07.10.07: 50% bigger than
+                    # ui_heading (Kaleb's request) -- face above it
+                    # stays at ui_heading, unchanged.
+    line_gap = _sy(10)
+
+    face_w = text_width(face_font, FACE_MENU_LOGO)
+    title_w = text_width(title_font, SPLASH_TITLE)
+    face_h = TTF.TTF_FontHeight(face_font)
+    title_h = TTF.TTF_FontHeight(title_font)
+    block_h = face_h + title_h + line_gap
+    top_y = (SH - block_h) // 2
+
+    face_x = max(_sx(10), (SW - face_w) // 2)
+    render_text(renderer, face_font, FACE_MENU_LOGO, COL_ACCENT, face_x, top_y)
+
+    if elapsed < SPLASH_TITLE_END:
+        reveal_n = int(len(SPLASH_TITLE) * (elapsed / SPLASH_TYPE_SECONDS))
+        reveal_n = max(0, min(len(SPLASH_TITLE), reveal_n))
+    else:
+        reveal_n = len(SPLASH_TITLE)
+    visible_title = SPLASH_TITLE[:reveal_n]
+
+    title_x = max(_sx(10), (SW - title_w) // 2)  # fixed start, based on FULL text width
+    title_y = top_y + face_h + line_gap
+    if visible_title:
+        render_text(renderer, title_font, visible_title, COL_ACCENT, title_x, title_y)
+
+    # v26.07.10.06: subtitle, near the bottom, only starts typing once
+    # the title is fully spelled (elapsed >= SPLASH_TITLE_END) --
+    # smaller font (ui_body) since the full string is much longer than
+    # the title and needs to comfortably fit SW at every Font Size.
+    if elapsed >= SPLASH_TITLE_END:
+        sub_font = app.fonts.ui_body
+        sub_w = text_width(sub_font, SPLASH_SUBTITLE)
+        if elapsed < SPLASH_SUBTITLE_END:
+            sub_frac = (elapsed - SPLASH_TITLE_END) / SPLASH_SUBTITLE_TYPE_SECONDS
+            sub_reveal_n = int(len(SPLASH_SUBTITLE) * sub_frac)
+            sub_reveal_n = max(0, min(len(SPLASH_SUBTITLE), sub_reveal_n))
+        else:
+            sub_reveal_n = len(SPLASH_SUBTITLE)
+        visible_sub = SPLASH_SUBTITLE[:sub_reveal_n]
+        sub_x = max(_sx(10), (SW - sub_w) // 2)  # fixed start, based on FULL subtitle width
+        sub_y = SH - _sy(hint_height(app.fonts)) - TTF.TTF_FontHeight(sub_font) - _sy(24)
+        if visible_sub:
+            render_text(renderer, sub_font, visible_sub, COL_ACCENT, sub_x, sub_y)
 
 
 def draw_menu(renderer, app):
     draw_reader(renderer, app)
     overlay_w = _sx(360)
     fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
-    render_text(renderer, app.fonts.ui_heading, "MENU", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    # v26.07.10.04: small logo (Kaleb's request) instead of a plain
+    # "MENU" label -- face on its own line, "PICO READER" below it,
+    # both centered in the overlay's width. Uses ui_heading (already
+    # proven to fit this 360px-wide overlay via the old "MENU" label at
+    # the same font) rather than a bigger font, since a literally larger
+    # face risks overflowing this narrow sidebar at large Font Size
+    # settings -- centered + same size as before is the safe "nice and
+    # large relative to the menu items below it" reading of the request.
+    _logo_font = app.fonts.ui_heading
+    _logo_y = _sy(16)
+    _face_w = text_width(_logo_font, FACE_MENU_LOGO)
+    render_text(renderer, _logo_font, FACE_MENU_LOGO, COL_ACCENT,
+                SW - overlay_w + max(_sx(10), (overlay_w - _face_w) // 2), _logo_y)
+    _title_y = _logo_y + TTF.TTF_FontHeight(_logo_font) + _sy(2)
+    _title_w = text_width(_logo_font, "PICO READER")
+    render_text(renderer, _logo_font, "PICO READER", COL_ACCENT,
+                SW - overlay_w + max(_sx(10), (overlay_w - _title_w) // 2), _title_y)
     row_h = _row_h(app.fonts.ui_body)
-    top = _sy(80)
+    top = _title_y + TTF.TTF_FontHeight(_logo_font) + _sy(14)
     item_max_w = overlay_w - _sx(44)
     n_items = len(MENU_ITEMS)
     # v0.1.54: this list used to draw every item unconditionally assuming
@@ -6005,10 +8240,13 @@ def draw_menu(renderer, app):
             break
         item = MENU_ITEMS[mi]
         y = top + i * row_h
+        label = item
+        if item == "Immersive Mode":
+            label = f"Immersive Mode: {'On' if app.immersive_mode else 'Off'}"
         if mi == app.menu_index:
             fill_rect_rounded(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
         color = COL_ACCENT if mi == app.menu_index else COL_TEXT
-        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, item, item_max_w),
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
                     color, SW - overlay_w + _sx(24), y + _sy(8))
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
 
@@ -6016,7 +8254,8 @@ def draw_menu(renderer, app):
 def draw_toc(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     render_text(renderer, app.fonts.ui_heading, "CHAPTERS", COL_ACCENT, _sx(20), _sy(16))
-    row_h = _row_h(app.fonts.ui_body, pad=14)
+    row_h = _row_h(app.fonts.ui_body, pad=10)  # v0.1.153: was 14, tightened
+                        # to match the new default (see _row_h() docstring)
     top = _sy(70)
     visible = (SH - top - _sy(hint_height(app.fonts))) // row_h
     row_max_w = SW - _sx(44)
@@ -6102,6 +8341,68 @@ def draw_text_entry(renderer, app):
     draw_hint(renderer, app.fonts, "D-PAD Move   A Select   X Backspace   B Cancel")
 
 
+HELP_PARAGRAPHS = [
+    # v0.1.155: Kaleb: "this code thing is confusing" -- plain-language
+    # explanation of the two ways to find a publication, shown via a new
+    # X-Help overlay from Sources/Categories/Browse. Examples use pub
+    # codes already verified live against the real API (wcg, nwt), not
+    # guessed -- see main.py's AI NOTES for the verification method.
+    # Each entry is (text, is_heading) -- explicit, not guessed from
+    # capitalization, since a heading like "SEARCH (Y button)" isn't
+    # actually all-uppercase itself.
+    ("SEARCH (Y button)", True),
+    ("Type any word from a title -- for example \"courage\" -- to search "
+     "within the current category, or across everything if this source "
+     "doesn't use categories.", False),
+    ("PUB CODE (SELECT button)", True),
+    ("A separate, always-available shortcut for when you already know "
+     "exactly which publication you want -- JW.org's own internal short "
+     "name for it.", False),
+    ("Where to find it: open the publication on wol.jw.org -- the LAST "
+     "part of that page's web address is the code.", False),
+    ("Example: wol.jw.org/en/wol/publication/r1/lp-e/wcg  ->  code is "
+     "\"wcg\" (Walk Courageously With God).", False),
+    ("Example: \"nwt\" is the code for the New World Translation (the "
+     "Bible).", False),
+    ("For a monthly issue (Watchtower, Awake!), add the date after the "
+     "code, as YYYYMM -- for example: wp 202601", False),
+]
+
+
+def draw_download_help(renderer, app):
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, "SEARCH & PUB CODE HELP", COL_ACCENT,
+                _sx(20), heading_y)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    max_w = SW - _sx(48)
+    font = app.fonts.ui_body
+    line_h = TTF.TTF_FontHeight(font) + _sy(6)
+
+    # Flatten paragraphs into wrapped lines, carrying each source
+    # paragraph's is_heading flag onto every wrapped line it produces.
+    all_lines = []  # list of (text, is_heading)
+    for para, is_heading in HELP_PARAGRAPHS:
+        wrapped = _wrap_hint_text_unbounded(font, para, max_w) or [para]
+        for line in wrapped:
+            all_lines.append((line, is_heading))
+
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // line_h)
+    total = len(all_lines)
+    max_scroll = max(0, total - visible)
+    app.dl_help_scroll = max(0, min(getattr(app, "dl_help_scroll", 0), max_scroll))
+
+    y = top
+    for i in range(app.dl_help_scroll, min(total, app.dl_help_scroll + visible)):
+        text, is_heading = all_lines[i]
+        color = COL_ACCENT if is_heading else COL_TEXT
+        render_text(renderer, font, text, color, _sx(24), y)
+        y += line_h
+
+    hint = "UP/DOWN Scroll   B Back" if max_scroll > 0 else "B Back"
+    draw_hint(renderer, app.fonts, hint)
+
+
 def draw_download_categories(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     heading_y = _sy(16)
@@ -6121,7 +8422,13 @@ def draw_download_categories(renderer, app):
             fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.dl_cat_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, cat, color, _sx(24), y + _sy(10))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   L/R Jump 10   A Open   B Back")
+    hint_parts = ["UP/DOWN Select", "L/R Jump 10"]
+    if getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
+        hint_parts.append("Y Search")
+    if getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
+        hint_parts.append("SELECT Code")
+    hint_parts += ["A Open", "X Help", "B Back"]
+    draw_hint(renderer, app.fonts, "   ".join(hint_parts))
 
 
 def draw_download_sources(renderer, app):
@@ -6141,7 +8448,7 @@ def draw_download_sources(renderer, app):
         color = COL_ACCENT if i == app.dl_source_index else COL_TEXT
         name = getattr(plugin, "PLUGIN_NAME", plugin.__name__)
         render_text(renderer, app.fonts.ui_body, name, color, _sx(24), y + _sy(10))
-    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   X Help   B Back")
 
 
 def draw_download_video_sources(renderer, app):
@@ -6166,9 +8473,58 @@ def draw_download_video_sources(renderer, app):
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
 
 
+def draw_download_audio_sources(renderer, app):
+    """v26.07.10.01: audio equivalent of draw_download_video_sources() --
+    reached via Download Books > JW > Audio (CATEGORY_AUDIO). Identical
+    layout, just AUDIO_SOURCE_ITEMS/audio_source_index instead of
+    VIDEO_SOURCE_ITEMS/video_source_index."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, "AUDIO", COL_ACCENT, _sx(20), heading_y)
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    n_items = len(AUDIO_SOURCE_ITEMS)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.audio_source_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        y = top + (i - start) * row_h
+        if i == app.audio_source_index:
+            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.audio_source_index else COL_TEXT
+        render_text(renderer, app.fonts.ui_body, AUDIO_SOURCE_ITEMS[i], color, _sx(24), y + _sy(10))
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+
+
+def draw_download_audio_books(renderer, app):
+    """v26.07.10.01: Bible-book sub-picker for AUDIO_SOURCES entries
+    marked "books": True (currently just "Bible Reading Audio (NWT)") --
+    same simple list pattern as the other pickers, driven by
+    jw_fetch.BIBLE_BOOKS (66 fixed entries, see that table's own comment
+    for why it's safe to hardcode)."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, "BIBLE BOOK", COL_ACCENT, _sx(20), heading_y)
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    books = getattr(JW_PLUGIN, "BIBLE_BOOKS", [])
+    n_items = len(books)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.audio_book_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        y = top + (i - start) * row_h
+        if i == app.audio_book_index:
+            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.audio_book_index else COL_TEXT
+        _, name = books[i]
+        render_text(renderer, app.fonts.ui_body, name, color, _sx(24), y + _sy(10))
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+
+
 def draw_download_browse(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
-    name = "JW Videos" if app.dl_is_video else (getattr(app.dl_plugin, "PLUGIN_NAME", "Download") if app.dl_plugin else "Download")
+    name = ("JW Videos" if app.dl_is_video else
+             "JW Audio" if app.dl_is_audio else
+             (getattr(app.dl_plugin, "PLUGIN_NAME", "Download") if app.dl_plugin else "Download"))
     title = f"{name.upper()}"
     if app.dl_category:
         title += f" -- {app.dl_category}"
@@ -6180,7 +8536,10 @@ def draw_download_browse(renderer, app):
 
     title_h = TTF.TTF_FontHeight(app.fonts.ui_body)
     sub_h = TTF.TTF_FontHeight(app.fonts.ui_small)
-    row_h = title_h + sub_h + _sy(20)
+    row_h = title_h + sub_h + _sy(14)  # v0.1.153: was +_sy(20) -- same
+                        # DejaVu-metrics retune as _row_h()'s default pad
+                        # (this two-line row predates/bypasses _row_h(),
+                        # so it needed its own matching adjustment).
     top = _sy(16) + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
 
     if app.dl_loading:
@@ -6236,16 +8595,38 @@ def draw_download_browse(renderer, app):
         # v0.1.110: video mode has its own Y binding (client-side title
         # search, see App.search_video_items()) -- unrelated to the
         # underlying plugin's SUPPORTS_SEARCH/SUPPORTS_MANUAL_CODE flags.
-        # JW_PLUGIN declares SUPPORTS_MANUAL_CODE, which used to make this
-        # hint say "Y Enter Code" here even though Y had no effect at all
-        # in video mode (every Y branch below explicitly excluded it) --
-        # that mismatch was the actual root cause of "Y doesn't work" on
-        # every video screen.
         hint = hint.replace("B Back", "Y Search   B Back")
+    elif app.dl_is_audio:
+        # v26.07.10.01: audio mode has no search/manual-code binding of
+        # its own (both AUDIO_SOURCES entries are simple lists -- the
+        # Study Edition source is a single resolved issue, the Bible
+        # source is already narrowed to one book by the time you're
+        # here) -- plain hint, and specifically skips the
+        # SUPPORTS_SEARCH/SUPPORTS_MANUAL_CODE checks below, which would
+        # otherwise incorrectly fire off JW_PLUGIN's OWN flags (still
+        # set on app.dl_plugin) even though neither applies to this
+        # screen the way it does for the EPUB browse path.
+        pass
     elif getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
         hint = hint.replace("B Back", "Y Search   B Back")
-    elif getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
-        hint = hint.replace("B Back", "Y Enter Code   B Back")
+    elif getattr(app.dl_plugin, "SUPPORTS_CATEGORIES", False):
+        # v0.1.156 BUG FIX: this branch was MISSING entirely -- the hint
+        # text fell straight through to the SUPPORTS_MANUAL_CODE branch
+        # below and said "Y Enter Code", even though handle_button()'s
+        # own elif chain checks SUPPORTS_CATEGORIES first and Y actually
+        # opens a category-scoped title search instead. Confirmed via
+        # direct simulation the hint and the real behavior had drifted
+        # apart. Now matches what Y actually does.
+        hint = hint.replace("B Back", "Y Search   B Back")
+    if not app.dl_is_video and not app.dl_is_audio and getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
+        # v0.1.156: SELECT (not Y -- see handle_button()'s SELECT branch
+        # docstring) is now its own, always-reachable binding whenever a
+        # plugin declares this, regardless of whether it ALSO supports
+        # search/categories -- previously this and the categories-search
+        # branch shared the single Y button via an elif chain, silently
+        # shadowing one or the other.
+        hint = hint.replace("B Back", "SELECT Code   B Back")
+    hint = hint.replace("B Back", "X Help   B Back")
     draw_hint(renderer, app.fonts, hint)
 
 
@@ -6273,6 +8654,20 @@ def draw_library_menu(renderer, app):
         if item == "Continue Reading":
             recent = app.most_recent_book()
             label = f"Continue: {recent['title']}" if recent else "Continue Reading (none yet)"
+        if item == "Pin/Unpin Selected":
+            tgt = app._menu_target_book
+            if tgt:
+                is_pinned = tgt["filename"] in app.pinned
+                label = f"{'Unpin' if is_pinned else 'Pin'}: {tgt['title']}"
+            else:
+                label = "Pin/Unpin Selected"
+        if item == "Mark Finished/Unfinished":
+            tgt = app._menu_target_book
+            if tgt:
+                is_finished = tgt["filename"] in app.finished
+                label = f"{'Mark Unfinished' if is_finished else 'Mark Finished'}: {tgt['title']}"
+            else:
+                label = "Mark Finished/Unfinished"
         if item == "Filter: Cycle":
             label = f"Filter: {LIBRARY_FILTER_LABELS[app.lib_filter_mode]}"
         armed_delete = False
@@ -6280,8 +8675,8 @@ def draw_library_menu(renderer, app):
             if app._menu_delete_armed:
                 label = "Press A again to DELETE"
                 armed_delete = True
-            elif app._menu_delete_target:
-                label = f"Delete: {app._menu_delete_target['title']}"
+            elif app._menu_target_book:
+                label = f"Delete: {app._menu_target_book['title']}"
             else:
                 label = "Delete Book"
         armed_clear = False
@@ -6340,9 +8735,21 @@ def draw_storage(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     render_text(renderer, app.fonts.ui_heading, "SETTINGS", COL_ACCENT, _sx(20), _sy(16))
 
+    # v26.07.09.05: this screen used to show a separate "info_lines"
+    # block of static text ABOVE the action list (cache size, orphan
+    # count, disk-cache ON/OFF, images ON/OFF, open-last-book ON/OFF,
+    # backup count+timestamp) -- every one of those duplicated
+    # information that's now folded directly into its corresponding
+    # action's own label below (same pattern already used for Immersive
+    # Mode's "On/Off" suffix and Pre-render's existing progress label).
+    # Kaleb's request: the toggle/action row itself should show its own
+    # state/stats, not a disconnected line elsewhere on screen. This also
+    # directly shrinks the vertical space this screen needs, which is
+    # what caused the real v0.1.54 overflow bug (info_lines + action
+    # list together running off the bottom of the screen) -- removing
+    # the duplicate block helps that, it doesn't just declutter.
     cache_size = format_bytes(image_cache_size_bytes())
     orphan_count = len(orphaned_bookmark_book_paths())
-    cache_state = "ON (cached to disk)" if app.disk_cache_enabled else "OFF (RAM-only)"
     backups = list_bookmark_backups()
     if backups:
         # filenames are bookmarks_backup_YYYYMMDD_HHMMSS.json
@@ -6352,35 +8759,11 @@ def draw_storage(renderer, app):
                                         time.strptime(ts_part, "%Y%m%d_%H%M%S"))
         except ValueError:
             latest_str = "unknown time"
-        backup_line = f"Bookmark backups: {len(backups)} (latest: {latest_str})"
     else:
-        backup_line = "Bookmark backups: none yet"
-    info_lines = [
-        f"Image cache on disk: {cache_size} (cap 500 MB)",
-        f"Orphaned bookmark sets: {orphan_count} deleted book(s)",
-        f"Disk cache: {cache_state}",
-        f"Images: {'ON' if app.images_enabled else 'OFF (text-only)'}",
-        f"Open Last Book on Launch: {'ON' if app.open_last_book_enabled else 'OFF'}",
-        backup_line,
-    ]
-    if app.doc is not None and app._book_id:
-        info_lines.insert(1, f"This book's cache: {format_bytes(book_cache_size_bytes(app._book_id))}")
-    if app._prerender_active or app._prerender_total:
-        done, total, scanning = app.prerender_progress()
-        if scanning:
-            info_lines.append(f"Pre-render: scanning book... ({total} images found so far)")
-        elif app._prerender_active:
-            info_lines.append(f"Pre-render: {done}/{total} images decoded (running)")
-        elif total:
-            info_lines.append(f"Pre-render: {done}/{total} images decoded (last run)")
-    line_h = _row_h(app.fonts.ui_small, pad=6)
-    y = _sy(50)
-    for line in info_lines:
-        render_text(renderer, app.fonts.ui_small, line, COL_DIM, _sx(20), y)
-        y += line_h
+        latest_str = None
 
     row_h = _row_h(app.fonts.ui_body)
-    top = y + _sy(16)
+    top = _sy(60)
     action_max_w = SW - _sx(40)
     n_items = len(STORAGE_ACTIONS)
     # v0.1.54: windowed like Library/Chapters/Menu -- this list used to
@@ -6388,7 +8771,8 @@ def draw_storage(renderer, app):
     # the screen once info_lines + row_h both grew with Font Size
     # (confirmed via Kaleb's on-device screenshot: "Pre-render Book
     # Images" and "Back" were pushed off-screen with no way to reach
-    # them).
+    # them). v26.07.09.05: info_lines is gone now (folded into action
+    # labels above), so this has even more headroom than before.
     visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
     start = max(0, min(app.storage_index - visible // 2, max(0, n_items - visible)))
     for idx in range(start, min(n_items, start + visible)):
@@ -6408,13 +8792,50 @@ def draw_storage(renderer, app):
             fill_rect_rounded(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_BG if armed else (COL_ACCENT if idx == app.storage_index else COL_TEXT)
         label = action
-        if action == "Pre-render Book Images" and app._prerender_active:
-            done, total, scanning = app.prerender_progress()
-            label = f"Cancel Pre-render (scanning... {total} found)" if scanning                 else f"Cancel Pre-render ({done}/{total})"
+        if action == "Clear Image Cache":
+            if app.doc is not None and app._book_id:
+                book_size = format_bytes(book_cache_size_bytes(app._book_id))
+                label = f"Clear Image Cache ({cache_size} total, {book_size} this book)"
+            else:
+                label = f"Clear Image Cache ({cache_size})"
+        elif action == "Clean Up Orphaned Bookmarks":
+            label = f"Clean Up Orphaned Bookmarks ({orphan_count} deleted book(s))"
+        elif action == "Backup Bookmarks Now":
+            label = (f"Backup Bookmarks Now (last: {latest_str})" if latest_str
+                     else "Backup Bookmarks Now (no backups yet)")
+        elif action == "Restore Latest Backup":
+            label = (f"Restore Latest Backup ({len(backups)} available, latest {latest_str})"
+                     if backups else "Restore Latest Backup (none available)")
+        elif action == "Toggle Disk Cache (RAM-only mode)":
+            state = "ON (cached to disk)" if app.disk_cache_enabled else "OFF (RAM-only)"
+            label = f"Disk Cache: {state}"
+        elif action == "Toggle Images (text-only mode)":
+            state = "ON" if app.images_enabled else "OFF (text-only)"
+            label = f"Images: {state}"
+        elif action == "Toggle Open Last Book on Launch":
+            state = "ON" if app.open_last_book_enabled else "OFF"
+            label = f"Open Last Book on Launch: {state}"
+        if action == "Pre-render Book Images":
+            if app._prerender_active:
+                done, total, scanning = app.prerender_progress()
+                label = (f"Cancel Pre-render (scanning... {total} found)" if scanning
+                         else f"Cancel Pre-render ({done}/{total})")
+            elif app._prerender_total:
+                done, total, _ = app.prerender_progress()
+                label = f"Pre-render Book Images (last run: {done}/{total})"
         if armed:
             label = "Press A again to confirm, or B to cancel"
+        # v26.07.09.14 BUG FIX (Kaleb's report -- selector "not centered"):
+        # this used to be a fixed ry + _sy(10) offset regardless of
+        # row_h, so as row_h grows with Font Size the text sits closer
+        # and closer to the TOP of the highlight box instead of centered
+        # in it -- same bug class draw_hint() already fixed properly
+        # (v0.1.131) by centering the text block within the full bar
+        # height rather than anchoring it to one edge.
+        text_h = TTF.TTF_FontHeight(app.fonts.ui_body)
+        text_y = ry + max(0, (row_h - _sy(4) - text_h) // 2)
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, action_max_w),
-                    color, _sx(24), ry + _sy(10))
+                    color, _sx(24), text_y)
 
     if app.status_msg and time.time() < app.status_until:
         msg_y = top + min(visible, n_items) * row_h + _sy(20)
@@ -6612,10 +9033,28 @@ def main():
                 app.dirty = True
                 handle_button(app, btn)
                 if app.quit_requested:
+                    # v26.07.10.04: brief exit toast (Kaleb's request)
+                    # instead of the window just vanishing the instant B
+                    # is pressed. quit_requested is only ever set from
+                    # SCREEN_LIBRARY's B handler (confirmed -- the only
+                    # site in this file), so drawing draw_library() here
+                    # is always the correct screen to show the toast on.
+                    # v26.07.10.05: switched from FACE_EXIT to FACE_DONE
+                    # -- Kaleb's request to reuse the same "done" cheer
+                    # face the download-completion toasts already use,
+                    # rather than a dedicated exit-only face.
+                    app.set_status(f"Exiting Pico Reader {FACE_DONE}", duration=EXIT_TOAST_SECONDS)
+                    SDL.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)
+                    SDL.SDL_RenderClear(renderer)
+                    draw_library(renderer, app)
+                    SDL.SDL_RenderPresent(renderer)
+                    SDL.SDL_Delay(int(EXIT_TOAST_SECONDS * 1000))
                     running = False
                     break
 
         need_redraw = app.dirty
+        if not need_redraw and app.screen == SCREEN_SPLASH:
+            need_redraw = True  # must animate every frame, no button press to wait for
         if not need_redraw and app.screen == SCREEN_READER:
             need_redraw = app.has_pending_image_updates()
         if not need_redraw and app.screen == SCREEN_IMAGE_VIEW and app._imgview_span is not None:
@@ -6666,7 +9105,9 @@ def main():
             SDL.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)
             SDL.SDL_RenderClear(renderer)
 
-            if app.screen == SCREEN_LIBRARY:
+            if app.screen == SCREEN_SPLASH:
+                draw_splash(renderer, app)
+            elif app.screen == SCREEN_LIBRARY:
                 draw_library(renderer, app)
             elif app.screen == SCREEN_READER:
                 draw_reader(renderer, app)
@@ -6688,15 +9129,26 @@ def main():
                 draw_download_categories(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_VIDEO_SOURCES:
                 draw_download_video_sources(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_AUDIO_SOURCES:
+                draw_download_audio_sources(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_AUDIO_BOOKS:
+                draw_download_audio_books(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_BROWSE:
                 draw_download_browse(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_HELP:
+                draw_download_help(renderer, app)
             elif app.screen == SCREEN_IMAGE_VIEW:
                 draw_image_view(renderer, app)
 
             # v0.1.131: BMO-style outer screen frame -- always last, after
             # every screen's own drawing, so it can't be forgotten on any
             # individual screen (see _draw_screen_frame() docstring).
-            _draw_screen_frame(renderer)
+            # v26.07.09.14: bottom_radius scaled to the CURRENT hint bar
+            # height so its fixed-size corner mask doesn't disproportionately
+            # dominate a short hint bar at small Font Size steps -- see
+            # _draw_screen_frame()'s docstring for the full story.
+            _bottom_radius = min(SCREEN_FRAME_RADIUS, _sy(hint_height(app.fonts)) // 2)
+            _draw_screen_frame(renderer, bottom_radius=_bottom_radius)
 
             SDL.SDL_RenderPresent(renderer)
             time.sleep(0.016)
@@ -6715,6 +9167,15 @@ def handle_button(app, btn, body_h_px=None):
     # draw_reader() uses, so the two can never disagree about body_rows
     # again. See _reader_body_layout()'s docstring for the bug this fixes.
     _body_top, line_h, body_rows = _reader_body_layout(app.fonts)
+
+    if app.screen == SCREEN_SPLASH:
+        # v26.07.10.06: START/A/B all skip straight to the real
+        # destination (Kaleb's request) -- same target draw_splash()
+        # itself hands off to once its timer runs out, just triggered
+        # early instead of waiting.
+        if btn in ("START", "A", "B"):
+            app.screen = app._splash_dest_screen
+        return
 
     if app.screen == SCREEN_LIBRARY:
         n = len(app.books)
@@ -6780,7 +9241,7 @@ def handle_button(app, btn, body_h_px=None):
             # Book in the menu always targets this, not whatever's
             # highlighted once inside the menu (there's no book list
             # shown there)
-            app._menu_delete_target = app.books[app.lib_index] if app.books else None
+            app._menu_target_book = app.books[app.lib_index] if app.books else None
             app._menu_delete_armed = False
             app.screen = SCREEN_LIBRARY_MENU
 
@@ -6813,6 +9274,16 @@ def handle_button(app, btn, body_h_px=None):
                 app.screen = SCREEN_LIBRARY
             elif choice == "Continue Reading":
                 app.open_continue_reading()
+            elif choice == "Pin/Unpin Selected":
+                if app._menu_target_book:
+                    app.toggle_pin(app._menu_target_book)
+                    # stays open, same as Filter/Theme -- lets the label
+                    # update in place so the toggle's new state is visible
+                    # without re-opening the menu
+            elif choice == "Mark Finished/Unfinished":
+                if app._menu_target_book:
+                    app.toggle_finished(app._menu_target_book)
+                    # stays open -- same reasoning as Pin/Unpin above
             elif choice == "Filter: Cycle":
                 app.cycle_filter_mode()
                 # stays open, same as Theme +/- -- lets Kaleb cycle
@@ -6832,10 +9303,10 @@ def handle_button(app, btn, body_h_px=None):
                 else:
                     app._menu_clear_finished_armed = True
             elif choice == "Delete Book":
-                if app._menu_delete_target is None:
+                if app._menu_target_book is None:
                     pass  # nothing was highlighted when START was pressed
                 elif app._menu_delete_armed:
-                    book = app._menu_delete_target
+                    book = app._menu_target_book
                     title = book["title"]
                     if app.delete_book(book):
                         app.refresh_library()  # also purges this book's
@@ -6847,7 +9318,7 @@ def handle_button(app, btn, body_h_px=None):
                     else:
                         app.set_status(f'Could not delete "{title}"')
                     app._menu_delete_armed = False
-                    app._menu_delete_target = None
+                    app._menu_target_book = None
                     app.screen = SCREEN_LIBRARY
                 else:
                     # first press -- arm it, same two-press-confirm safety
@@ -6886,6 +9357,10 @@ def handle_button(app, btn, body_h_px=None):
         elif btn == "B": app.screen = SCREEN_LIBRARY
         elif btn == "A" and DOWNLOAD_PLUGINS:
             app.open_downloader(DOWNLOAD_PLUGINS[app.dl_source_index])
+        elif btn == "X":
+            app.dl_help_return_screen = SCREEN_DOWNLOAD_SOURCES
+            app.dl_help_scroll = 0
+            app.screen = SCREEN_DOWNLOAD_HELP
 
     elif app.screen == SCREEN_DOWNLOAD_CATEGORIES:
         categories = getattr(app.dl_plugin, "CATEGORIES", [])
@@ -6901,7 +9376,60 @@ def handle_button(app, btn, body_h_px=None):
             app.dl_cat_index = min(app.dl_cat_index + 10, n - 1)
         elif btn == "L" and n:
             app.dl_cat_index = max(app.dl_cat_index - 10, 0)
+        elif btn == "Y" and getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
+            # v26.07.09.11: Search used to only be reachable AFTER opening
+            # some category first (SCREEN_DOWNLOAD_BROWSE's own Y handler)
+            # -- forcing an extra, pointless hop through a category just to
+            # search. Added here too so it's available from the very first
+            # JW/Gutenberg screen. dl_category is still None at this point
+            # (nothing chosen yet), so this is a plugin-wide search, same
+            # as searching with no category ever mattered to start_search().
+            def _on_cat_search_confirm(app, value):
+                app.screen = SCREEN_DOWNLOAD_BROWSE
+                app.start_search(value)
+            label = getattr(app.dl_plugin, "PLUGIN_NAME", "")
+            app.open_text_entry(f"Search {label}", "",
+                                 _on_cat_search_confirm, SCREEN_DOWNLOAD_CATEGORIES,
+                                 hint="Search by title or author  (case-insensitive)")
+        elif btn == "SELECT" and getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
+            # v26.07.09.11: same reasoning as the Y handler just above --
+            # Manual Code was Browse-only before, forcing an unnecessary
+            # category hop first. Mirrors SCREEN_DOWNLOAD_BROWSE's SELECT
+            # handler exactly.
+            def _on_cat_code_validate(app, value):
+                parts = value.strip().split()
+                code = parts[0] if parts else ""
+                issue = parts[1] if len(parts) > 1 else None
+                item, err = app.dl_plugin.lookup_pub_code(code, issue)
+                if item:
+                    app.dl_items = [item]
+                    app.dl_query = value
+                    app.dl_page = 1
+                    app.dl_has_next = False
+                    app.dl_load_error = None
+                    app.dl_index = 0
+                    app.te_checking = False
+                    app.screen = SCREEN_DOWNLOAD_BROWSE
+                else:
+                    app.te_checking = False
+                    app.te_error = err or "Not found"
+                app.dirty = True
+            app.open_text_entry("Pub code (+ issue YYYYMM if needed)", "",
+                                 None, SCREEN_DOWNLOAD_CATEGORIES, on_validate=_on_cat_code_validate,
+                                 hint=getattr(app.dl_plugin, "MANUAL_CODE_HINT", ""))
         elif btn == "B":
+            # v26.07.09.10: incognito-style search token -- leaving the
+            # plugin entirely (not just backing out of a sub-screen
+            # that stays inside it) forgets any cached OmniSearch
+            # bearer token, so the NEXT visit fetches fresh rather than
+            # silently reusing one from a prior, unrelated session in
+            # this plugin. getattr-gated: older jw_fetch.py builds
+            # without clear_search_token_cache() just skip this, same
+            # graceful-degradation convention as every other optional
+            # jw_fetch.py feature check in this file.
+            clear_fn = getattr(app.dl_plugin, "clear_search_token_cache", None)
+            if clear_fn:
+                clear_fn()
             if len(DOWNLOAD_PLUGINS) > 1:
                 app.screen = SCREEN_DOWNLOAD_SOURCES
             else:
@@ -6917,8 +9445,18 @@ def handle_button(app, btn, body_h_px=None):
             if chosen == getattr(app.dl_plugin, "CATEGORY_VIDEOS", None):
                 app.video_source_index = 0
                 app.screen = SCREEN_DOWNLOAD_VIDEO_SOURCES
+            elif chosen == getattr(app.dl_plugin, "CATEGORY_AUDIO", None):
+                # v26.07.10.01: same pseudo-category pattern as
+                # CATEGORY_VIDEOS just above.
+                app.audio_source_index = 0
+                app._pending_audio_source = None
+                app.screen = SCREEN_DOWNLOAD_AUDIO_SOURCES
             else:
                 app.open_category(chosen)
+        elif btn == "X":
+            app.dl_help_return_screen = SCREEN_DOWNLOAD_CATEGORIES
+            app.dl_help_scroll = 0
+            app.screen = SCREEN_DOWNLOAD_HELP
 
     elif app.screen == SCREEN_DOWNLOAD_VIDEO_SOURCES:
         n = len(VIDEO_SOURCE_ITEMS)
@@ -6927,16 +9465,134 @@ def handle_button(app, btn, body_h_px=None):
         elif btn == "B": app.screen = SCREEN_DOWNLOAD_CATEGORIES
         elif btn == "A":
             choice = VIDEO_SOURCE_ITEMS[app.video_source_index]
-            if choice == "Enjoy Life Forever":
-                app.open_video_downloader("lffv")
-            elif choice == "JW Broadcasting":
-                app.open_broadcast_downloader()
-            elif choice == "Governing Body Updates":
-                app.open_gb_update_downloader()
-            elif choice == "The Good News According to Jesus":
-                app.open_good_news_downloader()
-            elif choice == "Back":
+            source = VIDEO_SOURCE_BY_LABEL.get(choice)
+            if source and source.get("search"):
+                def _on_video_search_validate(app, value):
+                    query = (value or "").strip()
+                    if not query:
+                        app.te_checking = False
+                        app.te_error = "Type something to search for"
+                        app.dirty = True
+                        return
+                    try:
+                        results, err = JW_PLUGIN.search_jw(query, filter="videos")
+                    except Exception as e:
+                        results, err = [], str(e)
+                    items = [it for it in (results or []) if it.get("_kind") == "video"]
+                    if err or not items:
+                        app.te_checking = False
+                        app.te_error = err or f'No videos found for "{query}"'
+                        app.dirty = True
+                        return
+                    app.dl_plugin = JW_PLUGIN
+                    app.dl_is_video = True
+                    app.dl_category = None
+                    app._dl_video_all_items = items
+                    app.dl_items = items
+                    app.dl_index = 0
+                    app.dl_page = 1
+                    app.dl_query = query
+                    app.dl_has_next = False
+                    app.dl_load_error = None
+                    app.te_checking = False
+                    app.screen = SCREEN_DOWNLOAD_BROWSE
+                    app.dirty = True
+                app.open_text_entry("Search JW Videos", "", None,
+                                     SCREEN_DOWNLOAD_VIDEO_SOURCES,
+                                     on_validate=_on_video_search_validate,
+                                     hint='e.g. "faith", "family life", "Jeremiah"')
+            elif source:
+                app.open_plugin_video_list(source["loader"], **source.get("args", {}))
+            else:
+                # choice == "Back", or (defensive) an unrecognized label --
+                # either way, there's nothing to open.
                 app.screen = SCREEN_DOWNLOAD_CATEGORIES
+
+    elif app.screen == SCREEN_DOWNLOAD_AUDIO_SOURCES:
+        # v26.07.10.01/.02: same shape as SCREEN_DOWNLOAD_VIDEO_SOURCES
+        # just above -- "search" special-case now included (v26.07.10.02:
+        # Search Audio, mirroring Search Videos exactly) alongside the
+        # "books" special-case: a source marked "books": True (Bible
+        # Reading Audio) opens the Bible-book sub-picker instead of
+        # calling its loader directly -- the loader/args are still
+        # exactly what gets called once a book is chosen there, just
+        # with booknum added in.
+        n = len(AUDIO_SOURCE_ITEMS)
+        if btn == "UP": app.audio_source_index = (app.audio_source_index - 1) % n
+        elif btn == "DOWN": app.audio_source_index = (app.audio_source_index + 1) % n
+        elif btn == "B": app.screen = SCREEN_DOWNLOAD_CATEGORIES
+        elif btn == "A":
+            choice = AUDIO_SOURCE_ITEMS[app.audio_source_index]
+            source = AUDIO_SOURCE_BY_LABEL.get(choice)
+            if source and source.get("search"):
+                # v26.07.10.02: mirrors the video "Search Videos" handler
+                # exactly -- search_jw(filter="audio"), keep only
+                # _kind=="audio" hits (unresolved, _raw_lank only --
+                # resolved lazily at download time in start_download()'s
+                # audio branch, same as video).
+                def _on_audio_search_validate(app, value):
+                    query = (value or "").strip()
+                    if not query:
+                        app.te_checking = False
+                        app.te_error = "Type something to search for"
+                        app.dirty = True
+                        return
+                    try:
+                        results, err = JW_PLUGIN.search_jw(query, filter="audio")
+                    except Exception as e:
+                        results, err = [], str(e)
+                    items = [it for it in (results or []) if it.get("_kind") == "audio"]
+                    if err or not items:
+                        app.te_checking = False
+                        app.te_error = err or f'No audio found for "{query}"'
+                        app.dirty = True
+                        return
+                    app.dl_plugin = JW_PLUGIN
+                    app.dl_is_audio = True
+                    app._pending_audio_source = None
+                    app.dl_category = None
+                    app.dl_items = items
+                    app.dl_index = 0
+                    app.dl_page = 1
+                    app.dl_query = query
+                    app.dl_has_next = False
+                    app.dl_load_error = None
+                    app.te_checking = False
+                    app.screen = SCREEN_DOWNLOAD_BROWSE
+                    app.dirty = True
+                app.open_text_entry("Search Audio", "", None,
+                                     SCREEN_DOWNLOAD_AUDIO_SOURCES,
+                                     on_validate=_on_audio_search_validate,
+                                     hint='e.g. "love", "faith", "psalm"')
+            elif source and source.get("books"):
+                app._pending_audio_source = source
+                app.audio_book_index = 0
+                app.screen = SCREEN_DOWNLOAD_AUDIO_BOOKS
+            elif source:
+                app._pending_audio_source = None
+                app.open_plugin_audio_list(source["loader"], **source.get("args", {}))
+            else:
+                # choice == "Back"
+                app.screen = SCREEN_DOWNLOAD_CATEGORIES
+
+    elif app.screen == SCREEN_DOWNLOAD_AUDIO_BOOKS:
+        # v26.07.10.01: Bible-book sub-picker -- only reachable via a
+        # "books": True AUDIO_SOURCES entry, so app._pending_audio_source
+        # is always set here. Choosing a book adds its booknum to that
+        # source's own args and calls its loader exactly like any other
+        # audio source would.
+        books = getattr(JW_PLUGIN, "BIBLE_BOOKS", [])
+        n = len(books)
+        if btn == "UP": app.audio_book_index = (app.audio_book_index - 1) % n if n else 0
+        elif btn == "DOWN": app.audio_book_index = (app.audio_book_index + 1) % n if n else 0
+        elif btn == "B": app.screen = SCREEN_DOWNLOAD_AUDIO_SOURCES
+        elif btn == "A" and n:
+            booknum, _name = books[app.audio_book_index]
+            source = app._pending_audio_source
+            if source:
+                args = dict(source.get("args", {}))
+                args["booknum"] = booknum
+                app.open_plugin_audio_list(source["loader"], **args)
 
     elif app.screen == SCREEN_DOWNLOAD_BROWSE:
         n = len(app.dl_items)
@@ -6970,25 +9626,57 @@ def handle_button(app, btn, body_h_px=None):
             app.open_text_entry("Search Videos", app.dl_query or "",
                                  _on_video_search_confirm, SCREEN_DOWNLOAD_BROWSE,
                                  hint="Search by title  (case-insensitive, blank clears)")
-        elif btn == "Y" and not app.dl_is_video and getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
+        elif btn == "Y" and not app.dl_is_video and not app.dl_is_audio and (
+                getattr(app.dl_plugin, "SUPPORTS_SEARCH", False)
+                or getattr(app.dl_plugin, "SUPPORTS_CATEGORIES", False)):
+            # v0.1.157 BUG FIX (Kaleb's follow-up question: "when does
+            # category topic search even get used?"): this used to be
+            # TWO separate elif branches -- one for SUPPORTS_SEARCH, one
+            # for SUPPORTS_CATEGORIES -- both calling the exact same
+            # app.start_search(value), which already threads
+            # self.dl_category through regardless of which branch opened
+            # the box. Since elif only checks the first match, a plugin
+            # declaring BOTH flags (gutenberg_fetch.py does) always hit
+            # the SUPPORTS_SEARCH branch, silently shadowing the
+            # SUPPORTS_CATEGORIES one -- same shadowing pattern as the
+            # Y/SELECT bug just fixed above, except this one was
+            # cosmetic rather than functional: confirmed via direct
+            # simulation that searching inside Gutenberg's "Adventure"
+            # category already correctly stayed scoped to Adventure
+            # either way (dl_category isn't affected by which branch
+            # fired), but the prompt shown was the generic "Search
+            # Project Gutenberg" instead of the more specific "Search
+            # Adventure" -- misleading about what the search would
+            # actually be scoped to. Now a single branch: label is
+            # "Search {category}" whenever a category is currently
+            # open (regardless of which flag(s) got it there), else
+            # "Search {plugin name}" -- matching what start_search()
+            # actually does either way.
             def _on_search_confirm(app, value):
                 app.screen = SCREEN_DOWNLOAD_BROWSE
                 app.start_search(value)
-            app.open_text_entry("Search " + getattr(app.dl_plugin, "PLUGIN_NAME", ""),
-                                 app.dl_query or "", _on_search_confirm, SCREEN_DOWNLOAD_BROWSE,
+            label = app.dl_category or getattr(app.dl_plugin, "PLUGIN_NAME", "")
+            app.open_text_entry(f"Search {label}", app.dl_query or "",
+                                 _on_search_confirm, SCREEN_DOWNLOAD_BROWSE,
                                  hint="Search by title or author  (case-insensitive)")
-        elif btn == "Y" and not app.dl_is_video and getattr(app.dl_plugin, "SUPPORTS_CATEGORIES", False):
-            # Same search entry as SUPPORTS_SEARCH above, but scoped to the
-            # currently-open category via start_search() -> _load_dl_page(),
-            # which already threads self.dl_category through.
-            def _on_cat_search_confirm(app, value):
-                app.screen = SCREEN_DOWNLOAD_BROWSE
-                app.start_search(value)
-            cat_label = app.dl_category or getattr(app.dl_plugin, "PLUGIN_NAME", "")
-            app.open_text_entry(f"Search {cat_label}", app.dl_query or "",
-                                 _on_cat_search_confirm, SCREEN_DOWNLOAD_BROWSE,
-                                 hint="Search by title  (case-insensitive)")
-        elif btn == "Y" and not app.dl_is_video and getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
+        elif btn == "SELECT" and not app.dl_is_video and not app.dl_is_audio and getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
+            # v0.1.156 BUG FIX (Kaleb's report, follow-up to the Help
+            # screen): this used to be bound to Y, in an elif chain AFTER
+            # the SUPPORTS_CATEGORIES branch above. jw_fetch.py declares
+            # BOTH SUPPORTS_CATEGORIES=True and SUPPORTS_MANUAL_CODE=True,
+            # and elif only ever checks the first matching branch -- so
+            # for the actual live JW_PLUGIN config, this code was
+            # completely unreachable: Y always hit the category-search
+            # branch above instead. Confirmed directly: simulated
+            # pressing Y on a real category ("Books & Brochures") landed
+            # on "Search Books & Brochures", never the code-entry screen,
+            # even though the hint bar text (built separately, see
+            # draw_download_browse()) claimed "Y Enter Code" for exactly
+            # this situation -- the hint text and the real Y behavior had
+            # drifted out of sync. Moved to its own button (SELECT, free
+            # on this screen) so category search and manual code entry
+            # are BOTH reachable rather than one silently shadowing the
+            # other.
             def _on_code_validate(app, value):
                 parts = value.strip().split()
                 code = parts[0] if parts else ""
@@ -7020,14 +9708,59 @@ def handle_button(app, btn, body_h_px=None):
                 # Download Books > JW > Videos again.
                 app.dl_is_video = False
                 app.screen = SCREEN_DOWNLOAD_VIDEO_SOURCES
+            elif app.dl_is_audio:
+                # v26.07.10.01: same idea as the video branch just above --
+                # B goes back to whichever audio picker screen got you
+                # here. If a Bible book was chosen first (books-type
+                # source), that's SCREEN_DOWNLOAD_AUDIO_BOOKS (so you can
+                # pick a different book without re-opening Audio from
+                # scratch); otherwise (e.g. Watchtower Study Audio, no
+                # book picker involved) it's SCREEN_DOWNLOAD_AUDIO_SOURCES.
+                app.dl_is_audio = False
+                app.screen = (SCREEN_DOWNLOAD_AUDIO_BOOKS if app._pending_audio_source
+                              else SCREEN_DOWNLOAD_AUDIO_SOURCES)
             elif app.dl_category is not None:
+                # v26.07.09.14 BUG FIX (Kaleb's report): dl_category used
+                # to just persist here, unreset -- so a search started
+                # from the Categories screen (either Gutenberg's main
+                # search, or JW's Y/SELECT shortcuts added directly to
+                # this screen in v26.07.09.11) could silently inherit
+                # whatever category was last browsed, instead of
+                # searching everything like the Categories screen implies
+                # it should. Categories now always genuinely means "no
+                # category" the moment you land on it.
+                app.dl_category = None
                 app.screen = SCREEN_DOWNLOAD_CATEGORIES
             elif len(DOWNLOAD_PLUGINS) > 1:
+                # v26.07.09.10: see the matching comment at the
+                # SCREEN_DOWNLOAD_CATEGORIES B-handler -- this is the
+                # OTHER real exit point that leaves the plugin entirely
+                # (the two branches above, video-sources and
+                # categories, both stay inside it and must NOT clear
+                # the token).
+                clear_fn = getattr(app.dl_plugin, "clear_search_token_cache", None)
+                if clear_fn:
+                    clear_fn()
                 app.screen = SCREEN_DOWNLOAD_SOURCES
             else:
+                clear_fn = getattr(app.dl_plugin, "clear_search_token_cache", None)
+                if clear_fn:
+                    clear_fn()
                 app.screen = SCREEN_LIBRARY
         elif btn == "A" and app.dl_items:
             app.start_download(app.dl_index)
+        elif btn == "X":
+            app.dl_help_return_screen = SCREEN_DOWNLOAD_BROWSE
+            app.dl_help_scroll = 0
+            app.screen = SCREEN_DOWNLOAD_HELP
+
+    elif app.screen == SCREEN_DOWNLOAD_HELP:
+        if btn == "UP":
+            app.dl_help_scroll = max(0, app.dl_help_scroll - 1)
+        elif btn == "DOWN":
+            app.dl_help_scroll += 1  # clamped for real inside draw_download_help()
+        elif btn == "B":
+            app.screen = app.dl_help_return_screen
 
     elif app.screen == SCREEN_TEXT_ENTRY:
         rows = TEXT_ENTRY_GRID
@@ -7193,6 +9926,11 @@ def handle_button(app, btn, body_h_px=None):
                 save_settings({"theme_index": new_index})
                 app._page_cache_key = None
                 app.set_status(f"Theme: {THEMES[new_index]['name']}")
+            elif choice == "Immersive Mode":
+                app.immersive_mode = not app.immersive_mode
+                save_settings({"immersive_mode": app.immersive_mode})
+                # stays open, same as Theme +/- -- lets the label update
+                # in place without re-opening the menu
             elif choice == "Library":
                 app.save_progress()
                 app.refresh_library()
@@ -7400,6 +10138,16 @@ def handle_button(app, btn, body_h_px=None):
                 if action == "Clear Image Cache":
                     freed = clear_image_cache()
                     app.image_loader._results.clear()
+                    # v26.07.09.12 BUG FIX: this used to be a bare
+                    # app._image_textures.clear() -- dropped the Python
+                    # dict references but never called SDL_DestroyTexture()
+                    # on the entries themselves first, unlike
+                    # _evict_image_textures_if_needed()'s LRU path (which
+                    # always destroys before removing). A real GPU-memory
+                    # leak: pressing this action repeatedly freed the RAM
+                    # decode cache but not the GPU texture memory alongside it.
+                    for _key, entry in app._image_textures.items():
+                        SDL.SDL_DestroyTexture(entry[0])
                     app._image_textures.clear()
                     app.set_status(f"Image cache cleared -- {format_bytes(freed)} freed")
                 elif action == "Clean Up Orphaned Bookmarks":
