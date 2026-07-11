@@ -53,8 +53,21 @@ the same hardware and ended up becoming the main passion project.
   entirely and land right back in your book on startup.
 - **A built-in image cache** you can manage from the Settings screen,
   including a RAM-only mode if you'd rather not write to disk at all.
+- **5 selectable themes**, including three progressively warmer/redder
+  options (Dim Warm, Deep Amber, Red Shift) meant for reading right
+  before bed — less blue light, easier on melatonin/night vision.
+  Switch anytime from the Library menu.
 - **Optional book downloaders** — browse and download books right on
   the device (see below).
+- **A boot splash screen** — a short, skippable intro (START/A/B skip
+  straight past it) before landing in your Library or last-read book.
+- **Graceful handling of unusually large pages** — a few real-world
+  EPUBs have individual pages that are genuinely huge (footnote-heavy
+  reference works, long daily-reading schedules). PicoReader shows a
+  progress screen while it prepares one of these, caches the result so
+  it's instant on every future visit, and lets you back out or jump
+  chapters mid-preparation instead of forcing you to wait — the page
+  keeps preparing in the background while you keep reading elsewhere.
 
 ## Controls
 
@@ -144,9 +157,10 @@ the file, for anyone — human or AI — picking the project back up later.
 
 ## License
 
-This project's own code is MIT licensed. The bundled Liberation Sans
-fonts are third-party and stay under the SIL Open Font License 1.1.
-Both full license texts are in [`LICENSE`](LICENSE).
+This project's own code is MIT licensed. The bundled DejaVu Sans
+Condensed fonts are third-party and stay under a permissive
+Bitstream Vera-derived license. Both full license texts are in
+[`LICENSE.md`](LICENSE.md).
 
 ## A note from the author
 
@@ -162,8 +176,8 @@ me.
 
 ## Credits
 
-- [Liberation Sans](https://github.com/liberationfonts) — Red Hat /
-  Google, SIL Open Font License 1.1
+- [DejaVu Fonts](https://dejavu-fonts.github.io/) — public domain
+  changes over a Bitstream Vera base, permissively licensed
 - [Gutendex](https://gutendex.com) — Gareth Johnson, MIT licensed, used
   as an API only (no code bundled)
 - Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-H
