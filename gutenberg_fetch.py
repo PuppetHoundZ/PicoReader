@@ -1,6 +1,10 @@
 """
 gutenberg_fetch.py
 
+Current version: v26.07.12.27 (matches main.py's date-based scheme,
+YY.MM.DD.XX). Inline "# vYY.MM.DD.XX" comments document non-obvious
+behavior near the relevant code, same convention as main.py.
+
 Optional PicoReader plugin: browse and download public-domain EPUBs from
 Project Gutenberg via Project Gutenberg's OWN official OPDS catalog feed
 (www.gutenberg.org/ebooks/search.opds/) -- switched (v0.1.141) from the

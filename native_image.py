@@ -1,6 +1,10 @@
 """
 native_image.py
 
+Current version: v26.07.12.27 (matches main.py's date-based scheme,
+YY.MM.DD.XX). Inline "# vYY.MM.DD.XX" comments document non-obvious
+behavior near the relevant code, same convention as main.py.
+
 Optional ctypes bridge to the system's libSDL2_image, used to decode
 images (JPEG, PNG, and whatever else the device's SDL2_image build
 supports -- see IMG_INIT_ALL below) at real C speed instead of

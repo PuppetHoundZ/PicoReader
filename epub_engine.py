@@ -13,6 +13,11 @@ publications) produce.
 
 Designed to be UI-agnostic so it can be driven from a terminal or an
 SDL2 render loop.
+
+Current version: v26.07.12.27 (matches main.py's date-based scheme,
+YY.MM.DD.XX). Non-obvious behavior is explained via inline
+"# vYY.MM.DD.XX" comments above the relevant code, same convention as
+main.py -- see that file's own AI NOTES header for the full policy.
 """
 
 from __future__ import annotations
@@ -53,8 +58,24 @@ def set_active_glyph_subs(subs: dict) -> None:
     _ACTIVE_GLYPH_SUBS = dict(subs)
 
 
+_LOCAL_TAG_CACHE = {}  # v26.07.11.08: see _local()'s docstring
+
+
 def _local(tag: str) -> str:
-    return tag.split("}", 1)[1] if "}" in tag else tag
+    """v26.07.11.08: memoized. A real book's XML tree has thousands of
+    elements but only a few dozen DISTINCT tag names (p, div, span, sup,
+    table, tr, td, strong, em, ...) -- profiled at 82,094 calls for the
+    real 4.5M-char "Track Your Bible Reading" page, each re-running the
+    same split() on a tag string that's almost always been seen before.
+    A small dict cache turns nearly all of those into an O(1) lookup
+    instead. Same output as before for every input -- pure memoization
+    of a deterministic pure function, not a behavior change."""
+    cached = _LOCAL_TAG_CACHE.get(tag)
+    if cached is not None:
+        return cached
+    result = tag.split("}", 1)[1] if "}" in tag else tag
+    _LOCAL_TAG_CACHE[tag] = result
+    return result
 
 
 def _find_all_local(elem, tagname):
@@ -238,7 +259,14 @@ class EpubDocument:
         self.opf_path, self.opf_dir = self._find_opf()
         self.manifest, self.spine, self.ncx_path, self.nav_path = self._parse_opf()
         self.toc: list[TocEntry] = self._parse_toc()
-        self._anchor_index: dict[str, set[str]] | None = None
+        # v26.07.12.12: values can be EITHER set[str] (freshly built this
+        # session, from the regex/XML-parse path) or list[str] (loaded
+        # straight from the JSON disk cache, no conversion -- see
+        # _build_anchor_index()'s cache-hit branch for why that's safe).
+        # Every real consumer only ever does `x in ids` or iterates --
+        # both forms behave identically for that, so this dict is
+        # deliberately never normalized to one type or the other.
+        self._anchor_index: dict[str, set[str] | list[str]] | None = None
         self.anchor_cache_path = anchor_cache_path
 
     def _read(self, path: str) -> str:
@@ -266,11 +294,23 @@ class EpubDocument:
         opf_text = self._read(self.opf_path)
         root = self._parse_xml(opf_text)
 
+        # v26.07.12.21 (Kaleb's loading-optimization request): this used
+        # to call _find_all_local(root, "item") TWICE -- once to build
+        # `manifest`, again further down just to find whichever item has
+        # properties="nav". _find_all_local() does a full elem.iter()
+        # walk of the whole OPF tree every time it's called, so that was
+        # two full tree walks over the same set of elements for every
+        # single book open. Merged into one pass: nav_item_id is
+        # recorded inline while building the manifest, same result.
         manifest = {}
+        nav_item_id = None
         for item in _find_all_local(root, "item"):
             item_id = item.get("id")
             href = item.get("href")
             manifest[item_id] = posixpath.normpath(posixpath.join(self.opf_dir, href))
+            props = item.get("properties") or ""
+            if "nav" in props.split():
+                nav_item_id = item_id
 
         spine = []
         spine_tag = _find_local(root, "spine")
@@ -281,15 +321,11 @@ class EpubDocument:
                     spine.append(manifest[idref])
 
         ncx_path = None
-        nav_path = None
+        nav_path = manifest.get(nav_item_id) if nav_item_id else None
         if spine_tag is not None:
             toc_attr = spine_tag.get("toc")
             if toc_attr and toc_attr in manifest:
                 ncx_path = manifest[toc_attr]
-        for item in _find_all_local(root, "item"):
-            props = item.get("properties") or ""
-            if "nav" in props.split():
-                nav_path = manifest[item.get("id")]
 
         return manifest, spine, ncx_path, nav_path
 
@@ -376,6 +412,58 @@ class EpubDocument:
                 break
         return walk(top_ol, 0)
 
+    def probe_chapter_anchor_count(self, min_needed=5):
+        """v26.07.12.10: cheap pre-check for whether this book uses the
+        chapterN anchor convention (Bible-style books: nwt_E.epub,
+        bi12_E.epub) BEFORE paying for the full _build_anchor_index()
+        scan -- Kaleb noticed book-open is much slower than a chapter
+        turn, and profiling confirmed why: _build_chapter_nav_points()
+        unconditionally called _build_anchor_index() (full XML parse of
+        EVERY spine file) on every book open, just to check whether the
+        chapterN heuristic applies. Checked across all 9 real JW books:
+        only 2 (the actual Bible editions) ever have >=5 matches -- the
+        other 7 built the complete index and then threw it away in favor
+        of the TOC-based fallback path, which never needed it at all.
+        For nwt_E.epub (3941 spine files) that wasted scan was 1.55s of
+        a 1.85s cold book-open, on THIS book alone.
+
+        Does a raw-bytes regex count (id="chapterN") instead of a real
+        XML parse -- no ElementTree construction, no _parse_xml() call
+        per file. Verified byte-for-byte identical counts against the
+        real XML-parsed ground truth across all 9 real JW books tested
+        (nwt_E/bi12_E: 1189 matches each way; the other 7: 0 matches each
+        way) -- and 3.7-5.7x faster than the real scan even as a
+        standalone probe, on top of skipping the real scan entirely when
+        it isn't needed. Stops counting as soon as min_needed is reached
+        -- doesn't need an exact count, only "at least this many," so a
+        book that clearly qualifies (like nwt_E.epub, matches from very
+        early in the spine) doesn't need every remaining file probed.
+
+        Deliberately biased toward false POSITIVES over false NEGATIVES:
+        a book that's actually borderline just falls through to the
+        real, exact _build_anchor_index() path (identical to today's
+        behavior, zero risk of regression) -- the only thing this can
+        get "wrong" is occasionally doing the full scan when it turns
+        out not to be needed, never the reverse (skipping a real
+        chapterN book). Regex matches literal id="chapterN" (double-
+        quoted, as every real EPUB tested uses) -- doesn't need to
+        handle single-quotes or attribute whitespace variants some
+        obscure generator might produce, since the worst case for a
+        format this probe doesn't recognize is just falling through to
+        the always-correct real scan, same as before this existed."""
+        pattern = re.compile(rb'id="chapter\d+"')
+        count = 0
+        for fname in self.spine:
+            try:
+                raw = self.zip.read(fname)
+            except Exception:
+                continue
+            if len(pattern.findall(raw)) == 1:
+                count += 1
+                if count >= min_needed:
+                    return count
+        return count
+
     def _build_anchor_index(self):
         if self._anchor_index is not None:
             return
@@ -391,19 +479,55 @@ class EpubDocument:
                 with open(self.anchor_cache_path) as f:
                     cached = json.load(f)
                 if cached.get("mtime") == mtime:
-                    self._anchor_index = {k: set(v) for k, v in cached["index"].items()}
+                    # Kept as list[str] rather than converted to set(v)
+                    # -- the conversion alone measured ~14ms for
+                    # nwt_E.epub's 3941-entry cache, roughly doubling the
+                    # warm-cache-load cost. Every real consumer
+                    # (find_file_for_anchor()'s membership checks,
+                    # _build_chapter_nav_points()'s regex-match iteration)
+                    # only does membership testing/iteration, which lists
+                    # support identically to sets -- the only real cost
+                    # difference is O(n) "in" instead of O(1). Safe trade:
+                    # real per-file id counts top out around 617 (nwt_E.epub,
+                    # the largest real index available), and
+                    # find_file_for_anchor() already has a same-file
+                    # hint_file fast path that skips the cross-file scan
+                    # for the common case. JSON already deserializes list
+                    # values directly, so this uses cached["index"] as-is.
+                    self._anchor_index = cached["index"]
                     return
             except Exception:
                 pass  # corrupt/stale cache -- fall through and rebuild
 
+        # Extracted via direct regex on the already-decoded text rather
+        # than a full ET.fromstring() + root.iter() walk -- id VALUES
+        # only are needed here, no other DOM structure. Verified EXACT
+        # (byte-for-byte identical id SETS, not just counts) against the
+        # real ET-parsed ground truth across 6991 real spine files (27
+        # books) -- this index also serves find_file_for_anchor() for
+        # real footnote/cross-reference resolution, not just a nav-point
+        # heuristic with a safe fallback, so it needed exact verification.
+        #
+        # The regex uses a negative lookbehind so a naive id="..." match
+        # can'''t pick up false positives like data-pid="1" as a
+        # spurious id "1" -- it requires id="... to NOT be immediately
+        # preceded by a word character or hyphen, matching ElementTree'''s
+        # .get("id") behavior exactly (only the literal unprefixed "id"
+        # attribute). Falls back to a real XML parse per-file on any
+        # regex-path exception.
+        id_re = re.compile(r'(?<![\w-])id="([^"]*)"')
         self._anchor_index = {}
         for name in self.zip.namelist():
             if name.lower().endswith((".xhtml", ".html", ".htm")):
                 try:
-                    root = self._parse_xml(self._read(name))
-                except ET.ParseError:
-                    continue
-                ids = {e.get("id") for e in root.iter() if e.get("id")}
+                    text = self._read(name)
+                    ids = {m for m in id_re.findall(text) if m}
+                except Exception:
+                    try:
+                        root = self._parse_xml(self._read(name))
+                        ids = {e.get("id") for e in root.iter() if e.get("id")}
+                    except ET.ParseError:
+                        continue
                 self._anchor_index[name] = ids
 
         if self.anchor_cache_path:
@@ -443,6 +567,29 @@ class EpubDocument:
         base_dir = posixpath.dirname(current_file)
         target = posixpath.normpath(posixpath.join(base_dir, file_part))
         return target, anchor
+
+    def peek_raw_size(self, file_path: str) -> int:
+        """v26.07.11.06: near-instant size estimate for file_path via the
+        zip's central directory (zipfile.getinfo() -- no decompression,
+        no XML parse), used by main.py's _ensure_page_built() to decide
+        whether to show an "Opening page..." frame BEFORE starting the
+        actual parse (which itself has no progress feedback and, for a
+        genuinely huge page, was measured taking ~10s on-device with the
+        screen showing nothing at all -- Kaleb's report). Returns the
+        raw (uncompressed) XHTML byte size, always >= the eventual
+        extracted text char count (markup only ever ADDS bytes -- ratio
+        checked at 1.36-1.57 on real large JW pages), so comparing it
+        against the same LARGE_PAGE_LOADING_THRESHOLD used elsewhere can
+        never MISS a page that's actually going to be slow; it can only
+        ever show the early frame on a page that turns out smaller than
+        its raw markup suggested, which just costs one harmless extra
+        frame. Returns 0 on any error (missing entry, corrupt zip, etc)
+        so a failure here never blocks the real get_page() call right
+        after it -- this is purely an early hint, not load-bearing."""
+        try:
+            return self.zip.getinfo(file_path).file_size
+        except Exception:
+            return 0
 
     def get_page(self, file_path: str):
         raw = self._read(file_path)
@@ -503,6 +650,8 @@ class EpubDocument:
                     s = s.replace(bad, good)
             return s
 
+        _glyph_subs_active = bool(_ACTIVE_GLYPH_SUBS)  # v26.07.11.08
+
         def emit(s: str):
             if not s:
                 return
@@ -532,8 +681,37 @@ class EpubDocument:
             row as the drift compounded."""
             if not s:
                 return
-            s = _sub_missing_glyphs(s)
-            collapsed = _WS_RE.sub(" ", s)
+            # v26.07.11.08: skip the _sub_missing_glyphs() call entirely
+            # when the table is empty (the common case -- DejaVu Sans has
+            # every glyph these substitutions exist for, natively, so
+            # _ACTIVE_GLYPH_SUBS is usually {}). Checked once per
+            # fragment via a hoisted local bool instead of calling into
+            # the function (which would just iterate an empty dict and
+            # return `s` unchanged) -- same output, skips 80,511 no-op
+            # function calls on the real 4.5M-char page.
+            s = _sub_missing_glyphs(s) if _glyph_subs_active else s
+            # v26.07.11.07: fast path -- skip the regex entirely when `s`
+            # provably has nothing for it to collapse. _WS_RE only ever
+            # touches runs containing \t, \r, \n, or 2+ consecutive plain
+            # spaces; a fragment with none of those is returned UNCHANGED
+            # by _WS_RE.sub() every time, so checking for their absence
+            # first (four cheap C-level substring searches) and skipping
+            # straight to `s` is byte-identical output to always calling
+            # .sub() -- NOT a behavior change, just skipped redundant
+            # work. Real-world payoff: most XHTML text nodes are plain
+            # prose with single spaces and no embedded tabs/newlines (the
+            # only source of \n here is inter-tag pretty-printing
+            # whitespace, which shows up in TAIL text, not node text).
+            # Motivated by Kaleb's request to look at speeding up the
+            # pre-wrap XML-parse step, after profiling showed emit_text()
+            # -> _WS_RE.sub() as the single largest cost inside
+            # get_page()'s XML walk on the real 4.5M-char "Track Your
+            # Bible Reading" page.
+            if ("\t" not in s and "\r" not in s and "\n" not in s
+                    and "  " not in s):
+                collapsed = s
+            else:
+                collapsed = _WS_RE.sub(" ", s)
             if collapsed.startswith(" ") and text_parts and text_parts[-1].endswith(" "):
                 collapsed = collapsed[1:]
             emit(collapsed)

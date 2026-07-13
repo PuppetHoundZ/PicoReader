@@ -82,11 +82,11 @@ guessing. The basics:
 | L / R | Previous / next page | Font size smaller / larger |
 | L2 / R2 | Previous / next chapter | Open downloader (if installed) |
 | Y | Toggle fast-scroll | Change sort order |
-| X | Open the menu | Pin a book |
-| START | Add a bookmark here | Open the Library menu |
+| X | Open the menu | Open the Library menu |
+| START | Add a bookmark here | Pin a book |
 | SELECT | -- | Mark the book Finished / Unfinished |
 
-Book delete lives in the Library menu (START → Delete Book) rather than
+Book delete lives in the Library menu (X → Delete Book) rather than
 on a bare button — it always targets whichever book was highlighted
 when you opened the menu, and needs a second press to confirm. The
 Library menu also has sort/filter shortcuts, theme switching, and the
