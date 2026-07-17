@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-PicoReader for muOS (Anbernic RG CubeXX-H, 720x720)
+PicoReader for muOS (Anbernic RG CubeXX-H, 720x720 -- primary target;
+also adapts to other muOS device aspect ratios via a nearest-match
+canvas-height table -- RG34XX/RG34XX SP (3:2, native, no bars),
+RG28XX/RG35XX/RG40XX and TrimUI Brick (4:3, exact match, no bars),
+TrimUI Smart Pro (16:9, matched to 3:2, pillarboxed) -- SW stays a
+fixed 720 throughout; render filtering uses SDL2's default (nearest)
+uniformly on every device, no scale-quality hint set, v26.07.16.32)
 
 Companion app to Pico8FavsSorter -- same conventions: raw ctypes SDL2,
 no external deps, hint bar, controller-first navigation.
@@ -59,7 +65,413 @@ scrolled to your current reading position, not always the top of the list.
 
 ===========================================================================
 AI NOTES -- read this first if you're a future Claude session picking this
-project back up. This describes the CURRENT build only (v26.07.12.14).
+project back up. This describes the CURRENT build only (v26.07.16.32).
+
+RENDER SCALE QUALITY: NO HINT SET, DELIBERATELY (v26.07.16.24,
+Kaleb's final call). Tried and reverted across .21-.23: SDL2's
+default render scale quality is "nearest" (point sampling). .21
+briefly set it to "linear" everywhere non-1.0 scale; .22 narrowed
+that to linear-only-for-downscale (RG28XX/RG35XX/RG40XX at 0.889x,
+where nearest-neighbor that close to 1:1 can genuinely drop a thin
+font stroke) while keeping nearest for the upscale cases (TrimUI
+Brick/TrimUI Smart Pro, where nearest just duplicates pixels -- a
+sharp-retro-handheld LOOK, not a correctness issue). Kaleb weighed
+.22's real-but-marginal downscale fix against "keep everything crisp,
+one simple rule, no per-device branching" and chose the latter --
+0.889x isn't a dramatic enough ratio for the effect to be a given
+correctness problem worth the added complexity. Net result: NO
+SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, ...) call anywhere in this
+file -- SDL2's own "nearest" default applies uniformly to every
+device, native and scaled alike. If this is ever revisited, .22's
+reasoning/verified per-device hint values are preserved in this
+project's chat history, not reproduced here to avoid re-accumulating
+changelog entries for a feature that's now simply absent.
+
+SETTINGS: HELP + CREDITS/LICENSE ADDED (v26.07.16.24-.32, Kaleb's
+request). Two new static-scroll-overlay rows on Settings, sharing one
+helper (_draw_static_scroll_overlay()) with the existing downloader
+X-Help overlay -- one implementation for all three instead of three
+near-copies. Every heading gets a blank line before AND after
+(de-duped so they never double up), except the FACE_MENU_LOGO+
+"PICO READER" lockup, which stays adjacent as one unit (same as the
+boot splash/menu sidebar version) via a targeted exception in that
+same de-dup pass.
+"Credits / License" (SCREEN_LICENSES, LICENSE_PARAGRAPHS): centered
+thank-you block (logo lockup, name, "Happy Reading," / "Kaleb", GitHub
+bug-report link at github.com/PuppetHoundZ/PicoReader -- confirmed
+live/public), then the full MIT + bundled-font (DejaVu, Bitstream
+Vera-derived) license text, kept in sync with LICENSE.md/
+FONT_LICENSE.txt -- text spot-checked phrase-for-phrase against
+LICENSE.md, no mismatches.
+"Help" (SCREEN_HELP, APP_HELP_PARAGRAPHS): where to put .epub files
+(ROMS/Book Reader -- muOS's existing shared Book Reader content
+folder, same one LIBRARY_DIR/find_books_dir() already uses, NOT a
+PicoReader-specific folder) and the real button-control reference --
+X opens a menu (Reader popup or Library menu); Y toggles fast-scroll
+in the Reader and cycles sort order in the Library; B EXITS THE APP
+from the Library specifically, not just "back" -- all confirmed
+against handle_button()'s actual dispatch, not assumed (an earlier
+draft got X/Y and B wrong; caught and fixed during verification).
+Verified via a 525-check headless sweep: 3 canvas profiles x 7 font
+sizes x Kaleb's 4 real EPUBs (including the 4.5M-char NWT stress
+book), every screen exercised, 0 errors. Also found and fixed a real
+ImageLoader race while at it: request() seeds self._results[key]
+before queuing, but a concurrent is_relevant() pop() for a different
+queued request on the same key could remove it before a later
+write landed, raising a bare KeyError. Fixed via
+ImageLoader._seed_result_entry(), called at all four of _process()'s
+write sites -- see that method's own docstring. Not something normal
+one-book-per-session usage would trigger, but real, and now closed.
+.32 (Kaleb's request, "did we clean up changelog/AI notes"): honest
+answer was partial -- collapsed this SAME entry's own .24-.31
+iteration diary down to current-state-only (was ~74 lines of
+round-by-round notes, now ~35), and separately consolidated the
+unrelated cold-wrap-ramp tuning trio (.11/.13/.14) the same way,
+further down this notes block. Re-verified with the same 525-check
+sweep after both edits: 0 errors, unchanged.
+
+DEVICE PROFILE DETECTION REFACTORED INTO A TABLE (v26.07.16.20,
+Kaleb's request: "adapt to ratios without breaking the 720-wide
+logic"). Replaced the .15-.19 hand-written if/elif chain (one branch
+per device family, added one at a time as each new device came up)
+with a single data-driven rule: CANVAS_HEIGHT_PROFILES is a list of
+(canvas_height, label) pairs -- currently 720 (1:1), 480 (3:2), 540
+(4:3) -- and _pick_canvas_height(dev_w, dev_h) just picks whichever
+height's aspect ratio (SW/height) is numerically closest to the
+device's real aspect ratio. SW stays hardcoded 720 everywhere,
+completely untouched by this refactor. SDL_RenderSetLogicalSize's own
+scale-to-fit does the rest automatically: scale lands on exactly 1.0
+(zero bars) whenever the device's aspect ratio exactly matches a
+table entry (RG34XX/RG34XX SP against 480, RG28XX/RG35XX/RG40XX and
+TrimUI Brick against 540), or adds bars on whichever axis has
+leftover room when it's a genuine mismatch (TrimUI Smart Pro's 16:9
+against the nearest available 3:2 entry -- confirmed this reproduces
+the EXACT same decision as .19's hand-picked branch: 720x405, an
+exact-16:9-match canvas, would trade real reading rows for
+eliminating already-blended bars, so 3:2/480 -- more content, some
+bars -- is deliberately the better choice for a reading app,
+verbatim confirmed with Kaleb this session).
+TO ADD A NEW CANVAS PROFILE (e.g. a future device with a genuinely
+different aspect ratio that deserves its own bucket instead of being
+matched to an existing one): add one (height, label) tuple to
+CANVAS_HEIGHT_PROFILES. Nothing else needs to change -- no new
+branch, no new SDL_CreateWindow call, no touching _SX/_SY (still
+hardcoded 1.0, still never derived from SH -- see that block's own
+comment for why). RGCubeXX-H's exact-match path (720x720, no
+fullscreen flag, no scaling) is kept as a special case OUTSIDE the
+table on purpose -- v0.1.148's original zero-regression-risk
+guarantee on the primary dev device, unchanged since before any of
+this profile work started.
+NOT YET CONFIRMED ON REAL HARDWARE for any profile in this session's
+work (.15 through .20). The .15-.19 iterations that led here (native
+RG34XX profile, two different 4:3 additions, and the 16:9-vs-3:2
+TrimUI Smart Pro decision) are fully superseded by this table and
+not reproduced separately -- their real content is already stated
+above (the table itself, and the note on why TrimUI Smart Pro maps
+to 3:2 instead of an exact-16:9 canvas).
+
+COLD-WRAP RAMP (current shape, finalized v26.07.16.14):
+cold_wrap_slice_budget() is a single smooth quadratic curve, no
+breakpoint, spanning the full 4.0s window, 100ms -> 2000ms (t=0s->
+100ms, t=1.0s->~219ms, t=2.0s->~575ms, t=3.0s->~1169ms, t=4.0s->
+2000ms). Shared by both the foreground cold-wrap branch and
+_step_bg_prerender() -- one function, not two copies of the same
+formula. An earlier two-phase version (flat 50-150ms for 1.0s, then
+quadratic to 2000ms, with COLD_WRAP_PHASE1_SECONDS/
+_PHASE1_END_SLICE_SECONDS constants) was tried and fully replaced --
+if either of those two names shows up anywhere, that's stale/
+historical, not live code. Verified byte-identical chunked-vs-direct
+wrap output on a real 400K-char slice of "Track Your Bible Reading"
+against this curve. NOT yet confirmed on real hardware for
+responsiveness feel.
+Two related investigations from the same session, negative results
+worth remembering so they're not re-tried: word-width cache reshaped
+from dict[(id(font), word)] to nested dict[id(font)][word], on a
+theory it'd avoid a tuple-hash cost -- real A/B timing showed no gain
+(8.88s vs 9.04s over 3 runs each), reverted (see
+App._measured_word_width()'s docstring). _flush_line()'s real-width
+verification loop was profiled directly: 0 of 64,398 calls on the
+real stress page ever needed more than one check, so there's no
+repeated-recomputation to chase there.
+
+SECOND ANIMATION EDGE-CASE AUDIT (v26.07.16.10, Kaleb's request to keep
+digging): 10 additional scenarios checked across all three animation
+mechanisms. One defensive fix made (cheap insurance, not a live bug):
+_tick_theme_transition()'s frac calculation now guards against
+_THEME_TRANS_DURATION being 0 (division-by-zero), same pattern as
+eased_sel_y's existing time_constant<=0 guard -- the real constant is
+a hardcoded 0.18, never 0 in practice, but this protects against a
+future accidental edit.
+
+All 5 scenarios from the FIRST audit (test_animation_bug_hunt.py) still
+pass: screen-switch mid-glide (exactly 1 harmless extra redraw, no
+persistent leak), rapid theme-scrubbing (19 interrupted transitions,
+no crash, correct final settle), armed-delete-confirm interrupting a
+glide (no crash, correctly snaps on resume), simultaneous glide+theme-
+transition (both progress independently, no interference), backward
+system clock (all three mechanisms handle it via existing max(0.0,...)
+clamps).
+
+4 NEW scenarios checked this round (test_animation_edge_cases_2.py),
+all pass: (1) a status duration shorter than the fade-in+fade-out
+windows combined -- no crash, alpha stays in range, single rise-then-
+fall shape (see below for the one caveat found); (2) degenerate
+row_h=0 for eased_sel_y -- no crash, correctly degrades to always-snap
+rather than dividing by zero; (3) repeated identical-target calls at
+an already-converged steady state, even with large time gaps between
+calls, never spuriously re-marks the glide active; (4) the new
+duration=0 defensive guard itself.
+
+ONE THEORETICAL (CURRENTLY UNREACHABLE) FINDING, documented rather
+than silently accepted: set_status() durations under ~0.37s (fade-in
+0.12s + fade-out 0.25s) would fade in more slowly than the toast's
+total lifetime, so it'd disappear before ever reaching full brightness
+instead of a clean fade-out. Every ACTUAL set_status() call site in
+the app uses 2.5s or 10.0s, far above this threshold, so this can't
+currently occur -- flagged for the record rather than glossed over,
+not fixed since there's no live code path that hits it.
+
+ANIMATION CPU AUDIT + TWO REAL BUGS FOUND (v26.07.16.09, Kaleb's
+request to double-check CPU use): asked to verify CPU cost, actual
+investigation surfaced two real correctness bugs in the v26.07.16.08
+selection glide, neither of which the isolated pixel-readback tests
+had caught (those call draw_library() etc. directly, bypassing the
+main loop's need_redraw gating entirely):
+
+BUG 1: non-reader screens only redraw when app.dirty is set (a button
+press) -- eased_sel_y() had no way to keep the main loop redrawing
+while a glide was still converging, so a selection glide would move
+ONE frame on the triggering press and then freeze partway there
+forever (nothing else would mark the app dirty again). Fixed:
+App._sel_anim_active, set True by eased_sel_y() whenever a call is
+still meaningfully mid-glide, read (then reset) by a new check in
+main()'s redraw-forcing block (same pattern as the theme-transition/
+status-toast ones).
+
+BUG 2 (found while fixing bug 1): eased_sel_y() uses exponential-decay
+easing (each call moves a FRACTION of the remaining distance), which
+mathematically never reaches the target exactly through normal
+repeated short-dt calls -- frac only hits 1.0 in the degenerate case
+of one very long dt. Without an explicit "close enough" check, bug 1's
+fix would have made _sel_anim_active stay True FOREVER after any
+selection change, forcing full-screen redraws every frame indefinitely
+-- a real, easily-missed battery/CPU cost, not a cosmetic issue. Fixed:
+App.SEL_ANIM_SNAP_EPSILON_PX (0.5px) -- once within epsilon, snaps
+exactly to target and does NOT mark active, so forced redraws
+correctly stop.
+
+Both proven via test_glide_redraw_forcing.py, which replicates the
+main loop's actual redraw-decision sequence (not just calling
+draw_library() directly): a glide now converges over ~24 forced frames
+with zero further button presses, then genuinely stops forcing
+redraws (_sel_anim_active verified False afterward, not just assumed).
+
+CPU numbers (test_animation_cpu_cost.py, dev-hardware timing scaled by
+the project's established 4.1x ARM H700 factor): eased_sel_y() ~5us/
+call, status_alpha() ~1us/call, _tick_theme_transition() ~53us/call --
+all under 0.35% of a single 16.7ms frame budget; none involve pixel
+loops, I/O, or large allocations. The cost that actually matters is
+the EXTRA forced redraws, not the per-call math: a full draw_library()
+frame measures ~3.8ms device-scaled, so a glide's ~24-frame convergence
+burst is ~91ms of one-time CPU work spread across ~400ms of real time
+-- triggered only by an actual selection change, during which the
+screen was already going to be actively redrawing at ~60fps anyway.
+Theme transitions force redraws for a fixed 180ms, only on a rare
+user-initiated theme change. The status toast fade adds ZERO new
+forced-redraw time -- toasts already forced continuous redraws for
+their full on-screen duration before the fade existed; the fade only
+adds a cheap alpha calculation on top of frames already being drawn.
+None of the three force any redraw while the person is just reading
+with nothing active -- the idle low-power sleep(0.05) branch is
+completely unaffected in that (most common) state.
+
+SELECTION GLIDE EXTENDED TO EVERY LIST SCREEN (v26.07.16.08, Kaleb's
+request): v26.07.16.07's Library-only glide was refactored into a
+single shared mechanism -- App.eased_sel_y(key, target_y, row_h),
+keyed by a per-screen string, replacing the old dedicated
+_lib_sel_anim_y/_lib_sel_anim_t attribute pair with one
+self._sel_anim dict serving every list screen. Same behavior as
+before (time-based convergence, snaps instantly on jumps >3 row
+heights) -- just one mechanism instead of one attribute pair per
+screen. Wired into all 15 selection-highlight draw sites: Library,
+Menu, Chapters, Library Menu, Download Categories/Sources/Video
+Sources/Audio Sources/Audio Books/Video Series/Browse, Theme Menu,
+Theme Select, Bookmarks, Storage. Re-verified via the real pixel-
+readback test (updated for the new dict-based API) that Library's
+glide still genuinely animates across multiple frames after the
+refactor, plus the full existing regression suite (sound, intro theme,
+status fade, theme transition) all still pass unaffected.
+
+SUBTLE ANIMATIONS (v26.07.16.07, Kaleb's request): three small polish
+animations, deliberately NOT touching page turns/menu open-close/nav
+(those stay instant -- "quick, simple, relaxing, easy" means the app
+getting out of your way, not decorating every interaction). A fourth
+idea (a short fade on the splash screen's exit) was proposed and
+explicitly declined by Kaleb given the splash fade-to-destination bug
+history (see draw_splash()'s docstring) -- not implemented.
+
+1. Status toast fade: set_status() now tracks status_started;
+app.status_alpha() computes a 120ms fade-in / 250ms fade-out instead
+of an abrupt pop-in/pop-out, applied via render_text()'s existing
+alpha param (same mechanism the splash subtitle already uses safely --
+NOT the mechanism that broke on the splash's full-screen fade). One
+call site (the forced single-frame toast drawn right before a blocking
+operation) deliberately keeps alpha=255 instead of fading, since a
+120ms fade-in would make it invisible for the one frame that matters.
+Verified via real pixel readback: rendered text has ~1.8x more visible
+ink at full alpha than at a faint mid-fade alpha.
+
+2. Library selection glide: new App._eased_toward() helper (time-based,
+not frame-counted, so it converges in the same wall-clock time
+regardless of redraw rate) -- the selection highlight now slides to
+its new row instead of jumping. Snaps instantly instead of gliding if
+the jump is large (>3 row heights, e.g. wrapping bottom-to-top of a
+long list) -- a slow sweep across the whole list would read as lag,
+not polish. Verified via real pixel readback across multiple actual
+draw_library() frames a few ms apart on the real wall clock -- the
+highlight's Y position is provably different frame-to-frame while
+converging, not landing at its final position after a single frame.
+Only wired into Library for now; the same _eased_toward() helper can
+extend to other list screens (Menu/Chapters/Bookmarks/Storage) later
+if wanted.
+
+3. Theme color transition ("like a color slider"/"colors moving across
+the wheel" -- Kaleb's own description): apply_theme() no longer sets
+COL_* globals directly. It records the CURRENT values as
+_THEME_TRANS_FROM and the target palette as _THEME_TRANS_TO, and
+_tick_theme_transition() (called once per frame, in main()'s render
+loop, BEFORE any screen's draw_*() runs that frame) linearly
+interpolates every channel over 180ms. Every draw_*() call already
+reads COL_BG/COL_ACCENT/etc. as live globals each frame, so animating
+the globals themselves means EVERY screen's colors crossfade with zero
+changes to individual draw call sites -- the only touch points are
+apply_theme() itself and the one per-frame tick call. First-ever
+application (app boot, COL_BG still None) snaps instantly -- nothing
+to animate from. need_redraw is forced True while a transition is
+active, same pattern as an active status toast. Deliberately NOT the
+same architecture as the reverted splash fade (see draw_splash()'s
+docstring) -- no alpha/blend modes, no second screen drawn underneath;
+just the same plain RGB values every draw call already uses, animated
+in place. Verified via real pixel readback: three actual rendered
+frames (pure old theme, pure new theme, mid-transition) all produce
+three genuinely different pixel values, confirming the interpolated
+color is actually reaching the screen, not just changing in memory.
+
+INTRO THEME SWOOSH REMOVED (v26.07.16.06, Kaleb's request): the
+trailing 2s soft swoosh that followed the typing sequence is gone --
+_snd_soft_swoosh_stereo() deleted entirely (was otherwise unused).
+SND_SOUNDS["intro"] is now JUST the 1.5s typing sequence (132300
+bytes, was 308700 with the swoosh). Everything else about the intro
+(stereo panning per letter, exact SPLASH_TYPE_SECONDS timing, mute
+gating, skip-clears-queue behavior) is unchanged -- see v26.07.16.04's
+notes below for those details, minus the swoosh parts.
+
+SOUND VOLUME/TIMING AUDIT (v26.07.16.05, Kaleb's request): confirm and
+back were peaking at 0.25 (fraction of full scale ~0.18) vs nav/error/
+page's 0.11-0.16 -- softened confirm/back's volume param from 0.25 to
+0.18 for consistency (all 5 now peak 0.11-0.18, well under a 0.35 "too
+loud" threshold). Also verified -- not just re-asserted -- that lag
+can't delay/garble a sound: the sound-dispatch line is literally the
+first thing handle_button() does, before ANY per-screen logic (page
+loads, wraps, etc.) runs, and SDL_QueueAudio() hands off a sound's
+WHOLE buffer at once (not a live streaming callback), so a slow main
+thread afterward can't affect a sound that's already fully queued.
+Proved this by monkey-patching a real per-screen code path
+(_ensure_page_built) to sleep 50ms and confirming the SDL queue was
+already non-empty the instant that slow path started running. Also
+confirmed 20 rapid repeat presses never stack/pile up sounds -- the
+queue stays at exactly one sound's worth of bytes throughout, since
+each press clears the previous queue before queueing its own.
+
+BOOT-SPLASH INTRO THEME + STEREO AUDIO (v26.07.16.04, Kaleb's request):
+audio device switched from mono to stereo (SoundEngine's SDL_AudioSpec,
+channels=2) to support left-to-right panning. All 5 existing UI sounds
+(nav/confirm/back/error/page) are pre-converted to centered stereo via
+_snd_mono_to_stereo() at import time so they still play correctly on
+the stereo device instead of garbling -- a stereo device interprets
+raw bytes as interleaved L/R pairs, so mono data fed to it plays back
+at double speed/wrong pitch if not converted first.
+"intro" sound (SND_SOUNDS["intro"], built once by _build_intro_theme()):
+"PICO READER" typed out in short nav-bloop blips, EACH ONE PANNED to
+match its letter's left-to-right position in the title, timed to
+exactly match SPLASH_TYPE_SECONDS=1.5s (11 characters -> 1500/11
+slots) -- not an approximate gap/duration pairing, the timing is
+computed directly from the same constant draw_splash() uses. (A
+trailing swoosh section that used to follow this was removed in
+v26.07.16.06, see above.)
+Plays via self.play_sound("intro") ONCE at the exact point
+self.screen = SCREEN_SPLASH is set in App.__init__ -- NOT from
+draw_splash() (which runs every frame; calling from there would
+re-trigger it constantly). Goes through the same app.play_sound() gate
+as every other sound, so it's silent end-to-end when sound_enabled is
+False -- verified this actually leaves the real SDL queue empty
+(SDL_GetQueuedAudioSize == 0), not just that the Python call was
+skipped. If the person skips the splash early (START/A/B),
+handle_button()'s normal SND_BTN_MAP dispatch calls
+SDL_ClearQueuedAudio() before queueing that button's own sound, so the
+intro is cut cleanly rather than continuing to play over whatever
+screen comes next -- verified via the real SDL queue size shrinking
+after a skip press, not just checking which Python function ran.
+
+SOUND DEFAULT CHANGED (v26.07.16.03, Kaleb's request): app.sound_enabled
+now defaults to False (was True at launch in v26.07.16.01). Existing
+saved settings.json values are unaffected either way -- this only
+changes what a fresh install with no settings.json gets.
+
+EXIT-APP SOUND (v26.07.16.02, Kaleb's request): the "error" sound
+(quiet double "wonk" -- generated but previously unmapped to any
+button, see v26.07.16.01's notes) now plays via app.play_sound("error")
+at both places quit_requested gets set to True: SCREEN_LIBRARY's
+B-to-quit, and the reader popup Menu's "Exit App" choice. Verified on
+the real headless harness (real App(), real handle_button() dispatch)
+for both paths.
+
+SOUND EFFECTS (v26.07.16.01, Kaleb's request): pure-synth SDL2 audio, no
+asset files, no SDL2_mixer, no pip deps -- 5 short 16-bit PCM tones/
+sweeps/noise-blends generated once in Python at import time (~20KB
+fixed, held in RAM for the process lifetime -- not unbounded, never
+grows). Went through several real-listening rounds (not guessed) to
+land on a calm/nighttime-reading palette:
+  nav (UP/DOWN + L/R scroll)  - soft rising bubble bloop, quiet 2nd
+                                 harmonic for warmth
+  confirm (A/X/Y/START)      - rising sine sweep
+  back (B)                   - falling sine sweep
+  error                      - two quiet low "wonk" thuds (not yet
+                                 wired to any button -- see below)
+  page (L2/R2 page/chapter)  - slow sine arc + ~18% heavily-filtered
+                                 noise blend for "paper air" -- an
+                                 earlier pure-noise version read as
+                                 either piercing or dull/bored; giving
+                                 it the same tonal-sine backbone as the
+                                 other 4 sounds fixed both problems.
+SND_BTN_MAP (near SoundEngine class) is a single flat button->sound
+table, checked once at the very top of handle_button() -- deliberately
+NOT instrumented into individual screen branches, so opening/closing
+the reader popup Menu (X/Y opens it, B closes it) gets confirm/back for
+free without special-casing that screen. "error" is generated and
+available via app.play_sound("error") but has no button mapped to it
+yet; wire it to specific invalid/blocked actions if Kaleb wants that
+next.
+Settings: app.sound_enabled (default True), toggle available in BOTH
+the reader popup Menu ("Sound Effects" row, mirrors Immersive Mode's
+pattern) and Settings/Storage ("Toggle Sound Effects", mirrors Disk
+Cache/Images/Open Last Book). SoundEngine opens one SDL audio device in
+App.__init__ and silently no-ops (app.play_sound() becomes a no-op) if
+that fails for any reason -- never raises, never blocks the UI.
+Verified via the real headless harness (real App(), real
+handle_button() dispatch, real SDL audio device under
+SDL_AUDIODRIVER=dummy): every mapped button plays the right sound with
+zero exceptions, both toggle locations flip and persist
+app.sound_enabled correctly, and muting actually suppresses playback
+(not just the label).
+
+NOTE: everything up through v26.07.14.19 this session was actually built
+and delivered on July 15, 2026 -- the .07.14 date prefix was wrong the
+entire time, carried forward from stale context instead of checked
+against the real date, exactly the "date-continues-from-prior-session
+mistake" this project's own VERSION NUMBERING section warns about below.
+Caught and corrected here; no functional change, only this header and
+the version-numbering going forward.
 
 Non-obvious behavior is explained via inline "# vYY.MM.DD.XX" comments
 directly above the relevant code as you read through the file -- this
@@ -73,6 +485,8 @@ Recurring lessons worth knowing up front:
   remap()) uses bisect + precomputed cumulative arrays, not linear
   scans -- a real book (Enjoy Life Forever's largest page, 4.5M chars)
   timed out past 30s under the naive O(n x m) approach before this.
+  draw_reader()'s per-line paragraph-kind lookup (app._para_spans) got
+  the same treatment in v26.07.13.09 -- see that lookup's own comment.
 - Cold book-open and chapter-load cost is dominated by real, necessary
   work for large/Bible-style books (thousands of spine files) -- see
   EpubDocument.probe_chapter_anchor_count() and _build_anchor_index()
@@ -84,9 +498,397 @@ Recurring lessons worth knowing up front:
 - FAT32/exFAT on muOS user-data partitions has real per-syscall
   overhead on flash storage -- minimize syscall COUNT (chunked reads,
   attempt-then-catch instead of stat-before-read), not just CPU time.
-- SDL_ttf has never been verified safe to call off the main thread on
-  this hardware -- text wrapping (_wrap()) stays synchronous; only
-  pure I/O (disk cache reads, XML/zip parsing) is ever backgrounded.
+- Scroll ceiling math must use VISUAL ROW cost (_rows_for_li()/
+  _image_box_rows()), never raw line count -- _max_scroll() (added
+  v26.07.13.01) is the single source of truth every scroll-clamping
+  call site uses now. Any image-containing page can cost far more
+  rows than its line count implies; a `len(self._lines) - body_rows`
+  ceiling silently disagrees with that the moment it does.
+- v26.07.13.10: extreme pages (over LARGE_PAGE_LOADING_THRESHOLD) no
+  longer wrap in one blocking call. _wrap_chunked_start()/
+  _wrap_chunked_step() do the SAME algorithm as _wrap() (kept intact,
+  byte-identical, still used as-is for ordinary pages) but paused/
+  resumed across frames via self._live_wrap_state/_live_wrap_key,
+  writing directly into self._lines/etc as they grow so the page is
+  readable and scrollable while still building -- _max_scroll() already
+  worked purely off len(self._lines) so this needed no separate
+  "partial" code path. self._page_cache_key is only ever set once a
+  page is FULLY built (see the `_page_is_complete` guard in
+  _ensure_page_built()) -- this is what makes navigating away mid-build
+  cleanly abandon it (never partially cached, either RAM or disk) and
+  what makes _ensure_page_built() keep re-entering to take another
+  slice each frame instead of getting stuck after the first one. Only
+  known limitation: checkpoints happen BETWEEN paragraphs, not within
+  one -- a rare very-large single paragraph (confirmed up to ~1.3s on
+  real device, scaled from dev-hardware profiling) can't be interrupted
+  mid-paragraph. Verified byte-identical to the old one-shot _wrap() on
+  every real extreme page across all three real test books, at every
+  Font Size, including deliberately-forced-to-pause-constantly stress
+  runs and mid-build page-abandonment tests.
+- SECURITY (v26.07.15.16): audited for malicious-content risk (a bad
+  EPUB or spoofed download response trying to harm the device). No
+  eval/exec/subprocess anywhere in the codebase, so there's no code-
+  execution path from file content. Two real hardening gaps found and
+  fixed: (1) epub_engine.py's _parse_xml() now rejects any DOCTYPE with
+  an <!ENTITY> declaration before parsing -- closes an XML entity-
+  expansion ("billion laughs") DoS risk that stock ElementTree doesn't
+  guard against on its own; real EPUBs never define custom entities in
+  container.xml/opf/ncx/nav, so no real book is affected. (2) all three
+  download() functions (gutenberg_fetch.py, jw_fetch.py x2) now run the
+  server-provided filename through os.path.basename() before joining
+  with dest_dir, closing a path-traversal write risk if a download
+  response were ever spoofed/MITM'd. Both fixes verified against a real
+  downloaded Gutenberg EPUB (parses identically) and against synthetic
+  malicious inputs (entity bomb rejected cleanly, "../" filenames
+  contained to dest_dir). zipfile usage was already safe (reads via
+  zip.open() into memory, never extracts to disk, so zip-slip doesn't
+  apply); pickle usage was already safe (only ever deserializes the
+  app's own previously-serialized wrap cache, never network/EPUB data).
+- SECURITY, round 2 (v26.07.15.17): two more real gaps closed. (1)
+  epub_engine.py's EpubDocument._read() now checks
+  zipfile.getinfo(path).file_size (free -- read from the central
+  directory, no decompression needed) against
+  MAX_SINGLE_FILE_DECOMPRESSED_BYTES (64MB) BEFORE decompressing --
+  closes a zip decompression-bomb risk where a tiny compressed EPUB
+  entry could expand to hundreds of MB/GB and exhaust the device's 1GB
+  RAM. 64MB leaves generous headroom over the largest known real page
+  (~4.5M chars, well under 10MB). Verified: blocks a synthetic 200MB
+  bomb (203KB compressed) before any decompression happens; a real
+  downloaded book still reads all pages identically. get_page() raises
+  ValueError same as its existing parse-failure path, and every call
+  site already wraps get_page() in a broad except (KeyError/ValueError
+  or Exception) -- checked all 9 call sites in main.py, none needed
+  changes. (2) all 4 download functions (gutenberg_fetch.py,
+  jw_fetch.py x3) now reject any resolved download URL that doesn't
+  start with "https://" before handing it to urlopen() -- closes a
+  local-file-disclosure risk (e.g. a spoofed API response returning
+  file:///etc/passwd) since every real CDN URL from gutenberg.org/
+  jw-cdn.org is already https-only, so no legitimate download is
+  affected.
+- MEMORY LEAK FOUND AND FIXED (v26.07.15.18): full headless stress test
+  (real App(), real SDL2/SDL_ttf under SDL_VIDEODRIVER=dummy, real
+  controller-button dispatch via handle_button()) caught a genuine
+  unbounded-growth bug independent of anything else this session:
+  render_text_cached()'s _text_texture_cache held one permanent SDL
+  texture per unique (font, text, color) line ever drawn, and was ONLY
+  ever cleared in full on page/font-size change -- never bounded WHILE
+  staying on one page. Confirmed via profiling: scrolling linearly
+  through the largest real page (the "Track Your Bible Reading" page,
+  ~99,700 unique lines) grew RSS by ~71MB per 1000 scrolled lines with
+  zero ceiling (page-text cache and wrapped-page cache stayed flat the
+  whole time -- this was the one genuinely unbounded cache). Extrapolated
+  to the full page, that's multiple GB -- would crash the real device
+  well before reaching the end of that one page. Fixed by making
+  _text_texture_cache a bounded LRU (OrderedDict + move_to_end() +
+  MAX_TEXT_TEXTURE_CACHE=200 + _evict_text_texture_cache_if_needed()),
+  mirroring _evict_image_textures_if_needed()'s existing pattern exactly.
+  Re-profiled after the fix: RSS flat at ~141MB from 1,000 through 20,000
+  scrolled lines on the same page (was 1.6GB+ before). Re-ran the full
+  regression sweep (1,077 page-loads, 5 real books x 3 Font Sizes) and
+  the controller-driven nav test (open/page/chapter-skip/font-resize/
+  menu/200-mashed-input cycles) after the fix -- identical zero-error
+  results to before, plus a pixel-readback check confirming text still
+  actually renders (not just avoids crashing).
+
+- THEME RANDOMIZER (v26.07.15.19, extended v26.07.15.20): "Randomize
+  Theme" menu item (Library Menu and Reader Menu, next to Theme +/-)
+  generates a random hue-based dark palette via generate_random_theme()
+  and applies it immediately. Contrast-safe by construction, not luck:
+  both critical pairs (text-vs-bg, hint_text-vs-hint_bg) are nudged via
+  WCAG relative-luminance math (_contrast_ratio()/_relative_luminance())
+  until each clears the same 4.5:1 AA floor the 5 hand-tuned THEMES
+  entries target -- verified against 200 random seeds, 0 failures.
+  Up to MAX_CUSTOM_THEMES=3 saved custom themes are kept (v26.07.15.20:
+  raised from the original cap of 1 -- Kaleb's request); once full, the
+  OLDEST is evicted (FIFO) on the next save. Applying a random palette
+  is instant/free and lives in the session-only _DRAFT_THEME global
+  until named+saved via the existing SCREEN_TEXT_ENTRY keyboard
+  (App.randomize_theme()'s _on_confirm calls save_custom_theme(), which
+  appends to CUSTOM_THEMES and persists the whole list to
+  data/custom_theme.json). Canceling the name prompt (B) leaves the
+  draft applied for the current session only -- touches neither
+  settings.json nor the json file, so it quietly doesn't survive a
+  restart, no separate "discard" path needed. Architecture: THEMES (the
+  5 fixed palettes) is unchanged; CUSTOM_THEMES is a capped list;
+  all_themes() = THEMES + CUSTOM_THEMES + [_DRAFT_THEME if pending] is
+  the one place Theme +/-, apply_theme(), and the randomizer all read
+  through -- no other call site needed to learn about custom/draft
+  themes. Considered and rejected: true button-hold/long-press
+  detection for this (would need new SDL_JOYBUTTONUP/KEYUP handling --
+  this app's input loop is currently button-DOWN-only, no held-duration
+  tracking anywhere) -- Kaleb chose a plain menu item instead, so that
+  input-model change was NOT made.
+  BACKUP/RESTORE (v26.07.15.20): two new Storage screen actions, same
+  pattern as the existing bookmarks backup/restore --
+  "Backup Custom Themes Now" (instant, non-destructive, snapshots the
+  whole CUSTOM_THEMES list to backups/custom_themes_backup_*.json, only
+  the most recent 10 kept) and "Restore Custom Themes Backup" (two-press
+  confirm like Restore Latest Backup/Clear Image Cache -- REPLACES the
+  live list wholesale with the latest backup's contents, unlike
+  bookmarks' per-entry timestamp merge, since a saved theme is a single
+  named snapshot rather than something that accumulates independently).
+  Restoring re-applies THEME_INDEX afterward (apply_theme()'s existing
+  clamp handles a currently-applied custom theme whose index no longer
+  resolves the same way post-restore).
+  Verified headless end-to-end: randomize -> cancel -> re-randomize ->
+  save -> simulated-reboot-reload -> Theme+ cycle wraps correctly ->
+  fill all 3 custom slots -> 4th save evicts the oldest (not append-
+  without-bound) -> backup -> wipe in-memory list -> restore recovers
+  all 3 by name, all passing.
+  THERAPEUTIC HUES (v26.07.15.21): generate_random_theme()'s hue
+  selection reworked at Kaleb's request to reflect his other project,
+  Cava Solace (cava-manager.sh's audio visualizer therapeutic
+  randomizer), instead of a fully random hue wheel. THERAPEUTIC_FAMILIES
+  (Sage/Sky/Lavender/Amber/Cream/Blush hue ranges) and
+  THERAPEUTIC_COMBOS (the 2-family pairings) are the same anchors/
+  pairings cava-manager.sh uses, minus its 3-family combos -- this
+  app's palette only has two hue ROLES (bg/panel/text/dim/hint vs
+  link/link_sel/accent), so a third hue has nowhere to go. Saturation
+  narrowed to 22-48% (was 35-60%) to match cava's muted-over-vivid
+  calibration; link/link_sel lightness now drawn from the same 48-68%
+  corridor cava-manager.sh's gradient stops use. generate_random_theme()
+  now returns "name" as the actual family pairing (e.g. "Sage + Sky")
+  instead of a placeholder "Custom" string -- shown live in the status
+  bar and used as the pre-filled default when the text-entry naming
+  screen opens (still fully editable/overridable, same as before).
+  warning is deliberately left a fixed muted red regardless of family --
+  an alert color, not part of the calming intent. Re-verified contrast
+  compliance across 500 seeds (0 failures) and confirmed all 8 combos
+  are reachable.
+  BG/FOOTER TINT (v26.07.15.22): bg/panel/hint_bg/menu_sel_bg (every
+  dark "chrome" surface -- background AND the footer/hint bar) now
+  share ONE saturation value (sat_bg, capped at 0.18) instead of each
+  being an arbitrary fraction of the accent saturation -- this is
+  cava-manager.sh's own window-tint rule verbatim ("sat <= 18%,
+  lightness <= 10% always reads calm regardless of hue"), so bg and
+  the footer read as one coordinated subtle tint instead of two
+  independently-faded intensities.
+  REAL BUG FOUND AND FIXED (v26.07.15.23): "Restore Custom Themes
+  Backup" could silently switch the active theme to the WRONG one if a
+  randomized-but-not-yet-saved draft (_DRAFT_THEME) was the currently
+  displayed theme when the restore ran. Root cause: the draft always
+  sits at the LAST index of all_themes(), but "last" is a moving target
+  as CUSTOM_THEMES' length changes -- the handler was re-applying the
+  pre-restore THEME_INDEX as a bare number, which could land on a real
+  restored custom theme instead of the draft if the restored list's
+  length differed from what it was when the draft was generated
+  (repro: save some custom themes, back up, save MORE (or fewer) custom
+  themes, randomize again without saving, then restore an OLDER backup
+  from Storage -- confirmed via a real handle_button()-driven repro,
+  not just a hand-rolled state check). Fixed by capturing
+  was_showing_draft BEFORE the restore call (comparing THEME_INDEX
+  against len(all_themes())-1) and, if true, re-resolving to
+  len(all_themes())-1 AFTER the restore instead of the stale absolute
+  index. Verified: draft-active case now survives restore correctly in
+  both the "list grows" and "list shrinks" directions, and confirmed
+  the fix doesn't disturb the pre-existing fixed-theme-active case
+  (index untouched, as before). Also audited during this same pass:
+  render_text_cached()'s cache key includes the actual color RGB
+  values (not a theme index), so no stale-color-rendering risk exists
+  there even without explicit invalidation; every real apply_theme()
+  call site in Theme +/-, randomize/save, and restore already resets
+  app._page_cache_key; and exactly ONE place in the whole file
+  constructs a Color() from raw theme dict values (apply_theme()
+  itself) -- every other draw call reads the live COL_* globals, so
+  popups/splash/text-entry all move together automatically with no
+  special-casing needed (confirmed via real SDL_RenderReadPixels
+  pixel-readback against the Library Menu popup, the naming
+  text-entry screen, and the splash screen, plus a boot-time check that
+  the very first rendered frame after loading a saved custom theme
+  already shows it with no flash of Default).
+  REGENERATE THEME + THEMES SUBMENU (v26.07.15.24, Kaleb's requests):
+  two related additions. (1) "Regenerate Theme"/"Save Regenerated
+  Theme" -- modeled directly on Cava Solace's separate Generate/Apply
+  buttons: cycle to a saved custom theme, then Regenerate re-rolls a
+  fresh random candidate and applies it live, repeatable as many times
+  as wanted (first press locks in WHICH saved theme is being replaced
+  by NAME, not list position -- see _DRAFT_REPLACE_NAME's module-level
+  comment for why position would be unsafe here, same class of bug as
+  the v26.07.15.23 fix above; re-confirmed with a dedicated repro where
+  the regenerate target vanishes from CUSTOM_THEMES entirely mid-flow
+  via an unrelated backup restore -- falls back to appending instead of
+  clobbering an unrelated theme). Save Regenerated Theme commits it,
+  replacing that theme in place (list stays the same length) rather
+  than appending. Both are safe no-ops with a status message when used
+  out of context (not cycled to a custom theme yet, or nothing pending)
+  -- same lightweight pattern as Pre-render's "Open a book first",
+  not a hidden/disabled row. (2) Kaleb's follow-up: "don't overclutter
+  the popup menu" -- every theme action (Theme +/-, Randomize,
+  Regenerate, Save Regenerated) moved out of the flat Library/Reader
+  Menu into a new "Themes..." submenu (SCREEN_THEME_MENU,
+  THEME_MENU_ITEMS), collapsing what would have been 5 separate rows
+  in each parent menu down to 1. Kaleb's OWN second follow-up caught an
+  important design point before it shipped wrong: this had to stay an
+  OVERLAY (draw_theme_menu() paints the real Reader/Library backdrop
+  first, exactly like draw_menu()/draw_library_menu() already do), NOT
+  a full-screen takeover like draw_storage() -- a full-screen menu
+  would hide the very thing Regenerate/Randomize need to preview
+  against (real reading content behind the panel). Verified via pixel
+  readback that the backdrop actually shows through the overlay's
+  edges, plus a full real-button-press walkthrough: open Themes... ->
+  Randomize+save -> cycle to it -> Regenerate (locks target, re-roll
+  twice) -> Save Regenerated (replaces in place, count unchanged) ->
+  Regenerate/Save both correctly no-op when tried out of context.
+  REAL BUG FOUND AND FIXED (v26.07.15.25): draw_theme_menu() and
+  draw_bookmarks() had been accidentally MERGED into one function by
+  an earlier str_replace edit this same session that deleted the
+  "def draw_bookmarks(renderer, app):" line between them -- the two
+  bodies silently concatenated into one function under the
+  draw_theme_menu name (still valid Python, so it compiled fine and
+  gave no error). Caught because Kaleb asked to see a screenshot of
+  the new Themes submenu and immediately noticed the rendered image
+  was actually the Bookmarks screen, not the theme panel -- the merged
+  function drew the theme overlay first, then unconditionally painted
+  a full-screen Bookmarks view directly on top of it, hiding the
+  overlay entirely. This also meant SCREEN_BOOKMARKS itself was
+  silently broken (draw_bookmarks no longer existed as a name -- would
+  have crashed the instant Bookmarks was opened for real, a path this
+  session's test suites never happened to exercise). Fixed by
+  restoring the missing "def draw_bookmarks(renderer, app):" line,
+  splitting the two functions back apart. Verified via a full
+  structural audit of the file (Python ast module, every top-level
+  function AND every App method's line-length, sorted descending) to
+  confirm no other similarly-sized accidental merge existed elsewhere
+  from this session's many edits -- nothing else stood out as an
+  outlier. Re-rendered both screens independently afterward (pixel-
+  readback confirming draw_bookmarks shows COL_BG alone, and
+  draw_theme_menu's panel now actually shows COL_PANEL where the
+  overlay should be) and re-ran the complete regression suite built
+  this session, all still passing. Lesson for future sessions: when a
+  str_replace's old_str spans a function boundary (a blank-line-then-
+  "def other_function(...)" pattern), the replacement's new_str MUST
+  preserve that boundary line explicitly -- it's easy to drop while
+  focused on the content before/after it, and the bug is invisible to
+  py_compile since the merged result is still syntactically valid.
+  REAL BUG FOUND AND FIXED (v26.07.15.26, Kaleb's real-device photo):
+  title/subtitle overlap in draw_download_browse() -- the SHARED
+  results-list renderer used by every JW category (Videos, Audio,
+  Bibles, Books & Brochures, Watchtower, Awake!, Meeting Workbooks) AND
+  Gutenberg, since none of them have their own separate rendering path.
+  Root cause: the title line used _row_text_y() -- a helper explicitly
+  built to vertically center a SINGLE line of text within row_h (see
+  its own v26.07.12.15 docstring) -- but this is a TWO-line row (title
+  + subtitle). Centering the title as if it were the row's only
+  content pushed it down by roughly half the subtitle's own height,
+  while the subtitle was positioned independently via a raw
+  "y + title_h + _sy(10)" offset that assumed the title started at the
+  row's unshifted top. The two assumptions didn't match, so the
+  (now-lower) title collided with the subtitle on EVERY row, at EVERY
+  Font Size (both scale together, so this was never a small-size-only
+  glitch -- confirmed present at all 7 SIZE_STEPS before the fix).
+  Fixed by computing the real two-line BLOCK height (title_h + a
+  genuine inter-line gap + sub_h) and centering THAT block within the
+  row's slack -- title and subtitle now both derive their y from the
+  same block_top, so they can't desync again regardless of row_h's own
+  future tuning. Verified two ways: (1) a naive pixel-diff-against-
+  background band scan, which initially gave a false "still broken"
+  reading -- traced to the scan accidentally including the SELECTED
+  row's highlight-color background (COL_MENU_SEL_BG, not COL_BG) as
+  part of the diff, merging that one row's bands artificially; redone
+  with no row selected, confirming clean separated title/subtitle
+  bands with real positive-pixel gaps (6-23px depending on Font Size)
+  at all 7 SIZE_STEPS, for both a JW Videos dataset (matching Kaleb's
+  actual photo) and a Gutenberg-style title+author dataset. (2)
+  Rendered screenshots reproducing the exact scenario from the photo.
+  THEME NAME SHOWN 3x, FIXED (v26.07.15.27, Kaleb's report): the
+  Themes submenu's "Theme +" and "Theme -" rows each appended
+  "(current_name)" to their own label, so the active theme's name
+  showed up on BOTH rows simultaneously -- twice just sitting in the
+  menu -- on top of a THIRD showing in the toast set_status() already
+  gives after pressing either one. Removed the per-row suffix
+  entirely; the toast alone is now the feedback for what Theme +/-
+  just switched to. The current theme's name is still visible at a
+  glance while browsing (not removed outright) -- moved to a single
+  "Current: X" subtitle line under the THEMES heading instead, shown
+  once regardless of how many rows exist. Regenerate Theme's own
+  dynamic label ("re-rolling \"X\"") and Save Regenerated Theme's
+  ("nothing pending") were left untouched -- those show information
+  the toast doesn't (the LOCKED regenerate target, and whether
+  anything is pending to save), so they aren't the same redundancy.
+  Verified via pixel inspection that the new subtitle line and the
+  item rows below it stay cleanly separated (no overlap) at both
+  default and largest Font Size.
+  DELETE THEME (v26.07.15.28, Kaleb's request): new "Delete Theme" row
+  in the Themes submenu, two-press confirm (same pattern as Delete
+  Book/Clear All Finished -- arms on first A, executes on second;
+  disarmed by UP/DOWN navigation, B, or pressing A on any OTHER row,
+  identical to _menu_delete_armed's existing reset rules). Only
+  operates on a real SAVED custom theme -- cycle to it first via
+  Theme +/-; pressing it while on a fixed THEMES entry, an unsaved
+  randomize/regenerate draft, or with no custom themes saved at all is
+  a safe no-op with a status message, not a hidden/disabled row (same
+  lightweight pattern as the rest of this menu). App.delete_theme()
+  looks the target up by NAME at the moment of actual deletion (not a
+  stale list-position captured back at the first/arming press) --
+  same defensive reasoning as regenerate_theme()'s _DRAFT_REPLACE_NAME
+  approach, though the practical exposure here is smaller: the arm
+  already gets cleared by the same navigation that would be needed to
+  reach anything that could change CUSTOM_THEMES (Randomize Theme's
+  own save flow, or Storage's backup/restore, which isn't even
+  reachable from inside this submenu without leaving it via Back
+  first). Falls back to the Default theme (index 0) after deleting,
+  rather than guessing a "next" theme. Verified via real button-press
+  driven tests: no-op on a fixed theme, arm+UP-disarms, arm+confirm
+  actually deletes the right one and leaves the other saved themes
+  untouched, and a no-op while viewing an unsaved draft.
+  DEFAULT THEME PROTECTION HARDENED (v26.07.15.29, Kaleb's request:
+  "make sure no default themes can be deleted by accident just in
+  case"): delete_theme() already couldn't touch THEMES (the 5 fixed
+  themes) -- it only ever operates on CUSTOM_THEMES, a structurally
+  separate list -- but added an explicit, self-evident second-layer
+  guard anyway ("if THEME_INDEX < len(THEMES): no-op", checked
+  independently of handle_button()'s own identical check before
+  arming), plus a load-bearing assert(len(THEMES) == 5) right before
+  the actual deletion, so the invariant is enforced in code, not just
+  documented in a comment. Confirmed via a whole-file grep that THEMES
+  is never mutated ANYWHERE (defined once as a plain list literal,
+  read-only for the rest of the program) -- every actual
+  append/delete/reassignment in the codebase targets CUSTOM_THEMES
+  specifically. Verified with 3 deliberate attack-style tests rather
+  than just trusting the logic: (1) calling delete_theme() directly on
+  all 5 fixed themes, bypassing the menu/confirm flow entirely; (2)
+  force-setting the armed-confirm flag directly and pressing A while
+  on each fixed theme; (3) the normal flow, confirming Delete Theme
+  never even ARMS while viewing a fixed theme. All 5 fixed themes
+  survived all 3 attempts; a real saved custom theme could still be
+  deleted normally afterward, confirming the hardening didn't break
+  the actual feature.
+  MINOR HARDENING (v26.07.15.30): both "Themes..." entry points
+  (Library Menu and Reader Menu) now also reset _theme_delete_armed to
+  False the moment the submenu opens, not just on every exit path.
+  Every exit (B, selecting any other row) already cleared it, so this
+  wasn't a reachable bug -- added purely as defense-in-depth so the
+  guarantee doesn't rely on "every exit path happens to clear it"
+  remaining true forever as the menu evolves.
+  5 USABILITY ADDITIONS (v26.07.15.31, Kaleb's request after a review
+  pass): (1) "Select Theme..." -- new SCREEN_THEME_SELECT overlay
+  listing every theme (5 fixed + up to 3 custom) by name; UP/DOWN
+  applies the highlighted one LIVE as you move (same live-preview
+  mechanism Randomize/Regenerate already use), A confirms/persists, B
+  reverts to whatever was active before opening -- direct jump instead
+  of stepping through Theme +/- one at a time. (2) "Rename Theme" --
+  changes a saved custom theme's name WITHOUT re-rolling its colors
+  (the only other naming path, Save Regenerated Theme, always changes
+  the palette too); same name-at-commit-time lookup safety as
+  regenerate/delete_theme(), same no-op-with-status-message gating
+  when not cycled to a real saved theme. (3) "Saved: X/3" -- new
+  subtitle line under "Current: X" showing how many of the 3 custom
+  slots are used, so hitting the FIFO eviction cap isn't a surprise.
+  (4) "Backup/Restore: see Settings" -- new subtitle line pointing at
+  where backup/restore actually live (the Storage screen, reachable
+  via Settings from the PARENT menu, not from inside this submenu at
+  all) -- previously undiscoverable unless you already knew to look.
+  (5) "Reset to Default" -- one-press jump back to the Default theme
+  from anywhere, instead of cycling however many presses away it is.
+  Verified via real button-press-driven tests: Select Theme jumps to
+  and correctly previews/confirms a specific saved theme, and its B-
+  cancel correctly reverts; Rename Theme changes only the name (colors
+  byte-identical) and safely no-ops on a fixed theme; Reset to Default
+  jumps straight back from any other theme. Re-ran the full default-
+  theme-deletion-protection suite afterward (all 3 attack scenarios)
+  to confirm the menu restructure didn't reopen that hole. Re-verified
+  no overlap between the two new subtitle lines and the item list at
+  all 7 Font Size steps (pixel band scan, not just eyeballing).
 
 VERSIONING SCHEME CHANGE (v26.07.09.01): switched from the old
 sequential v0.1.X counter (last value: v0.1.162) to a date-based scheme:
@@ -96,20 +898,43 @@ calendar day. No more major/minor/patch semantics -- the date IS the
 version. All prior "v0.1.X" references throughout this file are historical
 and untouched; only new changes going forward use the new format.
 
-Current screen/feature set: 5 color themes, 7 Font Size steps, JW.org +
+Current screen/feature set: Themes submenu (5 fixed color themes +
+Randomize/Regenerate Theme, up to 3 saved custom slots, backup/restore),
+7 Font Size steps, JW.org +
 Project Gutenberg download plugins, Image Maximize Mode (fullscreen
 zoom/pan on a selected image), Library with sort/pin/finished/filter,
 bookmarks with history, Chapters (TOC) navigation, per-book Storage/
-cache controls, and JW video browsing (all four video categories --
-Enjoy Life Forever, JW Broadcasting, Governing Body Updates, The Good
-News According to Jesus -- plus "Search Videos" for live free-text
-search against jw.org's own search API, all reached via Download
-Books > JW). The video/search picker is driven by jw_fetch.py's own
-VIDEO_SOURCES registry (label + loader function + args per entry) --
-see open_plugin_video_list()/VIDEO_SOURCE_BY_LABEL. Leaving the JW
-plugin clears its cached OmniSearch bearer token. Search (Y) and
-Manual Code (SELECT, JW only) are reachable directly from the
-Categories screen, not just after opening a category.
+cache controls, and JW video browsing. The video/search picker is
+driven entirely by jw_fetch.py's own VIDEO_SOURCES registry (label +
+loader function + args per entry) -- see open_plugin_video_list()/
+VIDEO_SOURCE_BY_LABEL. As of v26.07.15.15 this is 1 flat entry
+(Governing Body Updates, plus Search) alongside 11 nested folder
+entries (JW Broadcasting, Our Meetings and Ministry, Music, Programs
+and Events, Series, Children, Teenagers, Family, Our Activities, The
+Bible, Interviews and Experiences -- see SCREEN_DOWNLOAD_VIDEO_SERIES
+below). The folder entries mirror jw.org's OWN real parent/child
+category structure, confirmed live rather than invented -- e.g. "JW
+Broadcasting" used to be a flat entry
+that actually loaded "Monthly Programs" content under its parent's
+name; v26.07.15.11 fixed the mislabel and nested it properly alongside
+its real sibling "Talks". Leaving the JW plugin clears its cached
+OmniSearch bearer token. Search (Y) and Manual Code (SELECT, JW only)
+are reachable directly from the Categories screen, not just after
+opening a category.
+
+Two-level VIDEO_SOURCES navigation (v26.07.15.09): a VIDEO_SOURCES
+entry can carry a "subcategories" list (currently just "Series") --
+choosing it opens SCREEN_DOWNLOAD_VIDEO_SERIES (a second picker,
+app.video_series_index/app._pending_video_source, mirrors the existing
+Bible-book sub-picker for Audio) instead of calling a loader directly;
+picking one of ITS entries merges that entry's own "key"/"label" into
+the parent's "loader"/"args" and calls it exactly as normal. This is
+fully generic on the main.py side -- no JW-specific strings/category
+keys appear here at all, only in jw_fetch.py's own VIDEO_SOURCES list
+(see draw_download_video_series()'s own docstring for the contrast
+with the Bible-book picker, which DOES read a JW-specific attribute
+directly). Any future plugin gets nested sub-picking for free just by
+adding a "subcategories" list to one of its own VIDEO_SOURCES entries.
 
 Multi-resolution letterboxing lets the app run on any muOS screen size
 while keeping its fixed 720x720 layout untouched -- see
@@ -131,12 +956,21 @@ toast pill, list-row padding) was retuned for this; reader body text
 uses a flat point-size-based line height (independent of any one
 font's real metrics) so it wasn't affected the same way.
 
-UI: 5 color themes (Default, Dim Warm, Deep Amber, Red Shift, Adventure)
-via THEMES list + apply_theme(index) -- rebinds module-level COL_*
-globals that every draw_* function already reads by name, so adding a
-6th theme is just one new dict entry, no per-screen code changes.
-Dim Warm/Deep Amber/Red Shift are bedtime palettes (progressively less
-blue, more amber/red). Saved as settings.json "theme_index".
+UI: 5 fixed color themes (Default, Dim Warm, Deep Amber, Red Shift,
+Adventure) in THEMES, plus up to MAX_CUSTOM_THEMES=3 randomly-generated
+custom themes in the CUSTOM_THEMES list (see THEME RANDOMIZER changelog
+entry, v26.07.15.19/.20) -- all_themes() = THEMES + CUSTOM_THEMES +
+[_DRAFT_THEME if pending] is the one list Theme +/-, apply_theme(index),
+and "Randomize Theme" all cycle/index through. apply_theme() rebinds
+module-level COL_* globals that every draw_* function already reads by
+name, so adding a theme (fixed or custom) needs no per-screen code
+changes. Dim Warm/Deep Amber/Red Shift are bedtime palettes
+(progressively less blue, more amber/red). Current theme index saved as
+settings.json "theme_index"; CUSTOM_THEMES itself lives in its own
+small data/custom_theme.json (oldest evicted once a 4th save would
+exceed the cap), backup-able via the Storage screen's "Backup Custom
+Themes Now"/"Restore Custom Themes Backup" (backups/custom_themes_backup_*.json,
+same pattern as the existing bookmarks backup).
 Global Font Size setting scales ALL UI text (reading + hint bar + menus
 + Library/Chapters/Storage) via dynamic row heights/wrapping
 (_row_h(), _fit_text()) -- nothing overflows at any of the 7 font-size
@@ -356,11 +1190,14 @@ import time
 import threading
 import bisect
 import pickle
+import struct
 import array
 import hashlib
 import glob
 import queue
 import itertools
+import random
+import colorsys
 from collections import OrderedDict
 
 # ============================================================
@@ -435,6 +1272,22 @@ except Exception:
 # generalized it to every SDL2_image format: JPG/PNG/TIF/WEBP/JXL/AVIF).
 try:
     import native_image
+    # v26.07.14.13 BUG FIX (Kaleb's report: Pre-render/Disk-Cache toggle
+    # rows in Settings showed up on a "second boot" when they should stay
+    # hidden -- native decode is genuinely available on his device both
+    # times). Root cause: native_image._init() (the actual libSDL2_image
+    # load attempt) used to only run LAZILY, from inside
+    # decode_image_native(), which only fires on the first real image
+    # decode. Every check of native_image.available elsewhere in this file
+    # (this hide condition, the Toggle Disk Cache guard, etc.) reads the
+    # module-level `available` flag directly -- so if Settings gets opened
+    # before any book with images is viewed in that session, `available`
+    # is still stuck at its False default, and every one of those checks
+    # sees the library as absent even though it isn't. Calling _init()
+    # eagerly here, right after import, makes availability known before
+    # the very first frame renders, regardless of what screen gets opened
+    # first or whether an image is ever decoded that session.
+    native_image._init()
 except Exception:
     native_image = None
 
@@ -536,6 +1389,10 @@ LIBRARY_DIR = os.environ.get("EPUB_LIBRARY_DIR", find_books_dir())
 DATA_DIR = os.path.join(APP_DIR, "data")
 BOOKMARKS_PATH = os.path.join(DATA_DIR, "bookmarks.json")
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+CUSTOM_THEME_PATH = os.path.join(DATA_DIR, "custom_theme.json")  # v26.07.15.19:
+# holds at most ONE saved random theme (Kaleb's choice -- "only keep the
+# most recent one"). Separate small file rather than a settings.json key
+# so it's trivially backup-able/inspectable on its own.
 LIBRARY_CACHE_PATH = os.path.join(DATA_DIR, "library_cache.json")
 PINNED_PATH = os.path.join(DATA_DIR, "pinned.json")
 ANCHOR_CACHE_DIR = os.path.join(DATA_DIR, "anchor_cache")
@@ -567,11 +1424,141 @@ LARGE_PAGE_LOADING_THRESHOLD = 115_000
 PRERENDER_THRESHOLD = 90_000
 
 # Pages whose WRAP_CACHE_DIR file exceeds this many bytes show their own
+
+# v26.07.14.16 (Kaleb's request): pages below LARGE_PAGE_LOADING_THRESHOLD
+# never showed ANY loading feedback before the synchronous parse+wrap
+# below -- fine for genuinely small pages, but LARGE_PAGE_LOADING_
+# THRESHOLD itself (~115,000 bytes) is calibrated to ~1.0s on DEV
+# hardware; applying this project's own confirmed ~4.1x dev-to-device
+# scaling factor, that's roughly ~4.1s on the real ARM device already --
+# meaning a page well under this threshold in raw bytes can still cost
+# multiple real seconds on-device with zero visual feedback, which is
+# exactly the "1-5 second delay, page still just freezes" gap Kaleb
+# reported even after the extreme-page progressive/chunked work. This
+# lower threshold gates a lightweight toast (NOT the full-screen
+# "Opening page..." treatment) for that in-between size range. VALUE IS
+# AN ESTIMATE, NOT YET CONFIRMED ON REAL HARDWARE -- unlike this
+# project's other thresholds (all derived from real on-device timing),
+# this one is a starting guess pending Kaleb's actual test; adjust once
+# real numbers come back.
+MEDIUM_PAGE_TOAST_THRESHOLD = 30_000
+
 # "Loading cached page..." screen when read back on a later visit --
 # separate from the two thresholds above because warm-load cost is disk
 # I/O + unpickle (scales with serialized bytes), not text length.
 # ~900,000 bytes is about 1.0s. Below it, the read happens silently.
 WARM_CACHE_LOADING_THRESHOLD = 900_000
+
+# On-disk wrap-cache format v2 (WARM_CACHE_MAGIC): chunked instead of one
+# single pickle blob, so revisiting an already-cached extreme page grows
+# on-screen progressively instead of blocking for the whole read (was a
+# real ~7-8s freeze on Enjoy Life Forever's Track Your Bible Reading).
+# v1 (pre-v26.07.13.15, unchunked) cache files fail the magic check and
+# fall through to the normal fail-soft rebuild path.
+WARM_CACHE_MAGIC = b"PRWC2\x00"
+# Max lines per on-disk chunk (v26.07.13.31: this is a ceiling, not a
+# fixed size -- see WARM_LOAD_MIN_CHUNKS below for why). Fewer, bigger
+# chunks mean fewer file-read + pickle.loads() calls; warm-load's read
+# already runs on a background thread, so chunk size here is about I/O
+# efficiency, not input responsiveness. Governs the ON-DISK FORMAT
+# itself (_save_wrap_to_disk()) -- only newly-written cache files pick
+# up a changed value; existing files keep their original chunking.
+WARM_LOAD_CHUNK_LINES = 15000
+# BUG FIX (Kaleb's report: warm-load "doesn't load until a button is
+# pressed"): a page with fewer total lines than WARM_LOAD_CHUNK_LINES
+# collapsed to ONE chunk, so nothing appeared until that single
+# pickle.loads() finished -- looked identical to being stuck. This
+# floors the chunk COUNT so small/medium extreme pages always show real
+# progressive growth; WARM_LOAD_MIN_CHUNK_LINES then floors the chunk
+# SIZE so a page just over PRERENDER_THRESHOLD doesn't get sliced into
+# dozens of framing-overhead-dominated chunks to hit that count.
+WARM_LOAD_MIN_CHUNKS = 6
+WARM_LOAD_MIN_CHUNK_LINES = 500
+
+# How often the main loop does a FULL visible render (all on-screen
+# lines, hint bar, toast) while a build progresses but nothing else
+# needs a redraw -- see advance_progressive_builds()'s docstring. Wrap/
+# warmload/bg-prerender stepping still happens every loop iteration
+# regardless; this only throttles how often the SCREEN redraws.
+# Tuned against real on-device timing on the Track Your Bible Reading
+# build: render overhead turned out to be a much smaller fraction of
+# real-device cost than dev-hardware profiling suggested (the actual
+# SDL_ttf glyph-measurement work dominates) -- diminishing returns above
+# ~2.0s, current value chosen to stay visibly "alive" during a real
+# multi-minute build without adding meaningful overhead.
+READER_BUILD_RENDER_THROTTLE = 5.0
+
+# COLD_WRAP_RESPONSIVE_SECONDS (fixed-window slice-widening) is
+# SUPERSEDED by COLD_WRAP_RAMP_SECONDS as of v26.07.14.03 -- the old
+# version only stayed responsive for the first few seconds of the WHOLE
+# build and couldn't recover after that regardless of later input. Left
+# defined but unread, same as this project's other superseded constants.
+COLD_WRAP_RESPONSIVE_SECONDS = 4.0
+
+# Adaptive cold-wrap slice size (v26.07.14.03, extended to warm-load/
+# prerender in v26.07.14.04): seconds of genuine idle (no real button
+# press) it takes the per-slice time budget to ramp from
+# COLD_WRAP_INITIAL_SLICE_SECONDS up to COLD_WRAP_FALLBACK_SLICE_SECONDS.
+# Resets to 0 the instant any real input happens, no matter how deep
+# into the build -- so responsiveness recovers on touch, not just during
+# a fixed opening window. Both foreground cold-wrap and the background
+# prerender queue call the same ramp formula (cold_wrap_slice_budget()
+# below), keyed off app._last_input_time.
+COLD_WRAP_RAMP_SECONDS = 4.0
+
+# v26.07.16.13 (Kaleb's request): the v26.07.16.11 two-phase ramp
+# (flat linear 50->150ms for the first 1.0s, THEN a separate quadratic
+# 150->2000ms for the remaining 3.0s -- two formulas joined at a hard
+# breakpoint) is replaced here with a SINGLE smooth quadratic curve
+# spanning the whole COLD_WRAP_RAMP_SECONDS window, no breakpoint at
+# all. Kaleb wanted the curve to look like the parabola reference image
+# throughout -- not two straight-ish pieces stitched together at a
+# marker.
+# Formula (see cold_wrap_slice_budget() below): budget(t) =
+# INITIAL + (t/RAMP_SECONDS)**2 * (FALLBACK - INITIAL), clamped to
+# t <= RAMP_SECONDS. Still slow-near-the-start/steep-near-the-end (same
+# "half parabola" shape as before), just ONE continuous curve computing
+# that shape instead of two pieces.
+# v26.07.16.14 (Kaleb's request, confirmed this curve SHAPE is good):
+# starting slice raised from 90ms to 100ms -- shape/formula unchanged,
+# just the floor. Sample points at 100ms: t=0s->100ms, t=1.0s->~219ms,
+# t=2.0s->~575ms, t=3.0s->~1169ms, t=4.0s->2000ms. Still resets to
+# COLD_WRAP_INITIAL_SLICE_SECONDS the instant real input happens, same
+# as always.
+COLD_WRAP_INITIAL_SLICE_SECONDS = 0.100
+# Slice size once the ramp is fully idle-warmed: bigger slices meant
+# real on-device speed gains, but fully unbounded (one shot to finish)
+# froze all input for the back half of a build -- this keeps a finite
+# checkpoint interval. CONFIRMED on real device (Track Your Bible
+# Reading, cold wrap, back when the ramp was linear): ~51s idle/no
+# input vs ~52s with active button presses throughout -- the ~1s cost
+# of staying responsive is negligible, so 2.0s remains the right
+# fallback ceiling; reshaping the ramp's SHAPE only changes how slice
+# size gets there, not the ceiling itself, so this on-device number
+# should still hold -- worth reconfirming on real hardware regardless,
+# per this project's usual verify-before-ship discipline.
+COLD_WRAP_FALLBACK_SLICE_SECONDS = 2.0
+
+
+def cold_wrap_slice_budget(since_input):
+    """Returns the per-slice time budget (seconds) for cold-wrap/
+    background-prerender chunked stepping, given seconds of genuine
+    idle time (since_input). Single choke point for the ramp curve --
+    both the foreground cold-wrap branch and _step_bg_prerender() call
+    this instead of each computing the ramp formula themselves, so the
+    two paths can't drift out of sync. Single smooth quadratic curve
+    (v26.07.16.13) -- see COLD_WRAP_INITIAL_SLICE_SECONDS's comment
+    above for the shape/history."""
+    frac = min(1.0, since_input / COLD_WRAP_RAMP_SECONDS)
+    return COLD_WRAP_INITIAL_SLICE_SECONDS + (frac ** 2) * (
+        COLD_WRAP_FALLBACK_SLICE_SECONDS - COLD_WRAP_INITIAL_SLICE_SECONDS)
+
+# TRIED AND REVERTED: zlib-compressing the on-disk wrap-cache blob.
+# Dev-hardware profiling suggested a net win (~27% of original size),
+# but real on-device testing showed the opposite -- warm-open got ~1s
+# WORSE per read, not better. The real ARM CPU's decompress cost exceeds
+# the I/O savings it buys back. Do not re-attempt without a way to
+# profile actual decompress cost on the real device first.
 
 # Deliberately a sibling of library/ and data/, not buried inside data/ --
 # the whole point of a backup is being easy to find and copy off the
@@ -661,6 +1648,339 @@ TTF = _load_lib(
 if TTF is None:
     _boot_log("FATAL: could not load libSDL2_ttf\n")
     sys.exit(1)
+
+
+# ============================================================
+# Sound effects -- pure-synth SDL2 audio (v26.07.16.01, Kaleb's request)
+# ============================================================
+# No asset files, no SDL2_mixer, no pip deps: short 16-bit mono PCM
+# tones/sweeps/noise-blends are generated once in Python at import time
+# (~20KB total, fixed size, held in RAM for the process lifetime -- NOT
+# an unbounded cache) and queued through raw SDL_QueueAudio, same
+# ctypes-bridge-to-native-lib pattern as native_image.py. If the audio
+# device can't be opened (no hw, driver refuses), SoundEngine.ok stays
+# False and .play() silently no-ops -- must never block or crash the UI.
+#
+# Design went through several rounds of real listening tests (not just
+# "should sound calm" guessing) to land on the current palette, aimed at
+# nighttime reading -- soft attack, no harsh/bright transients, low-mid
+# emphasis, minimal volume:
+#   nav      - rising sine bubble bloop (520->880Hz, ease-out, quiet 2nd
+#              harmonic for warmth) -- used for UP/DOWN and L/R scroll.
+#              An earlier falling-pitch version read as a sleepy "water
+#              drip"; rising reads as a little bubble floating up,
+#              cheerful without being bright.
+#   confirm  - rising sweep (600->1000Hz) -- select/open-menu actions.
+#   back     - falling sweep (700->400Hz), mirror of confirm -- cancel/
+#              close-menu actions.
+#   error    - two soft low sine thuds ("wonk-wonk", 180Hz then 140Hz),
+#              quiet. An earlier square-wave version was "too piercing";
+#              this reads as a gentle "nope", not an alarm.
+#   page     - a slow sine arc (480->760->480Hz) blended with ~18% heavily
+#              low-passed noise for a breath of "paper air" -- used for
+#              L2/R2 page/chapter turns. Two earlier versions used PURE
+#              filtered noise for this (no tonal core); one read as
+#              "piercing"/too bright, the other (heavier filtering) read
+#              as a dull "boredom" swish with no sense of motion. The
+#              fix wasn't more/less filtering -- it was giving it the
+#              same tonal-sine backbone as the other four sounds so it
+#              belongs to the same sound family, with noise as a light
+#              texture layer rather than the whole sound.
+SND_SAMPLE_RATE = 22050
+
+
+def _snd_env(i, n, attack_n, release_n):
+    if i < attack_n:
+        return i / attack_n
+    if i > n - release_n:
+        return max(0.0, (n - i) / release_n)
+    return 1.0
+
+
+def _snd_bloop(f0=520, f1=880, dur_ms=110, volume=0.16):
+    n = int(SND_SAMPLE_RATE * dur_ms / 1000)
+    attack_n = max(1, int(n * 0.15))
+    release_n = max(1, int(n * 0.65))
+    buf = bytearray()
+    phase = 0.0
+    phase2 = 0.0
+    prev_val = 0
+    for i in range(n):
+        frac = i / max(1, n - 1)
+        freq = f0 + (f1 - f0) * (1 - (1 - frac) ** 2.0)  # ease-out rise
+        phase += 2 * math.pi * freq / SND_SAMPLE_RATE
+        phase2 += 2 * math.pi * (freq * 2) / SND_SAMPLE_RATE
+        s = (math.sin(phase) + 0.5 * math.sin(phase2)) / 1.5
+        env = _snd_env(i, n, attack_n, release_n)
+        val = int(s * env * volume * 32767)
+        val = max(-32768, min(32767, val))
+        val = int(0.35 * val + 0.65 * prev_val)  # smooth the transient
+        prev_val = val
+        buf += struct.pack("<h", val)
+    return bytes(buf)
+
+
+def _snd_sweep(f0, f1, dur_ms, volume, fade_ms=6):
+    n = int(SND_SAMPLE_RATE * dur_ms / 1000)
+    fade_n = max(1, int(SND_SAMPLE_RATE * fade_ms / 1000))
+    buf = bytearray()
+    phase = 0.0
+    for i in range(n):
+        frac = i / max(1, n - 1)
+        freq = f0 + (f1 - f0) * frac
+        phase += 2 * math.pi * freq / SND_SAMPLE_RATE
+        s = math.sin(phase)
+        env = 1.0
+        if i < fade_n:
+            env = i / fade_n
+        elif i > n - fade_n:
+            env = (n - i) / fade_n
+        val = int(s * env * volume * 32767)
+        buf += struct.pack("<h", max(-32768, min(32767, val)))
+    return bytes(buf)
+
+
+def _snd_wonk(volume=0.16):
+    def _thud(freq, dur_ms, vol):
+        n = int(SND_SAMPLE_RATE * dur_ms / 1000)
+        attack_n = max(1, int(n * 0.1))
+        release_n = max(1, int(n * 0.7))
+        out = bytearray()
+        phase = 0.0
+        for i in range(n):
+            phase += 2 * math.pi * freq / SND_SAMPLE_RATE
+            s = math.sin(phase)
+            env = _snd_env(i, n, attack_n, release_n)
+            val = int(s * env * vol * 32767)
+            out += struct.pack("<h", max(-32768, min(32767, val)))
+        return out
+    gap_n = int(SND_SAMPLE_RATE * 0.035)
+    buf = bytearray()
+    buf += _thud(180, 90, volume)
+    buf += b"\x00\x00" * gap_n
+    buf += _thud(140, 110, volume)
+    return bytes(buf)
+
+
+def _snd_page(dur_ms=220, volume=0.14, noise_mix=0.18, seed=7):
+    n = int(SND_SAMPLE_RATE * dur_ms / 1000)
+    attack_n = max(1, int(n * 0.25))
+    release_n = max(1, int(n * 0.5))
+    rng = random.Random(seed)
+    f_low, f_high = 480, 760
+    tone = [0.0] * n
+    phase = 0.0
+    for i in range(n):
+        frac = i / max(1, n - 1)
+        arc = math.sin(frac * math.pi)  # 0 -> 1 -> 0
+        freq = f_low + (f_high - f_low) * arc
+        phase += 2 * math.pi * freq / SND_SAMPLE_RATE
+        tone[i] = math.sin(phase)
+    noise = [rng.uniform(-1, 1) for _ in range(n)]
+    lp = [0.0] * n
+    prev = 0.0
+    for i, x in enumerate(noise):
+        prev = prev + 0.06 * (x - prev)
+        lp[i] = prev
+    peak = max(1e-6, max(abs(v) for v in lp))
+    lp = [v / peak for v in lp]
+    buf = bytearray()
+    prev_val = 0
+    for i in range(n):
+        env = _snd_env(i, n, attack_n, release_n)
+        mixed = (1 - noise_mix) * tone[i] + noise_mix * lp[i]
+        val = int(mixed * env * volume * 32767)
+        val = max(-32768, min(32767, val))
+        val = int(0.3 * val + 0.7 * prev_val)
+        prev_val = val
+        buf += struct.pack("<h", val)
+    return bytes(buf)
+
+
+def _snd_mono_to_stereo(mono_pcm):
+    """Duplicates mono PCM into centered stereo (equal L/R) -- needed
+    because the audio device is stereo (see SoundEngine, below) for the
+    intro theme's panning, so every OTHER sound must also be stereo or
+    it'll play back garbled (device interprets raw bytes according to
+    its own channel count)."""
+    n = len(mono_pcm) // 2
+    out = bytearray()
+    for i in range(n):
+        sample = mono_pcm[i * 2:i * 2 + 2]
+        out += sample
+        out += sample
+    return bytes(out)
+
+
+def _snd_pan(mono_pcm, pan_frac):
+    """Pans mono PCM to a fixed stereo L/R position (0.0=full left,
+    1.0=full right) using an equal-power pan law."""
+    n = len(mono_pcm) // 2
+    theta = pan_frac * (math.pi / 2)
+    l_gain = math.cos(theta)
+    r_gain = math.sin(theta)
+    out = bytearray()
+    for i in range(n):
+        sample = struct.unpack("<h", mono_pcm[i * 2:i * 2 + 2])[0]
+        l_val = int(max(-32768, min(32767, sample * l_gain)))
+        r_val = int(max(-32768, min(32767, sample * r_gain)))
+        out += struct.pack("<h", l_val)
+        out += struct.pack("<h", r_val)
+    return bytes(out)
+
+
+def _snd_bloop_custom(f0, f1, dur_ms, volume, bend_power=2.0):
+    """Same technique as _snd_bloop, generalized to a custom duration --
+    used for the intro theme's short typing blips (70ms, vs the real
+    nav sound's 110ms) so 11 of them fit inside the 1.5s title-type
+    window."""
+    n = int(SND_SAMPLE_RATE * dur_ms / 1000)
+    attack_n = max(1, int(n * 0.15))
+    release_n = max(1, int(n * 0.65))
+    buf = bytearray()
+    phase = 0.0
+    phase2 = 0.0
+    prev_val = 0
+    for i in range(n):
+        frac = i / max(1, n - 1)
+        freq = f0 + (f1 - f0) * (1 - (1 - frac) ** bend_power)
+        phase += 2 * math.pi * freq / SND_SAMPLE_RATE
+        phase2 += 2 * math.pi * (freq * 2) / SND_SAMPLE_RATE
+        s = (math.sin(phase) + 0.5 * math.sin(phase2)) / 1.5
+        env = _snd_env(i, n, attack_n, release_n)
+        val = int(s * env * volume * 32767)
+        val = max(-32768, min(32767, val))
+        val = int(0.35 * val + 0.65 * prev_val)
+        prev_val = val
+        buf += struct.pack("<h", val)
+    return bytes(buf)
+
+
+def _build_intro_theme():
+    """Boot-splash intro theme: 'PICO READER' typed out in nav-bloop
+    blips, panned left->right in sync with each letter's position in
+    the title, timed to EXACTLY match SPLASH_TYPE_SECONDS=1.5s (11
+    characters -> 1500/11 ~= 136.4ms per slot). The trailing swoosh
+    (which matched SPLASH_SUBTITLE_FADE_SECONDS=2.0s) was removed per
+    Kaleb's request -- theme is now just the 1.5s typing sequence.
+    Built once at import time."""
+    type_total_ms = 1500
+    letters = "P", "I", "C", "O", " ", "R", "E", "A", "D", "E", "R"
+    n_chars = len(letters)
+    slot_ms = type_total_ms / n_chars
+    blip_ms = 70
+
+    total_samples = int(SND_SAMPLE_RATE * type_total_ms / 1000)
+    typing_stereo = bytearray(total_samples * 4)  # 2 channels x 2 bytes
+
+    for idx in range(n_chars):
+        pan_frac = idx / (n_chars - 1)
+        mono_blip = _snd_bloop_custom(520, 880, blip_ms, volume=0.025)
+        blip = _snd_pan(mono_blip, pan_frac)
+        start_sample = int(idx * slot_ms * SND_SAMPLE_RATE / 1000)
+        start_byte = start_sample * 4
+        for b in range(0, len(blip), 4):
+            pos = start_byte + b
+            if pos + 4 <= len(typing_stereo):
+                typing_stereo[pos:pos + 4] = blip[b:b + 4]
+
+    return bytes(typing_stereo)
+
+
+SND_SOUNDS = {
+    "nav":     _snd_mono_to_stereo(_snd_bloop()),
+    "confirm": _snd_mono_to_stereo(_snd_sweep(600, 1000, 90, volume=0.18)),
+    "back":    _snd_mono_to_stereo(_snd_sweep(700, 400, 90, volume=0.18)),
+    "error":   _snd_mono_to_stereo(_snd_wonk()),
+    "page":    _snd_mono_to_stereo(_snd_page()),
+    "intro":   _build_intro_theme(),
+}
+
+# Every UI button that should trigger a sound, mapped to which one. A
+# single choke point (called once at the top of handle_button()) rather
+# than instrumenting dozens of individual screen branches -- lower risk,
+# easier to verify, and matches "sound for all presses" without
+# needing per-screen special-casing. X/Y are how the Reader/Library
+# popup menus are OPENED (see MENU_ITEMS/draw_menu docstring) and B is
+# how they're CLOSED, so confirm-on-open/back-on-close (Kaleb's request)
+# falls out of this table for free.
+SND_BTN_MAP = {
+    "UP": "nav", "DOWN": "nav", "L": "nav", "R": "nav",
+    "L2": "page", "R2": "page",
+    "A": "confirm", "X": "confirm", "Y": "confirm", "START": "confirm",
+    "B": "back",
+}
+
+SDL_INIT_AUDIO = 0x00000010
+AUDIO_S16LSB = 0x8010
+
+
+class SDL_AudioSpec(ctypes.Structure):
+    _fields_ = [
+        ("freq", ctypes.c_int),
+        ("format", ctypes.c_uint16),
+        ("channels", ctypes.c_uint8),
+        ("silence", ctypes.c_uint8),
+        ("samples", ctypes.c_uint16),
+        ("padding", ctypes.c_uint16),
+        ("size", ctypes.c_uint32),
+        ("callback", ctypes.c_void_p),
+        ("userdata", ctypes.c_void_p),
+    ]
+
+
+class SoundEngine:
+    """Opens one SDL audio device and plays pre-generated PCM buffers.
+    Never raises -- any failure (no audio hw, dummy driver refusing,
+    etc.) just leaves .ok False and every .play() call a no-op."""
+
+    def __init__(self):
+        self.ok = False
+        self.device_id = None
+        try:
+            if SDL.SDL_WasInit(SDL_INIT_AUDIO) == 0:
+                if SDL.SDL_InitSubSystem(SDL_INIT_AUDIO) != 0:
+                    return
+            want = SDL_AudioSpec()
+            want.freq = SND_SAMPLE_RATE
+            want.format = AUDIO_S16LSB
+            want.channels = 2  # stereo -- needed for the intro theme's
+                                # left-to-right panning; all OTHER sounds
+                                # in SND_SOUNDS are pre-converted to
+                                # centered stereo (_snd_mono_to_stereo)
+                                # so they still play correctly on this
+                                # device instead of garbling.
+            want.samples = 512
+            got = SDL_AudioSpec()
+            dev = SDL.SDL_OpenAudioDevice(None, 0, ctypes.byref(want), ctypes.byref(got), 0)
+            if dev == 0:
+                return
+            self.device_id = dev
+            self.ok = True
+            SDL.SDL_PauseAudioDevice(dev, 0)
+        except Exception:
+            _boot_log("SoundEngine init failed (non-fatal, sound will be silent)\n")
+            self.ok = False
+
+    def play(self, name):
+        if not self.ok:
+            return
+        data = SND_SOUNDS.get(name)
+        if not data:
+            return
+        try:
+            SDL.SDL_ClearQueuedAudio(self.device_id)
+            SDL.SDL_QueueAudio(self.device_id, data, len(data))
+        except Exception:
+            pass  # never let a sound glitch interrupt the UI
+
+    def shutdown(self):
+        if self.ok:
+            try:
+                SDL.SDL_CloseAudioDevice(self.device_id)
+            except Exception:
+                pass
+            self.ok = False
 
 
 class Color(ctypes.Structure):
@@ -863,9 +2183,20 @@ epub_engine.set_active_glyph_subs(_ACTIVE_GLYPH_SUBS)
 # ============================================================
 # Screen size / scaling (matches sorter's 720x720 reference-scale pattern)
 # ============================================================
+# v26.07.16.15: SW/SH used to be the SAME variable that also drove the
+# _sx/_sy scale factors, so shrinking SH for a shorter-height device
+# would have shrunk every font/margin/padding too. Kaleb's RG34XX SP
+# request is a pure crop (same fonts, same spacing, just fewer visible
+# rows before scrolling) -- so _SX/_SY are now hardcoded to 1.0
+# (permanently anchored to the 720-wide design reference) and are no
+# longer derived from SW/SH at all. SH itself stays a real mutable
+# module global -- runtime display detection in main() reassigns it
+# (see DEVICE PROFILE DETECTION below) so every draw call's existing
+# "visible = (SH - top - hint_height) // row_h" math naturally fits
+# fewer rows on a shorter screen with zero other layout changes.
 SW, SH = 720, 720
-_SX = SW / 720.0
-_SY = SH / 720.0
+_SX = 1.0
+_SY = 1.0
 
 
 def _sx(n): return max(1, int(n * _SX))
@@ -1015,35 +2346,413 @@ COL_ACCENT = COL_MENU_SEL_BG = COL_WARNING = None
 
 THEME_INDEX = 0
 
+# v26.07.16.07 (Kaleb's request): theme changes now ANIMATE like a
+# color slider crossfading each channel, instead of snapping instantly.
+# _THEME_TRANS_FROM/_TO hold the OLD/NEW (r,g,b) tuples per color key;
+# _THEME_TRANS_START/_DURATION drive a simple linear interpolation.
+# Deliberately NOT the same "fade to destination" machinery that broke
+# on the splash screen (see draw_splash()'s docstring) -- this doesn't
+# touch alpha/blend modes or draw a second screen underneath at all,
+# it just animates the plain RGB values already used by every
+# draw_*() call every frame, so there's no new failure mode to
+# reproduce that bug in.
+_THEME_TRANS_FROM = None
+_THEME_TRANS_TO = None
+_THEME_TRANS_START = 0.0
+_THEME_TRANS_DURATION = 0.18
+
+# v26.07.15.20: up to MAX_CUSTOM_THEMES randomly-generated themes
+# (Kaleb's request, raised from the original cap of 1), loaded from
+# CUSTOM_THEME_PATH if it exists (see load_custom_themes() below,
+# called once App.__init__ runs). Oldest is evicted (FIFO) once a save
+# would exceed the cap -- see save_custom_theme()'s own comment.
+# _DRAFT_THEME is separate and NOT persisted: it's the just-generated,
+# not-yet-named preview shown while the text-entry naming screen is up
+# (or, if canceled, for the rest of the current session only) -- see
+# App.randomize_theme()'s docstring for the full save/cancel contract.
+MAX_CUSTOM_THEMES = 3
+CUSTOM_THEMES = []
+_DRAFT_THEME = None
+
+# v26.07.15.24: None means _DRAFT_THEME (if any) is a plain NEW candidate
+# (saving it appends, same as before). A string means _DRAFT_THEME is
+# regenerating an EXISTING saved theme by that NAME (see
+# App.regenerate_theme()) -- saving it replaces that entry in place
+# instead of appending. Stores the NAME, not a list position, so it
+# stays correct even if CUSTOM_THEMES' order/length changes elsewhere
+# (FIFO eviction, backup restore) while a regenerate is pending --
+# looked up by name at commit time, falling back to a plain append if
+# that name is no longer found (see App.regenerate_theme()'s docstring
+# for why a position-based index was rejected here).
+_DRAFT_REPLACE_NAME = None
+
+
+def all_themes():
+    """THEMES, then any saved CUSTOM_THEMES (oldest first), then
+    _DRAFT_THEME if a randomize is currently pending a name/save. Every
+    caller that cycles/counts/looks up themes by index (Theme +/-,
+    apply_theme(), Randomize Theme) reads through this instead of THEMES
+    directly, so custom/draft themes transparently take part in the
+    same cycle without any of those call sites needing special-case
+    code."""
+    return THEMES + CUSTOM_THEMES + ([_DRAFT_THEME] if _DRAFT_THEME else [])
+
+
+_THEME_COLOR_KEYS = ("bg", "panel", "text", "dim", "link", "link_sel",
+                     "hint_bg", "hint_text", "accent", "menu_sel_bg", "warning")
+_THEME_COLOR_GLOBALS = {
+    "bg": "COL_BG", "panel": "COL_PANEL", "text": "COL_TEXT", "dim": "COL_DIM",
+    "link": "COL_LINK", "link_sel": "COL_LINK_SEL", "hint_bg": "COL_HINT_BG",
+    "hint_text": "COL_HINT_TEXT", "accent": "COL_ACCENT",
+    "menu_sel_bg": "COL_MENU_SEL_BG", "warning": "COL_WARNING",
+}
+
 
 def apply_theme(index):
-    """Rebinds the module-level COL_* globals to the given THEMES[index]
-    palette. Every draw_* function reads COL_BG/COL_TEXT/etc. as plain
-    module globals, so this is the ONLY place a theme change needs to
-    touch -- no per-screen draw code changes when adding a new theme,
-    just add an entry to THEMES above."""
-    global THEME_INDEX, COL_BG, COL_PANEL, COL_TEXT, COL_DIM, COL_LINK
+    """Rebinds the module-level COL_* globals to the given
+    all_themes()[index] palette. Every draw_* function reads
+    COL_BG/COL_TEXT/etc. as plain module globals, so this is the ONLY
+    place a theme change needs to touch -- no per-screen draw code
+    changes when adding a new theme, just add an entry to THEMES above
+    (or populate CUSTOM_THEMES).
+
+    v26.07.16.07: instead of setting the globals directly to their
+    final values, this now just records the CURRENT values as
+    _THEME_TRANS_FROM and the target palette as _THEME_TRANS_TO, and
+    starts a clock. _tick_theme_transition() (called once per frame,
+    see main()'s render loop) does the actual interpolation -- this
+    function no longer touches COL_* itself except on the very first
+    call ever (boot), where there's no "from" color to animate from,
+    so it snaps immediately instead."""
+    global THEME_INDEX, _THEME_TRANS_FROM, _THEME_TRANS_TO, _THEME_TRANS_START
+    themes = all_themes()
+    index = max(0, min(len(themes) - 1, index))
+    t = themes[index]
+    THEME_INDEX = index
+
+    to_colors = {k: tuple(t[k]) for k in _THEME_COLOR_KEYS}
+
+    if COL_BG is None:
+        # first-ever call (app boot) -- nothing to animate from, snap
+        # directly, same as the old behavior.
+        _set_theme_colors_exact(to_colors)
+        _THEME_TRANS_FROM = None
+        _THEME_TRANS_TO = None
+        return
+
+    from_colors = {k: (getattr(globals()[_THEME_COLOR_GLOBALS[k]], "r"),
+                        getattr(globals()[_THEME_COLOR_GLOBALS[k]], "g"),
+                        getattr(globals()[_THEME_COLOR_GLOBALS[k]], "b"))
+                   for k in _THEME_COLOR_KEYS}
+    _THEME_TRANS_FROM = from_colors
+    _THEME_TRANS_TO = to_colors
+    _THEME_TRANS_START = time.time()
+
+
+def _set_theme_colors_exact(colors):
+    """Sets every COL_* global directly to the given {key: (r,g,b)}
+    dict, alpha always 255. Used both for the very first (unanimated)
+    theme application and by _tick_theme_transition() once a
+    transition finishes, so the final state is always bit-for-bit the
+    real target palette regardless of any interpolation rounding along
+    the way."""
+    global COL_BG, COL_PANEL, COL_TEXT, COL_DIM, COL_LINK
     global COL_LINK_SEL, COL_HINT_BG, COL_HINT_TEXT, COL_ACCENT
     global COL_MENU_SEL_BG, COL_WARNING
-    index = max(0, min(len(THEMES) - 1, index))
-    t = THEMES[index]
-    THEME_INDEX = index
-    COL_BG = Color(*t["bg"], 255)
-    COL_PANEL = Color(*t["panel"], 255)
-    COL_TEXT = Color(*t["text"], 255)
-    COL_DIM = Color(*t["dim"], 255)
-    COL_LINK = Color(*t["link"], 255)
-    COL_LINK_SEL = Color(*t["link_sel"], 255)
-    COL_HINT_BG = Color(*t["hint_bg"], 255)
-    COL_HINT_TEXT = Color(*t["hint_text"], 255)
-    COL_ACCENT = Color(*t["accent"], 255)
-    COL_MENU_SEL_BG = Color(*t["menu_sel_bg"], 255)
-    COL_WARNING = Color(*t["warning"], 255)
+    COL_BG = Color(*colors["bg"], 255)
+    COL_PANEL = Color(*colors["panel"], 255)
+    COL_TEXT = Color(*colors["text"], 255)
+    COL_DIM = Color(*colors["dim"], 255)
+    COL_LINK = Color(*colors["link"], 255)
+    COL_LINK_SEL = Color(*colors["link_sel"], 255)
+    COL_HINT_BG = Color(*colors["hint_bg"], 255)
+    COL_HINT_TEXT = Color(*colors["hint_text"], 255)
+    COL_ACCENT = Color(*colors["accent"], 255)
+    COL_MENU_SEL_BG = Color(*colors["menu_sel_bg"], 255)
+    COL_WARNING = Color(*colors["warning"], 255)
+
+
+def _tick_theme_transition():
+    """Called once per frame, BEFORE any screen's draw_*() runs (see
+    main()'s render loop) -- interpolates every COL_* global a little
+    further from _THEME_TRANS_FROM toward _THEME_TRANS_TO based on
+    elapsed wall-clock time, linear per RGB channel ('like changing the
+    color with a slider', Kaleb's own description). No-ops instantly if
+    no transition is in progress, so this is cheap to call
+    unconditionally every frame. Returns True while a transition is
+    still in progress (so the caller can force need_redraw the same way
+    an active status toast does), False once finished/idle."""
+    global _THEME_TRANS_FROM, _THEME_TRANS_TO
+    if _THEME_TRANS_FROM is None:
+        return False
+    elapsed = time.time() - _THEME_TRANS_START
+    frac = 1.0 if _THEME_TRANS_DURATION <= 0 else min(1.0, elapsed / _THEME_TRANS_DURATION)
+    interp = {}
+    for k in _THEME_COLOR_KEYS:
+        r0, g0, b0 = _THEME_TRANS_FROM[k]
+        r1, g1, b1 = _THEME_TRANS_TO[k]
+        interp[k] = (
+            int(r0 + (r1 - r0) * frac),
+            int(g0 + (g1 - g0) * frac),
+            int(b0 + (b1 - b0) * frac),
+        )
+    _set_theme_colors_exact(interp)
+    if frac >= 1.0:
+        _THEME_TRANS_FROM = None
+        _THEME_TRANS_TO = None
+        return False
+    return True
+
+
+# ---- WCAG contrast helpers + random theme generator (v26.07.15.19,
+# reworked v26.07.15.21) ----
+# Same 4.5:1 AA floor every hand-tuned THEMES entry's comments reference
+# (see e.g. Default theme's hint_bg/hint_text comment above) -- applied
+# here programmatically so a randomly-rolled palette can't come out
+# unreadable the way a naive random RGB roll could.
+
+def _srgb_to_linear(c):
+    c = c / 255.0
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(rgb):
+    r, g, b = rgb
+    return (0.2126 * _srgb_to_linear(r) + 0.7152 * _srgb_to_linear(g)
+            + 0.0722 * _srgb_to_linear(b))
+
+
+def _contrast_ratio(rgb1, rgb2):
+    l1, l2 = _relative_luminance(rgb1), _relative_luminance(rgb2)
+    lighter, darker = max(l1, l2), min(l1, l2)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _hsl(h, s, l):
+    """h/s/l all 0-1 in. Returns an (r,g,b) 0-255 int tuple."""
+    r, g, b = colorsys.hls_to_rgb(h % 1.0, max(0.0, min(1.0, l)),
+                                   max(0.0, min(1.0, s)))
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+
+# v26.07.15.21: hue anchors + pairings lifted directly from Kaleb's Cava
+# Solace (cava-manager.sh's therapeutic randomizer), same reasoning --
+# muted/mid-lightness hues in these specific families read as calming
+# rather than a fully random hue wheel, per the peer-reviewed sources
+# cava-manager.sh already cites (Manchester Color Wheel / Carruthers et
+# al. 2010; NeuroLaunch 2024; Villa Healing Center 2026; Color Institute
+# 2025). Degrees converted to 0-1 fractions for colorsys. Only the
+# 2-family combos from cava's list are used here (not the 3-family
+# ones) -- PicoReader's palette has exactly two hue ROLES (bg/text/dim/
+# hint vs link/link_sel/accent), unlike cava's N-stop gradient, so a
+# third hue has nowhere structural to go.
+THERAPEUTIC_FAMILIES = [
+    (130 / 360, 155 / 360, "Sage"),      # strongest anxiety/depression reduction
+    (195 / 360, 215 / 360, "Sky"),       # lowers heart rate and cortisol
+    (255 / 360, 275 / 360, "Lavender"),  # calming without dark-blue associations
+    (35 / 360, 48 / 360, "Amber"),       # EEG relaxed brain states; sunset light
+    (50 / 360, 62 / 360, "Cream"),       # Manchester Color Wheel normal-mood anchor
+    (340 / 360, 355 / 360, "Blush"),     # reduces aggression signs
+]
+
+THERAPEUTIC_COMBOS = [
+    (0, 1), (0, 2), (1, 5), (0, 3), (3, 5), (1, 2), (4, 0), (4, 5),
+]
+
+
+def generate_random_theme():
+    """Builds one dark palette using two hues drawn from
+    THERAPEUTIC_FAMILIES (one THERAPEUTIC_COMBOS pair per call) -- one
+    hue for bg/panel/text/dim/hint (the "base" family), one for
+    link/link_sel/accent (the "accent" family) -- with the same 10
+    fields every THEMES entry has. Saturation is deliberately muted
+    (22-48%, matching cava-manager.sh's therapeutic randomizer, not the
+    wider/more-vivid range this generator used before v26.07.15.21).
+    Nudges lightness on the two contrast-critical pairs (bg/text and
+    hint_bg/hint_text) until each clears 4.5:1 WCAG AA -- so every
+    generated theme is readable by construction, not by luck. Doesn't
+    touch THEMES or CUSTOM_THEMES itself; caller decides whether/when
+    to apply and save it.
+
+    v26.07.15.22: bg/panel/hint_bg/menu_sel_bg (every dark "chrome"
+    surface, i.e. background + footer/hint bar) now all share ONE
+    saturation value (sat_bg, capped at 0.18) instead of each being an
+    arbitrary fraction of the accent saturation -- this is
+    cava-manager.sh's own window-background-tint rule verbatim
+    ("sat <= 18%, lightness <= 10% always reads calm regardless of
+    hue"), applied here to every chrome surface so bg and the footer
+    read as ONE coordinated subtle tint rather than two independently-
+    faded intensities. Previously bg used sat*0.3 and hint_bg used
+    sat*0.25 -- close in spirit but arbitrary multipliers, not the
+    actual cited rule, and slightly mismatched from each other."""
+    combo = random.choice(THERAPEUTIC_COMBOS)
+    base_lo, base_hi, base_name = THERAPEUTIC_FAMILIES[combo[0]]
+    accent_lo, accent_hi, accent_name = THERAPEUTIC_FAMILIES[combo[1]]
+    hue = random.uniform(base_lo, base_hi)
+    link_hue = random.uniform(accent_lo, accent_hi)
+    family_name = f"{base_name} + {accent_name}"
+
+    sat = random.uniform(0.22, 0.48)
+    sat_bg = min(sat, 0.18)  # cava-manager.sh's window-tint cap, shared
+                             # by every dark chrome surface below
+
+    bg_l = random.uniform(0.05, 0.09)
+    text_l = 0.82
+    while _contrast_ratio(_hsl(hue, sat * 0.5, text_l),
+                           _hsl(hue, sat_bg, bg_l)) < 4.5 and text_l < 0.97:
+        text_l += 0.02
+
+    hint_bg_l = bg_l + random.uniform(0.10, 0.16)  # same "hint bar reads
+                                                     # as a lighter panel,
+                                                     # not just darker bg"
+                                                     # intent as v0.1.147
+    hint_text_l = 0.55
+    while _contrast_ratio(_hsl(hue, sat * 0.3, hint_text_l),
+                           _hsl(hue, sat_bg, hint_bg_l)) < 4.5 and hint_text_l < 0.97:
+        hint_text_l += 0.02
+
+    # link/link_sel lightness follows the same 48-68% mid-tone corridor
+    # cava-manager.sh's build_gradient_stops() uses for its calmest,
+    # least-jarring stops.
+    link_l = random.uniform(0.48, 0.54)
+    link_sel_l = random.uniform(0.60, 0.68)
+
+    return {
+        "name": family_name,  # e.g. "Sage + Sky" -- shown live and used
+                               # as the default text-entry name when saving
+        "bg": _hsl(hue, sat_bg, bg_l),
+        "panel": _hsl(hue, sat_bg, bg_l + 0.05),
+        "text": _hsl(hue, sat * 0.5, text_l),
+        "dim": _hsl(hue, sat * 0.3, 0.55),
+        "link": _hsl(link_hue, sat + 0.1, link_l),
+        "link_sel": _hsl(link_hue, sat, link_sel_l),
+        "hint_bg": _hsl(hue, sat_bg, hint_bg_l),
+        "hint_text": _hsl(hue, sat * 0.3, hint_text_l),
+        "accent": _hsl(link_hue, sat + 0.1, link_l),
+        "menu_sel_bg": _hsl(hue, sat_bg, bg_l + 0.08),
+        "warning": _hsl(0.0, 0.55, 0.55),  # kept fixed/neutral-red regardless
+                                             # of family -- an alert color,
+                                             # not part of the calming intent
+    }
+
+
+def load_custom_themes():
+    """Loads the saved custom-theme list from CUSTOM_THEME_PATH into the
+    CUSTOM_THEMES global, if the file exists. Best-effort, same pattern
+    as load_settings() -- a corrupt/missing file just means no custom
+    themes this boot, never a crash. Backward-compatible with the
+    original v26.07.15.19 format (a single dict, back when only one
+    custom theme was ever kept) -- wraps it in a list transparently."""
+    global CUSTOM_THEMES
+    if os.path.exists(CUSTOM_THEME_PATH):
+        try:
+            with open(CUSTOM_THEME_PATH) as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                data = [data]  # old single-theme format
+            CUSTOM_THEMES = data[-MAX_CUSTOM_THEMES:]
+        except Exception:
+            CUSTOM_THEMES = []
+
+
+def save_custom_theme(name, palette):
+    """Appends palette (named) to CUSTOM_THEMES and persists the whole
+    list. Once there are more than MAX_CUSTOM_THEMES saved, the OLDEST
+    is evicted (FIFO) -- Kaleb's request: keep the most recent 3."""
+    global CUSTOM_THEMES
+    palette = dict(palette)
+    palette["name"] = name or "Custom"
+    CUSTOM_THEMES.append(palette)
+    if len(CUSTOM_THEMES) > MAX_CUSTOM_THEMES:
+        CUSTOM_THEMES = CUSTOM_THEMES[-MAX_CUSTOM_THEMES:]
+    _write_custom_themes()
+
+
+def _write_custom_themes():
+    """Best-effort write of the current CUSTOM_THEMES list to
+    CUSTOM_THEME_PATH. Separate small JSON file rather than a
+    settings.json key so it's trivially backup-able/inspectable on its
+    own -- see backup_custom_themes()/restore_latest_custom_themes_backup()
+    below for the actual backup/restore feature."""
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(CUSTOM_THEME_PATH, "w") as f:
+            json.dump(CUSTOM_THEMES, f)
+    except Exception:
+        pass
+
+
+def backup_custom_themes():
+    """Writes a timestamped snapshot of the current CUSTOM_THEMES list
+    to BACKUP_DIR -- same pattern as backup_bookmarks(): non-destructive,
+    only ever ADDS a file, keeps just the most recent 10. Returns the
+    backup's filename, or None if there's nothing to back up or the
+    write failed."""
+    if not CUSTOM_THEMES:
+        return None
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        fname = f"custom_themes_backup_{time.strftime('%Y%m%d_%H%M%S')}.json"
+        path = os.path.join(BACKUP_DIR, fname)
+        with open(path, "w") as f:
+            json.dump(CUSTOM_THEMES, f, indent=2)
+    except Exception as e:
+        _boot_log(f"custom theme backup failed: {e}\n")
+        return None
+
+    try:
+        backups = sorted(
+            (f for f in os.listdir(BACKUP_DIR) if f.startswith("custom_themes_backup_")),
+            reverse=True)
+        for old in backups[10:]:
+            try:
+                os.remove(os.path.join(BACKUP_DIR, old))
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return fname
+
+
+def list_custom_theme_backups():
+    """Newest-first list of custom-theme backup filenames."""
+    if not os.path.isdir(BACKUP_DIR):
+        return []
+    return sorted(
+        (f for f in os.listdir(BACKUP_DIR) if f.startswith("custom_themes_backup_")),
+        reverse=True)
+
+
+def restore_latest_custom_themes_backup():
+    """Replaces the live CUSTOM_THEMES list with the most recent backup's
+    contents (capped to MAX_CUSTOM_THEMES) and persists it. Unlike
+    restore_latest_backup() for bookmarks, this is a straight replace,
+    not a per-entry merge -- a saved theme is a single named snapshot,
+    not something that accumulates independently between backup and
+    restore the way per-book bookmark timestamps can. Returns the
+    backup filename, or None if there's no backup to restore."""
+    global CUSTOM_THEMES
+    backups = list_custom_theme_backups()
+    if not backups:
+        return None
+    latest = backups[0]
+    try:
+        with open(os.path.join(BACKUP_DIR, latest)) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            data = [data]
+        CUSTOM_THEMES = data[-MAX_CUSTOM_THEMES:]
+        _write_custom_themes()
+    except Exception as e:
+        _boot_log(f"custom theme restore failed to read {latest}: {e}\n")
+        return None
+    return latest
 
 
 apply_theme(0)  # Default at import time; App.__init__ re-applies the
                  # saved choice from settings.json once load_settings()
-                 # is defined below.
+                 # is defined below (and calls load_custom_themes() first
+                 # so any saved custom themes are available to index into).
 _boot_log(f"COL_TEXT=({COL_TEXT.r},{COL_TEXT.g},{COL_TEXT.b},{COL_TEXT.a}) "
           f"COL_BG=({COL_BG.r},{COL_BG.g},{COL_BG.b},{COL_BG.a})\n")
 
@@ -1980,6 +3689,23 @@ class ImageLoader:
                     continue  # still in flight, don't evict
                 del self._results[k]
 
+    def _seed_result_entry(self, key, priority):
+        """v26.07.16.31 BUG FIX (found by a headless stress-test rapidly
+        switching books, NOT seen/reported on real hardware): request()
+        seeds self._results[key] under the lock BEFORE queuing, but
+        the is_relevant() check earlier in _process() can pop() that
+        same entry for a DIFFERENT, still-queued request for the same
+        key (e.g. a PREFETCH/PRERENDER item queued behind a VISIBLE
+        one that got dropped as no-longer-relevant) -- so by the time
+        THIS call reaches one of the four self._results[key][...] =
+        writes below, the entry can already be gone, raising a bare
+        KeyError whose message is just the key itself. Must be called
+        with self._lock already held. Idempotent: does nothing if the
+        entry is already there, matching request()'s own seed shape."""
+        if key not in self._results:
+            self._results[key] = {"thumb": "loading", "full": None,
+                                   "priority": priority, "requested_at": time.time()}
+
     def _process(self, key, jpeg_bytes, priority, force_scale_n=None):
         """v26.07.09.07: force_scale_n bypasses _pick_scale_n() below --
         used for Image Maximize Mode's native-resolution requests. Both
@@ -2015,11 +3741,13 @@ class ImageLoader:
             try:
                 result = self._load_or_decode(key, None, "full", None)
                 with self._lock:
+                    self._seed_result_entry(key, priority)
                     self._results[key]["thumb"] = result
                     self._results[key]["full"] = result
             except Exception as e:
                 _boot_log(f"disk-cache image load failed for {key}: {e}\n")
                 with self._lock:
+                    self._seed_result_entry(key, priority)
                     self._results[key]["thumb"] = "error"
                     self._results[key]["full"] = "error"
             return
@@ -2056,11 +3784,13 @@ class ImageLoader:
         try:
             result = self._load_or_decode(key, jpeg_bytes, "full", full_n)
             with self._lock:
+                self._seed_result_entry(key, priority)
                 self._results[key]["thumb"] = result
                 self._results[key]["full"] = result
         except Exception as e:
             _boot_log(f"single-pass decode failed for {key}: {e}\n")
             with self._lock:
+                self._seed_result_entry(key, priority)
                 self._results[key]["thumb"] = "error"
                 self._results[key]["full"] = "error"
 
@@ -2255,14 +3985,22 @@ def render_text(renderer, font, text, color, x, y, alpha=255):
 def render_text_cached(app, renderer, font, text, color, x, y):
     """Same as render_text, but reuses SDL textures across frames instead
     of rasterizing + uploading + destroying on every single draw call.
-    Cache is scoped to the current page and cleared whenever the page (or
-    font size) changes -- see App._clear_text_texture_cache()."""
+    Cache is scoped to the current page and fully cleared whenever the
+    page (or font size) changes -- see App._clear_text_texture_cache().
+    v26.07.15.18: ALSO bounded to MAX_TEXT_TEXTURE_CACHE entries via LRU
+    eviction WITHIN a page -- see _evict_text_texture_cache_if_needed()'s
+    comment for the unbounded-growth bug this fixes. Ordinary pages never
+    come close to the cap (a few hundred unique lines at most); this
+    only actually starts evicting on the extreme multi-thousand-line
+    pages this app is built to handle, exactly where an unbounded cache
+    would otherwise exhaust the device's 1GB RAM."""
     if not font or not text:
         return 0
     key = (id(font), text, color.r, color.g, color.b)
     cached = app._text_texture_cache.get(key)
     if cached:
         tex, w, h = cached
+        app._text_texture_cache.move_to_end(key)  # mark as recently used
     else:
         surf = TTF.TTF_RenderUTF8_Blended(font, text.encode("utf-8"), color)
         if not surf:
@@ -2275,6 +4013,8 @@ def render_text_cached(app, renderer, font, text, color, x, y):
         if not tex:
             return 0
         app._text_texture_cache[key] = (tex, w, h)
+        app._text_texture_cache.move_to_end(key)
+        app._evict_text_texture_cache_if_needed()
     dst = Rect(x, y, w, h)
     SDL.SDL_RenderCopy(renderer, tex, None, ctypes.byref(dst))
     return w
@@ -2885,6 +4625,26 @@ SCREEN_MENU = "menu"
 SCREEN_TOC = "toc"
 SCREEN_BOOKMARKS = "bookmarks"
 SCREEN_STORAGE = "storage"
+SCREEN_THEME_MENU = "theme_menu"  # v26.07.15.24: submenu pulled out of the
+                        # Library/Reader Menu (Kaleb's request: "don't
+                        # overclutter the popup menu") -- collapses
+                        # Theme +/-, Randomize Theme, Regenerate Theme,
+                        # and Save Regenerated Theme into ONE "Themes..."
+                        # row in each parent menu, same pattern as
+                        # "Settings" opening SCREEN_STORAGE rather than
+                        # inlining every storage action into the parent
+                        # list. app._theme_menu_return_screen (set when
+                        # opening, mirrors _storage_return_screen) tracks
+                        # which of the two parent menus opened it.
+SCREEN_THEME_SELECT = "theme_select"  # v26.07.15.31 (Kaleb's request):
+                        # jump directly to any theme by name (5 fixed +
+                        # up to 3 custom) instead of stepping through
+                        # Theme +/- one at a time. Overlay, same reasoning
+                        # as SCREEN_THEME_MENU -- UP/DOWN applies the
+                        # highlighted theme LIVE as a preview (same
+                        # mechanism Randomize Theme already uses), A
+                        # confirms/persists, B reverts to whatever was
+                        # active before this screen opened.
 SCREEN_DOWNLOAD_SOURCES = "download_sources"  # pick a plugin (only shown
                                                # if more than one is loaded)
 SCREEN_DOWNLOAD_CATEGORIES = "download_categories"  # pick a category, for
@@ -2904,6 +4664,12 @@ SCREEN_DOWNLOAD_AUDIO_BOOKS = "download_audio_books"  # v26.07.10.01: the
                                                # Bible-book sub-picker for
                                                # AUDIO_SOURCES entries
                                                # marked "books": True --
+SCREEN_DOWNLOAD_VIDEO_SERIES = "download_video_series"  # v26.07.15.09:
+                                               # same idea as
+                                               # SCREEN_DOWNLOAD_AUDIO_BOOKS,
+                                               # for VIDEO_SOURCES entries
+                                               # marked "subcategories": [...]
+                                               # (currently just "Series") --
                                                # unlike every video source,
                                                # NWT audio needs a booknum
                                                # before it can list anything
@@ -2926,6 +4692,17 @@ SCREEN_IMAGE_VIEW = "image_view"              # v0.1.124: fullscreen image
                                                # are untouched while here;
                                                # B returns to the exact
                                                # same reading position.
+SCREEN_LICENSES = "licenses"                  # v26.07.16.24: static scroll
+                                               # overlay, opened from
+                                               # Settings as "Credits /
+                                               # License" -- thank-you +
+                                               # GitHub link, then MIT +
+                                               # bundled-font license text
+SCREEN_HELP = "help"                          # v26.07.16.24: static scroll
+                                               # overlay, opened from
+                                               # Settings as "Help" --
+                                               # where to put books and
+                                               # basic controls
 SCREEN_TEXT_ENTRY = "text_entry"              # generic D-pad letter-grid
                                                # text input (v0.1.30) --
                                                # not tied to any one
@@ -2988,8 +4765,22 @@ AUDIO_SOURCE_ITEMS.append("Back")
 # was highlighted when the menu was opened" pattern.
 LIBRARY_MENU_ITEMS = ["Continue Reading", "Pin/Unpin Selected", "Mark Finished/Unfinished",
                        "Sort: Title A-Z", "Sort: Author A-Z", "Sort: Last Read",
-                       "Sort: Recently Added", "Sort: By Publication", "Filter: Cycle", "Clear All Finished", "Theme +", "Theme -",
+                       "Sort: Recently Added", "Sort: By Publication", "Filter: Cycle", "Clear All Finished",
+                       "Themes...",
                        "Download Books", "Settings", "Delete Book", "Back"]
+
+# v26.07.15.24 (Kaleb's request: "don't overclutter the popup menu"):
+# every theme-related action lives in this submenu instead of inline in
+# LIBRARY_MENU_ITEMS/MENU_ITEMS -- opened via a single "Themes..." row
+# in each. Deliberately still an OVERLAY (draw_theme_menu() paints the
+# real backdrop first, same as draw_menu()/draw_library_menu()), NOT a
+# full-screen takeover like draw_storage() -- Kaleb's own follow-up
+# question caught this: the whole point of Randomize/Regenerate is
+# seeing the new palette live against real reading content, which a
+# full-screen menu would hide.
+THEME_MENU_ITEMS = ["Select Theme...", "Theme +", "Theme -", "Reset to Default",
+                     "Randomize Theme", "Regenerate Theme", "Save Regenerated Theme",
+                     "Rename Theme", "Delete Theme", "Back"]
 
 # Ragged rows are fine -- UP/DOWN/LEFT/RIGHT navigation clamps to each
 # row's own length dynamically, no fixed grid width assumed. Letters,
@@ -3008,13 +4799,15 @@ TEXT_ENTRY_GRID = [
 ]
 
 MENU_ITEMS = ["Chapters", "Bookmarks", "Add Bookmark", "Font Size +", "Font Size -",
-              "Theme +", "Theme -", "Immersive Mode", "Settings", "Library", "Exit App"]
+              "Themes...", "Immersive Mode", "Sound Effects", "Settings", "Library", "Exit App"]
 
 STORAGE_ACTIONS = ["Clear Image Cache", "Clean Up Orphaned Bookmarks",
                     "Backup Bookmarks Now", "Restore Latest Backup",
+                    "Backup Custom Themes Now", "Restore Custom Themes Backup",
                     "Toggle Disk Cache (RAM-only mode)", "Toggle Images (text-only mode)",
-                    "Toggle Open Last Book on Launch",
-                    "Pre-render Book Images", "Back"]
+                    "Toggle Open Last Book on Launch", "Toggle Sound Effects",
+                    "Pre-render Book Images", "Remove Ports Shortcut",
+                    "Reinstall Ports Shortcut", "Help", "Credits / License", "Back"]
 
 
 def flatten_toc(entries, out=None):
@@ -3030,6 +4823,7 @@ class App:
     def __init__(self, renderer):
         self.renderer = renderer
         self.fonts = FontManager()
+        load_custom_themes()
         apply_theme(load_settings().get("theme_index", 0))
         self.screen = SCREEN_LIBRARY
         self.pinned = load_pinned()
@@ -3106,6 +4900,21 @@ class App:
                                                        # whichever opened it
         self.lib_menu_index = 0  # selection on SCREEN_LIBRARY_MENU
 
+        self.theme_menu_index = 0  # selection on SCREEN_THEME_MENU
+        self._theme_menu_return_screen = SCREEN_READER  # where Themes...'s
+                                                       # Back goes -- Reader
+                                                       # menu or Library menu,
+                                                       # whichever opened it
+        self._theme_delete_armed = False  # v26.07.15.28: "Delete Theme"
+                                       # two-press confirm, same pattern as
+                                       # _menu_delete_armed (Delete Book)
+        self.theme_select_index = 0  # selection on SCREEN_THEME_SELECT
+        self._theme_select_prev_index = 0  # THEME_INDEX at the moment
+                                       # Select Theme opened -- restored
+                                       # on B (cancel), same "preview
+                                       # live, revert on cancel" contract
+                                       # Randomize/Regenerate already use
+
         # Generic text-entry state (v0.1.30) -- see open_text_entry().
         self.te_value = ""
         self.te_row = 0
@@ -3139,6 +4948,15 @@ class App:
         self.dl_help_scroll = 0      # v0.1.155: scroll offset on the help
                                       # overlay, in case it overflows the
                                       # screen at large Font Size.
+
+        # v26.07.16.24: Settings > Credits / License and Settings > Help --
+        # same static-scroll-overlay pattern as dl_help above (return
+        # screen + scroll offset each, since either could theoretically
+        # be reached from a different place later).
+        self.licenses_return_screen = SCREEN_STORAGE
+        self.licenses_scroll = 0
+        self.help_return_screen = SCREEN_STORAGE
+        self.help_scroll = 0
         self.dl_category = None      # active category (plugin-defined string),
                                       # or None = no category scoping
         self.dl_plugin = None        # the module currently being browsed
@@ -3154,6 +4972,11 @@ class App:
         self._dl_downloading_idx = None  # index currently mid-download, or None
         self._dl_video_all_items = []  # v0.1.110: unfiltered video catalog, see search_video_items()
         self.video_source_index = 0    # v0.1.110: selection on SCREEN_DOWNLOAD_VIDEO_SOURCES
+        self.video_series_index = 0    # v26.07.15.09: selection on SCREEN_DOWNLOAD_VIDEO_SERIES
+                                        # (the "Series" sub-picker), mirrors audio_book_index
+        self._pending_video_source = None  # v26.07.15.09: remembers WHICH
+                                        # VIDEO_SOURCES entry opened the series
+                                        # picker, mirrors _pending_audio_source
         self.dl_is_video = False  # v0.1.90: True while SCREEN_DOWNLOAD_BROWSE is
                                    # showing a video catalog (jw_fetch videos)
                                    # rather than an EPUB catalog -- start_download()
@@ -3174,6 +4997,23 @@ class App:
 
         self.status_msg = None   # brief on-screen feedback (bookmark saved/
         self.status_until = 0    # updated/limit-reached, delete confirmed, etc.
+        self.status_started = 0  # v26.07.16.07 (Kaleb's request): lets
+                                   # status_alpha() compute a soft fade-in/
+                                   # fade-out for toasts instead of an
+                                   # abrupt pop-in/pop-out.
+        self._sel_anim = {}   # v26.07.16.08 (Kaleb's request, extending
+                                # v26.07.16.07's Library-only glide to
+                                # every list screen): maps a screen-name
+                                # key -> (current_y, last_update_time)
+                                # for that screen's selection highlight.
+                                # See eased_sel_y()'s docstring.
+        self._sel_anim_active = False  # v26.07.16.09: set True by
+                                # eased_sel_y() whenever a glide is
+                                # still mid-animation -- read (then
+                                # reset) by main()'s redraw-forcing
+                                # checks so a glide actually gets enough
+                                # frames to finish instead of freezing
+                                # partway once app.dirty clears.
         self._link_video_downloading = False  # v0.1.98: guards against
                                    # double-triggering a video download if A
                                    # is mashed on the same in-text video link
@@ -3201,6 +5041,13 @@ class App:
         # since it changes what screen greets you on startup, unlike the
         # other Settings toggles which are all in-session behavior tweaks.
         self.open_last_book_enabled = load_settings().get("open_last_book_enabled", False)
+        # v26.07.16.01: pure-synth sound effects (Kaleb's request).
+        # Default OFF (changed v26.07.16.03, Kaleb's request -- was ON
+        # at launch). SoundEngine opens its own SDL audio device and
+        # silently no-ops if that fails, so this is safe even on a
+        # device/sandbox with no audio hardware.
+        self.sound_enabled = load_settings().get("sound_enabled", False)
+        self._sound_engine = SoundEngine()
         # v26.07.09.04: Immersive Mode -- hides the Reader screen's hint
         # bar (visuals only; the reserved bottom margin/body_rows are
         # UNCHANGED, so pagination math can't drift out of sync with what
@@ -3298,6 +5145,7 @@ class App:
         self._storage_book_cache_size_str = None
         self._storage_orphan_count = 0
         self._storage_backups = []
+        self._storage_theme_backups = []
 
         # Whole-book background pre-render state (Storage screen action).
         # _prerender_book_id guards against a stale progress bar surviving
@@ -3323,11 +5171,31 @@ class App:
         self._styles_starts = []
         self._styles_prefix_max_end = []
         self._para_spans = []
+        # v26.07.13.09: sorted .start values parallel to self._para_spans,
+        # kept in sync at every assignment site below -- lets
+        # draw_reader()'s per-line paragraph-kind lookup use bisect
+        # instead of a linear scan. See that lookup's own comment.
+        self._para_spans_starts = []
         self._chapter_nav_points = []
         self._current_nav_point_pos = None  # v26.07.12.02: see _jump_chapter()'s docstring
         self._nav_scan_book_id = None
         self._extreme_page_queue = []
-        self._text_texture_cache = {}
+        # v26.07.15.18: bounded LRU, not a plain dict -- see
+        # render_text_cached()/_evict_text_texture_cache_if_needed()'s
+        # comments for the unbounded-growth bug this fixes (confirmed
+        # via real stress test: scrolling straight through the largest
+        # real page, ~99,700 unique lines, grew RSS linearly with no
+        # ceiling since this cache was only ever cleared on page/font
+        # change, never capped WITHIN a page).
+        self._text_texture_cache = OrderedDict()
+        self.MAX_TEXT_TEXTURE_CACHE = 200  # same order of magnitude as
+                                            # MAX_IMAGE_TEXTURES/the page-
+                                            # text cache; comfortably above
+                                            # any real screen's visible row
+                                            # count (even 14pt, the
+                                            # smallest Font Size step) with
+                                            # room for smooth back-and-
+                                            # forth scroll without thrash.
         # RAM-only LRU cache of raw get_page() results (v0.1.48, raised
         # to 200 entries in v0.1.68 -- see changelog).
         # Keyed by href; capped at _PAGE_TEXT_CACHE_MAX entries.
@@ -3356,6 +5224,18 @@ class App:
         # doesn't have to wait for a cold parse). Cleared on open_book()
         # alongside the caches themselves.
         self._extreme_hrefs = set()
+        # v26.07.13.11: chunked/progressive background-prerender state,
+        # separate from self._live_wrap_state/_live_wrap_key (which
+        # track the CURRENTLY-DISPLAYED page's own progressive build --
+        # see _ensure_page_built()). This tracks whatever queued extreme
+        # page is being prerendered in the background via the SAME
+        # _wrap_chunked_start()/_wrap_chunked_step() machinery, just for
+        # a page that isn't on screen. self._bg_wrap_state also carries
+        # that page's own styles/styles_starts/styles_prefix_max_end
+        # (installed only for the instant of each step -- see
+        # _step_bg_prerender()'s docstring for why this is safe).
+        self._bg_wrap_href = None
+        self._bg_wrap_state = None
         self._page_text_cache_extreme_order = []
         self._wrapped_cache_extreme_order = []
 
@@ -3447,6 +5327,45 @@ class App:
         self._wrapped_cache = {}           # (href, size_index) -> (lines, line_span_map, line_style_runs, line_abs_starts) -- v0.1.114 added line_abs_starts
         self._wrapped_cache_order = []
         self._WRAPPED_CACHE_MAX = 200       # same bound as _page_text_cache; see v0.1.69 changelog for the combined RAM estimate
+        # v26.07.13.10 PROTOTYPE: progressive/chunked wrap state for
+        # extreme pages (over LARGE_PAGE_LOADING_THRESHOLD). Runs the
+        # SAME wrap logic as always (still main-thread only -- SDL_ttf
+        # off-thread remains unverified, see the comment above), just
+        # split into small time-boxed slices across frames instead of
+        # one uninterrupted call. self._lines/etc are wired directly to
+        # this state's own lists while a live wrap is in progress, so
+        # normal reading/scrolling sees content grow in real time.
+        # self._live_wrap_key tracks which (href, size_index) this state
+        # belongs to; a page change while a live wrap is incomplete
+        # simply abandons it (never finalized into either cache -- same
+        # "discard on leave" behavior the old abort mechanism already
+        # had for the non-chunked path).
+        self._live_wrap_state = None
+        self._live_wrap_key = None
+        # v26.07.13.23 EXPERIMENTAL: see COLD_WRAP_RESPONSIVE_SECONDS's
+        # module-level comment.
+        self._live_wrap_started_at = 0.0
+        # v26.07.14.03: see COLD_WRAP_RAMP_SECONDS's module-level
+        # comment -- moment of the last REAL button press, used to ramp
+        # the cold-wrap slice size back down to small/responsive the
+        # instant input happens.
+        self._last_input_time = 0.0
+        # v26.07.13.15: separate progressive state for a WARM load (an
+        # already-cached page being read back from disk) -- see
+        # _start_warm_load()/_step_warm_load()'s docstrings. Mutually
+        # exclusive with self._live_wrap_state per page: a given page is
+        # either being cold-wrapped for the first time ever, or warm-
+        # loaded from a previous session's cache, never both at once.
+        self._live_warmload_state = None
+        self._live_warmload_key = None
+        # v26.07.13.17: see _ensure_page_built()'s progressive anchor/
+        # bookmark-resolution comment -- persists a resolved scroll
+        # target across frames, keyed to the (page, size) it belongs to,
+        # for the completion tail's selected_span restoration.
+        self._pending_target_char_off = None
+        self._pending_target_key = None
+        # v26.07.13.20: see advance_progressive_builds()'s docstring.
+        self._last_build_render_time = 0.0
         # v26.07.10.17: per-word glyph-width memo, keyed by (id(font), word).
         # _wrap()/_word_width() were calling TTF_SizeUTF8 (a ctypes call into
         # real FreeType glyph-advance measurement) for EVERY word occurrence,
@@ -3462,7 +5381,10 @@ class App:
         # negligible (tens of KB) and doesn't need eviction logic. Cleared
         # on open_book() alongside the other page caches, since a font
         # handle (the id(font) part of the key) is only guaranteed distinct
-        # while that handle is still alive. See _measured_word_width().
+        # while that handle is still alive. A nested dict[id(font)][word]
+        # form was tried and reverted -- see _measured_word_width()'s
+        # docstring (v26.07.16.11-EXPERIMENT note) for the real A/B timing.
+        # See _measured_word_width().
         self._word_width_cache = {}
         self.dirty = True
 
@@ -3491,6 +5413,16 @@ class App:
         self._splash_dest_screen = self.screen
         self.screen = SCREEN_SPLASH
         self._splash_start = time.time()
+        # v26.07.16.04 (Kaleb's request): boot-splash intro theme --
+        # plays ONCE here (not from draw_splash(), which runs every
+        # frame) so it can't accidentally re-trigger. Goes through the
+        # same app.play_sound() gate as every other sound, so it's
+        # silent when sound_enabled is False. If the person skips the
+        # splash early (START/A/B), handle_button()'s normal SND_BTN_MAP
+        # dispatch clears the audio queue and plays confirm/back for
+        # that button, cutting the intro cleanly instead of letting it
+        # keep playing over the destination screen.
+        self.play_sound("intro")
 
     # -------- library --------
     # v26.07.09.07: appended to _img_key()'s output to form a SEPARATE
@@ -3510,6 +5442,16 @@ class App:
                                               # is safe on every
                                               # filesystem this app runs
                                               # on.
+
+    def play_sound(self, name):
+        """Best-effort UI sound. Never raises -- a sound glitch must
+        never interrupt reading or navigation."""
+        if not getattr(self, "sound_enabled", True):
+            return
+        try:
+            self._sound_engine.play(name)
+        except Exception:
+            pass
 
     def _img_key(self, src):
         """Namespaces an image's internal epub path with the current book's
@@ -3591,6 +5533,235 @@ class App:
         self.te_error = None
         self.te_return_screen = return_screen
         self.screen = SCREEN_TEXT_ENTRY
+
+
+    def randomize_theme(self, return_screen):
+        """v26.07.15.20: generates a new random contrast-safe theme
+        (generate_random_theme()), applies it immediately as the
+        in-memory _DRAFT_THEME slot, then opens the text-entry keyboard
+        to name+save it. Applying happens up front so the person sees
+        the result live while deciding on a name; if they cancel the
+        naming screen (B/CANCEL), open_text_entry's own contract means
+        neither callback fires -- the theme stays applied for this
+        session (still living in _DRAFT_THEME) but is never written to
+        CUSTOM_THEME_PATH and settings.json's theme_index is never
+        updated, so an un-saved random theme simply doesn't survive a
+        reboot. Saving appends to CUSTOM_THEMES (up to MAX_CUSTOM_THEMES
+        -- Kaleb raised this from 1 to 3 -- oldest evicted first once
+        full) and clears the draft.
+
+        v26.07.15.24: always resets _DRAFT_REPLACE_NAME to None first --
+        this is the "plain new theme" entry point (as opposed to
+        regenerate_theme() below), so any leftover replace-target from
+        a previous, uncommitted regenerate must not leak into this
+        draft's eventual save."""
+        global _DRAFT_THEME, _DRAFT_REPLACE_NAME
+        _DRAFT_REPLACE_NAME = None
+        _DRAFT_THEME = generate_random_theme()
+        new_index = len(all_themes()) - 1
+        apply_theme(new_index)
+        self._page_cache_key = None
+        self.set_status(f"Randomized theme ({_DRAFT_THEME['name']}) -- name it to save")
+
+        def _on_confirm(app, value):
+            global _DRAFT_THEME
+            name = value.strip() or "Custom"
+            save_custom_theme(name, _DRAFT_THEME)
+            _DRAFT_THEME = None
+            new_idx = len(THEMES) + len(CUSTOM_THEMES) - 1
+            apply_theme(new_idx)
+            save_settings({"theme_index": new_idx})
+            app._page_cache_key = None
+            app.set_status(f'Theme saved as "{name}"')
+
+        self.open_text_entry("Save theme as:", _DRAFT_THEME["name"], _on_confirm,
+                              return_screen)
+
+    def regenerate_theme(self, return_screen):
+        """v26.07.15.24 (Kaleb's request, modeled on Cava Solace's
+        separate Generate/Apply buttons): re-rolls a NEW random
+        candidate for the specific saved custom theme currently cycled
+        to, without committing it yet -- lets Kaleb press this
+        repeatedly to preview several candidates live (same "Randomize
+        Theme" apply-immediately mechanism) before deciding, instead of
+        being forced to accept or reject the very first roll.
+
+        First press (no regenerate already pending): the currently
+        active theme (THEME_INDEX) must resolve to a real CUSTOM_THEMES
+        entry -- if it's a fixed THEMES entry, an already-pending draft,
+        or CUSTOM_THEMES is empty, this is a no-op with a status message
+        (same lightweight "wrong context" pattern as Pre-render Book
+        Images' "Open a book first"), not a hidden/disabled menu row.
+        Locks in _DRAFT_REPLACE_NAME to that theme's NAME (not its list
+        position -- see _DRAFT_REPLACE_NAME's own module-level comment
+        for why position would be unsafe here).
+
+        Subsequent presses (regenerate already pending): re-rolls again
+        for the SAME locked-in name, regardless of where THEME_INDEX
+        currently points (it's sitting on the live preview/draft slot
+        by then, not the original saved slot) -- this is what makes
+        repeated presses work as a "keep re-rolling" action rather than
+        needing to re-navigate back to the original slot every time.
+
+        Committing happens via the separate "Save Regenerated Theme"
+        menu item, not here -- mirrors Cava Solace's distinct Generate
+        vs Apply/Save buttons exactly."""
+        global _DRAFT_THEME, _DRAFT_REPLACE_NAME
+        if _DRAFT_REPLACE_NAME is None:
+            local_idx = THEME_INDEX - len(THEMES)
+            if not (0 <= local_idx < len(CUSTOM_THEMES)):
+                self.set_status("Cycle to one of your saved themes first (Theme +/-)")
+                return
+            _DRAFT_REPLACE_NAME = CUSTOM_THEMES[local_idx]["name"]
+
+        _DRAFT_THEME = generate_random_theme()
+        new_index = len(all_themes()) - 1
+        apply_theme(new_index)
+        self._page_cache_key = None
+        self.set_status(f"Regenerating \"{_DRAFT_REPLACE_NAME}\" -> {_DRAFT_THEME['name']} "
+                         f"-- Regenerate again or Save Regenerated Theme")
+
+    def save_regenerated_theme(self, return_screen):
+        """Commits whatever regenerate_theme() most recently rolled,
+        replacing the ORIGINAL saved theme it was regenerating (looked
+        up by name, not position -- see _DRAFT_REPLACE_NAME's comment)
+        rather than appending a new entry. No-op with a status message
+        if nothing is currently pending (same lightweight pattern as
+        the rest of this menu -- not a hidden/disabled row). Opens the
+        same text-entry keyboard as a plain save, pre-filled with the
+        ORIGINAL theme's name so accepting as-is keeps that name."""
+        if _DRAFT_THEME is None or _DRAFT_REPLACE_NAME is None:
+            self.set_status("Nothing to save -- use Regenerate Theme first")
+            return
+
+        original_name = _DRAFT_REPLACE_NAME
+
+        def _on_confirm(app, value):
+            global _DRAFT_THEME, _DRAFT_REPLACE_NAME
+            name = value.strip() or original_name or "Custom"
+            found_idx = next((i for i, t in enumerate(CUSTOM_THEMES)
+                               if t["name"] == original_name), None)
+            if found_idx is not None:
+                CUSTOM_THEMES[found_idx] = dict(_DRAFT_THEME, name=name)
+                _write_custom_themes()
+                new_idx = len(THEMES) + found_idx
+                msg = f'Theme "{original_name}" updated -> "{name}"'
+            else:
+                # Original was renamed/evicted/restored-away while this
+                # regenerate was pending -- fall back to a plain append
+                # rather than silently overwriting the wrong slot.
+                save_custom_theme(name, _DRAFT_THEME)
+                new_idx = len(THEMES) + len(CUSTOM_THEMES) - 1
+                msg = f'"{original_name}" was no longer found -- saved "{name}" as new instead'
+            _DRAFT_THEME = None
+            _DRAFT_REPLACE_NAME = None
+            apply_theme(new_idx)
+            save_settings({"theme_index": new_idx})
+            app._page_cache_key = None
+            app.set_status(msg)
+
+        self.open_text_entry("Save theme as:", original_name, _on_confirm,
+                              return_screen)
+
+    def delete_theme(self):
+        """v26.07.15.28 (Kaleb's request): deletes the currently-active
+        SAVED custom theme -- gating mirrors regenerate_theme()'s own
+        "must be cycled to a real saved slot" check (a fixed THEMES
+        entry, an unsaved draft, or an empty CUSTOM_THEMES list are all
+        safe no-ops with a status message, not hidden/disabled rows,
+        same lightweight pattern as the rest of this menu). Looked up
+        and removed by NAME rather than the caller's list-position
+        index -- this method is only ever called from the two-press
+        confirm dispatch in handle_button(), which arms on the FIRST
+        press (capturing the name) and calls this again on the SECOND;
+        between those two presses is exactly the same window
+        regenerate_theme()'s _DRAFT_REPLACE_NAME comment warns about
+        (CUSTOM_THEMES' order/length can change via an unrelated
+        Randomize-Theme-save or Storage-screen restore reachable
+        without leaving this submenu), so a stale position could
+        silently delete the WRONG theme. Falls back to Default (index
+        0) after deleting, rather than trying to guess a "next"
+        theme -- simplest, least surprising choice once the currently-
+        viewed theme no longer exists.
+
+        v26.07.15.29 (Kaleb's request: "make sure no default themes can
+        be deleted by accident just in case"): the "THEME_INDEX must be
+        >= len(THEMES)" check below is redundant with handle_button()'s
+        own identical check before it ever arms the two-press confirm --
+        kept here too, on purpose, as a second independent layer, so
+        this method stays safe even if some future change ever calls it
+        without going through that dispatch. Belt-and-suspenders on top
+        of that: this method NEVER reads, writes, appends to, or
+        deletes from THEMES itself anywhere in its body -- only
+        CUSTOM_THEMES is ever touched (confirmed via a whole-file grep
+        for any THEMES mutation: THEMES is a plain list literal, defined
+        once, read-only for the rest of the program; every actual
+        mutation site in the codebase targets CUSTOM_THEMES). The
+        assert below makes that invariant explicit and load-bearing
+        rather than just an unenforced comment."""
+        if THEME_INDEX < len(THEMES):
+            # Currently viewing one of the 5 fixed/default themes --
+            # never eligible for deletion, full stop.
+            self.set_status("Cycle to one of your saved themes first (Theme +/-)")
+            return
+        local_idx = THEME_INDEX - len(THEMES)
+        if not (0 <= local_idx < len(CUSTOM_THEMES)):
+            self.set_status("Cycle to one of your saved themes first (Theme +/-)")
+            return
+        target_name = CUSTOM_THEMES[local_idx]["name"]
+        found_idx = next((i for i, t in enumerate(CUSTOM_THEMES)
+                           if t["name"] == target_name), None)
+        if found_idx is not None:
+            assert len(THEMES) == 5, "THEMES must never change size -- see docstring"
+            del CUSTOM_THEMES[found_idx]  # CUSTOM_THEMES only -- never THEMES
+            _write_custom_themes()
+            apply_theme(0)
+            save_settings({"theme_index": 0})
+            self._page_cache_key = None
+            self.set_status(f'Deleted theme "{target_name}"')
+        else:
+            # Already gone (renamed/evicted/restored-away between the
+            # two confirm presses) -- nothing to do, not an error.
+            self.set_status(f'"{target_name}" was already gone -- nothing deleted')
+
+    def rename_theme(self, return_screen):
+        """v26.07.15.31 (Kaleb's request): renames the currently-active
+        SAVED custom theme WITHOUT touching its colors -- the only
+        other way to change a saved theme's name was Save Regenerated
+        Theme, which also re-rolls a brand new palette; this is for
+        when the colors are fine and just the label needs to change.
+        Same gating as delete_theme() (must be cycled to a real saved
+        slot; a fixed THEMES entry, unsaved draft, or empty
+        CUSTOM_THEMES are safe no-ops) and the same name-at-commit-time
+        lookup safety as regenerate/delete (captures the ORIGINAL name
+        now, re-finds it by name when the text-entry keyboard's OK is
+        actually pressed, not a stale list position)."""
+        if THEME_INDEX < len(THEMES):
+            self.set_status("Cycle to one of your saved themes first (Theme +/-)")
+            return
+        local_idx = THEME_INDEX - len(THEMES)
+        if not (0 <= local_idx < len(CUSTOM_THEMES)):
+            self.set_status("Cycle to one of your saved themes first (Theme +/-)")
+            return
+        original_name = CUSTOM_THEMES[local_idx]["name"]
+
+        def _on_confirm(app, value):
+            new_name = value.strip() or original_name
+            found_idx = next((i for i, t in enumerate(CUSTOM_THEMES)
+                               if t["name"] == original_name), None)
+            if found_idx is not None:
+                CUSTOM_THEMES[found_idx]["name"] = new_name
+                _write_custom_themes()
+                apply_theme(len(THEMES) + found_idx)
+                save_settings({"theme_index": THEME_INDEX})
+                app._page_cache_key = None
+                app.set_status(f'Renamed "{original_name}" -> "{new_name}"')
+            else:
+                app.set_status(f'"{original_name}" was no longer found -- not renamed')
+
+        self.open_text_entry("Rename theme to:", original_name, _on_confirm,
+                              return_screen)
+
 
 
     def open_downloader(self, plugin):
@@ -4113,6 +6284,19 @@ class App:
         # the only thing that populates this queue -- finishing your
         # own interrupted request, not speculative pre-fetching.
         self._extreme_page_queue = []
+        # v26.07.13.11 BUG FIX (found during a full-app audit, Kaleb's
+        # request): without this, a background prerender left mid-build
+        # across a book switch would keep its OLD book's href/state, but
+        # _wrap_cache_path() tags the eventual disk-cache filename with
+        # self._book_id AT SAVE TIME -- which by then is the NEW book.
+        # That would silently write the OLD book's page content into a
+        # cache file whose name claims to belong to the NEW book. Never
+        # actually hit in testing (nothing enters this book-switch-mid-
+        # background-wrap window fast enough in the sandbox to trigger
+        # it), but real and worth closing given how quietly wrong the
+        # result would be if it did.
+        self._bg_wrap_state = None
+        self._bg_wrap_href = None
 
     def _build_chapter_nav_points(self):
         """Build an ordered list of (spine_index, file, anchor) representing
@@ -4446,6 +6630,37 @@ class App:
                 and not os.path.isfile(self._wrap_cache_path(aborted_key))):
             self._extreme_page_queue.insert(0, aborted_key)
 
+    def _show_pre_parse_toast(self, renderer, message):
+        """v26.07.14.18 (Kaleb's request): unifies what used to be TWO
+        different treatments -- a full-screen "Opening page..." takeover
+        for pages over LARGE_PAGE_LOADING_THRESHOLD, and a lightweight
+        toast for the MEDIUM_PAGE_TOAST_THRESHOLD band below it -- into
+        one shared toast-style helper for both. Reasons: (1) Kaleb found
+        the full-screen takeover jarring compared to the toast; (2) it
+        also sidesteps the v26.07.14.17 display-flip-starvation theory
+        entirely -- repainting the WHOLE screen right before a multi-
+        second CPU-bound freeze is a bigger, more visually disruptive
+        redraw than a small toast needs to be, so there's simply less
+        screen for a starved flip to matter on. Draws a minimal
+        standalone frame (background fill + toast bar), NOT via
+        draw_reader() -- see the medium-toast branch's own prior comment
+        for why that would recurse into THIS function. Still keeps the
+        v26.07.14.17 SDL_Delay(50) safeguard, belt-and-suspenders even
+        though the smaller redraw should make it less necessary."""
+        self.set_status(message, duration=10.0)
+        fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+        _draw_status_bar(renderer, self.fonts, self.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(self.fonts)), alpha=255)
+                          # alpha forced to 255 (not status_alpha()) --
+                          # this is a single forced frame drawn right
+                          # before a blocking operation, not part of the
+                          # normal per-frame redraw loop, so a 120ms
+                          # fade-in would just make it invisible for the
+                          # one frame that matters.
+        SDL.SDL_RenderPresent(renderer)
+        SDL.SDL_PumpEvents()
+        SDL.SDL_Delay(50)
+
     def _ensure_page_built(self, renderer=None):
         key = self.state.current_file
         if key == self._page_cache_key and self.state.current_anchor is None:
@@ -4473,6 +6688,7 @@ class App:
         _prev_styles_starts = getattr(self, "_styles_starts", [])
         _prev_styles_prefix_max_end = getattr(self, "_styles_prefix_max_end", [])
         _prev_para_spans = self._para_spans
+        _prev_para_spans_starts = getattr(self, "_para_spans_starts", [])
         _prev_visible_image_keys = self._visible_image_keys
         _prev_combined_spans = getattr(self, "_combined_spans", [])
         self._clear_text_texture_cache()
@@ -4499,12 +6715,39 @@ class App:
             # peek_raw_size() for those is well under
             # LARGE_PAGE_LOADING_THRESHOLD, so nothing changes for the
             # common case.
+            # v26.07.14.16 (Kaleb's request): pages between
+            # MEDIUM_PAGE_TOAST_THRESHOLD and LARGE_PAGE_LOADING_THRESHOLD
+            # don't warrant the full-screen "Opening page..." treatment,
+            # but real device timing (this project's own confirmed ~4.1x
+            # dev-to-device scaling) means they can still cost several
+            # real seconds with zero feedback otherwise -- exactly the
+            # gap Kaleb reported. Reuses the SAME toast mechanism every
+            # other status message in the app already uses (set_status +
+            # draw_reader()'s own status_msg check), just forced onto
+            # screen for one frame here, before the blocking parse, the
+            # same way the full-screen branch above forces its own frame.
+            # Renders whatever page is CURRENTLY on screen (the old one --
+            # self._lines/etc haven't been overwritten yet at this point)
+            # with the toast layered on top, exactly like the full-screen
+            # branch draws over whatever's there too.
             if renderer is not None:
                 peek_size = self.doc.peek_raw_size(self.state.current_file)
                 if peek_size > LARGE_PAGE_LOADING_THRESHOLD:
-                    _draw_large_page_loading_screen(renderer, self, message="Opening page...")
-                    SDL.SDL_RenderPresent(renderer)
-                    SDL.SDL_PumpEvents()
+                    # v26.07.14.18: was a full-screen takeover
+                    # (_draw_large_page_loading_screen()) -- changed to
+                    # the same toast the medium band uses, per Kaleb's
+                    # request. See _show_pre_parse_toast()'s own
+                    # docstring for the full reasoning.
+                    #
+                    # v26.07.14.19: message unified with the medium band
+                    # below -- the two bands used to be visually
+                    # DIFFERENT treatments (full-screen vs toast), so
+                    # different wording made sense; now that both are the
+                    # identical toast style, there was no real reason left
+                    # for them to say different things (Kaleb's question).
+                    self._show_pre_parse_toast(renderer, "Loading large chapter...")
+                elif peek_size > MEDIUM_PAGE_TOAST_THRESHOLD:
+                    self._show_pre_parse_toast(renderer, "Loading large chapter...")
             try:
                 text, links, images, anchors, styles, para_spans = self.doc.get_page(self.state.current_file)
                 # v0.1.63: a page that parses to zero text AND zero images
@@ -4561,6 +6804,11 @@ class App:
             prefix_max_end.append(running_max)
         self._styles_prefix_max_end = prefix_max_end
         self._para_spans = para_spans
+        # v26.07.13.09: parallel sorted-starts list for draw_reader()'s
+        # bisect lookup -- para_spans is already produced in document
+        # order (confirmed: strictly increasing .start), so this is a
+        # cheap O(n) pass, not a sort.
+        self._para_spans_starts = [ps.start for ps in para_spans]
         self._visible_image_keys = {self._img_key(im.src) for im in images}
         # v0.1.110: eagerly kick off decode for THIS page's images the
         # instant they're known, instead of waiting for draw_reader()'s
@@ -4589,8 +6837,187 @@ class App:
 
         wrap_key = (key, self.fonts.size_index)
         _cached_wrap = self._wrapped_cache.get(wrap_key)
+        _page_is_complete = True  # v26.07.13.10: False only while a progressive
+                                   # wrap is still in progress (see below) --
+                                   # gates the finalization tail (page_cache_key
+                                   # assignment, anchor/scroll restore) so it
+                                   # only ever runs once the page is ACTUALLY
+                                   # fully built, never on a partial frame.
+        _resolved = False
         if _cached_wrap is not None:
             lines, line_span_map, line_style_runs, line_abs_starts = _cached_wrap
+            _resolved = True
+        elif self._live_warmload_key == wrap_key:
+            # v26.07.13.15: continuing an already-started progressive
+            # warm load (see _start_warm_load()/_step_warm_load()'s
+            # docstrings). A bad/old-format cache file surfaces as
+            # state['error'] once the background thread finishes --
+            # abandon it and fall through to a normal cold wrap in this
+            # SAME frame (never retry warm-loading a file already known
+            # bad, which would otherwise loop forever).
+            _finished = self._step_warm_load(self._live_warmload_state)
+            if _finished and self._live_warmload_state["error"]:
+                self._live_warmload_state = None
+                self._live_warmload_key = None
+            else:
+                lines = self._live_warmload_state["lines"]
+                line_span_map = self._live_warmload_state["line_span_map"]
+                line_style_runs = self._live_warmload_state["line_style_runs"]
+                line_abs_starts = self._live_warmload_state["line_abs_starts"]
+                _page_is_complete = _finished
+                if _finished:
+                    result = (lines, line_span_map, line_style_runs, line_abs_starts)
+                    self._wrapped_cache_put(wrap_key, result)
+                    self._live_warmload_state = None
+                    self._live_warmload_key = None
+                _resolved = True
+
+        if not _resolved and renderer is not None and len(text) > LARGE_PAGE_LOADING_THRESHOLD:
+            # v26.07.13.15: a disk cache file exists for this exact
+            # (book, page, font size) from a PREVIOUS session/visit --
+            # warm-load it progressively instead of a cold wrap. Real
+            # measured cost on Kaleb's device for Enjoy Life Forever's
+            # Track Your Bible Reading: ~7-8s. Before this, that entire
+            # duration was a hard input freeze inside a wait-loop (see
+            # the now-unused _load_wrap_from_disk_with_progress()'s own
+            # docstring) even though the actual read already ran on a
+            # background thread -- the freeze was the CALLING code
+            # blocking on it, not the read itself needing the main
+            # thread. This starts the SAME kind of background read, but
+            # the calling code (here) just polls it once per frame
+            # instead of waiting inline, so input stays responsive and
+            # the page visibly grows exactly like a cold wrap does.
+            #
+            # Only for files over WARM_CACHE_LOADING_THRESHOLD -- a
+            # small extreme-page cache (e.g. Daily Text's schedule page)
+            # reads in well under a frame either way, so spinning up a
+            # background thread and polling it across multiple frames
+            # would only ADD latency for no benefit. Those still go
+            # through the plain synchronous _load_wrap_from_disk() a few
+            # lines below, unchanged from before.
+            _cache_path = self._wrap_cache_path(key)
+            if os.path.isfile(_cache_path):
+                try:
+                    _cache_size = os.path.getsize(_cache_path)
+                except OSError:
+                    _cache_size = 0
+                if _cache_size > WARM_CACHE_LOADING_THRESHOLD:
+                    self._live_warmload_state = self._start_warm_load(key)
+                    if self._live_warmload_state is not None:
+                        self._live_warmload_key = wrap_key
+                        # v26.07.13.25 BUG FIX (Kaleb's report: warm-load
+                        # and cold-wrap both "stay blank until a button
+                        # is pressed" even with the idle-redraw fix in
+                        # place). Root cause: self._last_build_render_time
+                        # is a single, whole-app timestamp, not scoped to
+                        # a particular page's build -- if ANY recent
+                        # activity (even from a totally different,
+                        # already-finished page) had updated it within
+                        # the last READER_BUILD_RENDER_THROTTLE seconds,
+                        # the main loop's throttle check wrongly treated
+                        # THIS brand-new build's very first redraws as
+                        # "already rendered recently" and skipped the
+                        # actual visible render entirely for that whole
+                        # window -- confirmed directly: self._lines was
+                        # growing correctly in the background the whole
+                        # time, the screen just never got a real present
+                        # to show it, until either the throttle window
+                        # elapsed or a real button press (which bypasses
+                        # the throttle) forced one through. Resetting
+                        # this to 0 here guarantees the NEXT check (in
+                        # the main loop) is always time.time() minus a
+                        # huge number -- i.e. always over the throttle --
+                        # so this new page's first real content is never
+                        # withheld by unrelated prior timing.
+                        self._last_build_render_time = 0.0
+                        lines = self._live_warmload_state["lines"]
+                        line_span_map = self._live_warmload_state["line_span_map"]
+                        line_style_runs = self._live_warmload_state["line_style_runs"]
+                        line_abs_starts = self._live_warmload_state["line_abs_starts"]
+                        _page_is_complete = False
+                        _resolved = True
+                    # else: _start_warm_load() somehow failed despite
+                    # isfile() being True (rare race/permission issue) --
+                    # _resolved stays False, falls through to the cold-
+                    # wrap branch below exactly as if there were no
+                    # cache file at all.
+
+        if _resolved:
+            pass
+        elif renderer is not None and len(text) > LARGE_PAGE_LOADING_THRESHOLD:
+            # v26.07.13.10 PROTOTYPE: progressive/chunked wrap. Same
+            # threshold that used to gate the old blocking progress-bar
+            # wrap now gates this instead -- pages small enough to wrap
+            # in well under a second never reach this branch at all (see
+            # the plain `else` below, unchanged from before).
+            #
+            # If this is a DIFFERENT page than whatever live wrap was
+            # already in progress (or there wasn't one), start fresh --
+            # the old one, if any, is simply abandoned here: it's never
+            # written to either cache, so a later revisit just restarts
+            # cleanly, identical in effect to the old abort-and-discard
+            # path but reached via ordinary navigation instead of a
+            # special exception.
+            if self._live_wrap_key != wrap_key:
+                self._live_wrap_state = self._wrap_chunked_start(text, combined, avail_w)
+                self._live_wrap_key = wrap_key
+                # v26.07.13.25 BUG FIX: see the matching comment at the
+                # warm-load start site above -- same fix, same reason.
+                # Without this, a fresh cold-wrap's very first redraws
+                # could be wrongly throttled by leftover render timing
+                # from unrelated prior activity, leaving the screen
+                # blank (despite self._lines correctly growing in the
+                # background) until either the throttle window elapsed
+                # or a real button press forced a redraw through.
+                self._last_build_render_time = 0.0
+                # v26.07.13.23 EXPERIMENTAL (Kaleb's proposal, after real
+                # on-device numbers: 50s scaled-estimate vs an ACTUAL
+                # measured 3:50-4:17 for a genuinely cold Track Your
+                # Bible Reading build, even after the v26.07.13.20-22
+                # render-throttle fixes -- a real, still-unexplained gap
+                # this sandbox's dev hardware couldn't reproduce or
+                # fully account for, even after directly profiling and
+                # ruling out both the chunking mechanism itself and
+                # link/anchor count as causes on THIS hardware). Records
+                # when this page's build actually started, so the step
+                # below can detect "still not done after N real
+                # seconds" and switch strategies.
+                self._live_wrap_started_at = time.perf_counter()
+
+            # Slice-size ramp (v26.07.14.03, superseded the older
+            # COLD_WRAP_RESPONSIVE_SECONDS fixed-window switch; reshaped
+            # into a smooth quadratic curve in v26.07.16.13 -- see
+            # cold_wrap_slice_budget()'s module-level docstring/comments
+            # for the full story): the per-slice time budget grows the
+            # longer it's been since the last REAL button press, and
+            # resets back to the small/responsive value the instant real
+            # input happens (app._last_input_time, set by the main loop)
+            # -- so responsiveness recovers whenever it's actually
+            # needed, not just during one fixed window at the very start
+            # of a build. Reuses _wrap_chunked_step()'s existing
+            # time_budget cutoff (checked between paragraphs); no
+            # separate wrap logic.
+            _since_input = time.perf_counter() - getattr(self, "_last_input_time", 0.0)
+            _step_budget = cold_wrap_slice_budget(_since_input)
+            # v26.07.13.10: one bounded slice per call -- see
+            # _wrap_chunked_step()'s docstring for the time_budget/
+            # per-paragraph checkpoint reasoning and the known rare-
+            # large-paragraph outlier case.
+            done, self._live_wrap_state = self._wrap_chunked_step(
+                self._live_wrap_state, time_budget=_step_budget)
+            lines = self._live_wrap_state["lines"]
+            line_span_map = self._live_wrap_state["line_span_map"]
+            line_style_runs = self._live_wrap_state["line_style_runs"]
+            line_abs_starts = self._live_wrap_state["line_abs_starts"]
+            _page_is_complete = done
+
+            if done:
+                result = (lines, line_span_map, line_style_runs, line_abs_starts)
+                self._wrapped_cache_put(wrap_key, result)
+                if len(text) > PRERENDER_THRESHOLD:
+                    self._save_wrap_to_disk(key, result)
+                self._live_wrap_state = None
+                self._live_wrap_key = None
         else:
             # v26.07.09.19: chunked progress counter for the loading
             # screen, added after Kaleb's on-device test (real numbers:
@@ -4604,6 +7031,13 @@ class App:
             # even though input still can't be ACTED on until the page
             # data is ready (same SDL_ttf-off-main-thread constraint as
             # before -- see the v26.07.09.17 comment above).
+            #
+            # v26.07.13.10: this branch is now ONLY reached for pages
+            # under LARGE_PAGE_LOADING_THRESHOLD (the progressive path
+            # above handles everything over it) -- so progress_cb here
+            # is effectively unused in practice (small pages wrap in
+            # well under one throttle interval) but left fully intact,
+            # abort mechanism included, as an untouched fallback.
             progress_cb = None
             if renderer is not None and len(text) > LARGE_PAGE_LOADING_THRESHOLD:
                 _last_update = [0.0]
@@ -4647,6 +7081,7 @@ class App:
                 self._styles_starts = _prev_styles_starts
                 self._styles_prefix_max_end = _prev_styles_prefix_max_end
                 self._para_spans = _prev_para_spans
+                self._para_spans_starts = _prev_para_spans_starts
                 self._visible_image_keys = _prev_visible_image_keys
                 self._combined_spans = _prev_combined_spans
                 self._handle_wrap_abort(key)
@@ -4704,10 +7139,100 @@ class App:
         # and no way for it to drift out of sync with the values
         # everything else on the page already relies on.
         self._line_abs_offsets = line_abs_starts
+
+        if not _page_is_complete:
+            # v26.07.13.17 BUG FIX (Kaleb's report: navigating to an
+            # anchor deep in Track Your Bible Reading -- e.g. "Job" --
+            # in cold-load mode took 5-6 MINUTES on real device, far
+            # beyond anything profiled). Root cause: two compounding
+            # bugs in the block below.
+            # (1) This used a linear `for li, off in enumerate(...)`
+            #     scan instead of bisect, even though line_abs_starts is
+            #     already sorted ascending by construction -- O(n)
+            #     instead of O(log n).
+            # (2) Far worse: self.state.current_anchor/current_char_off
+            #     were deliberately left uncleared here (see the old
+            #     comment above, preserved in spirit below) so the
+            #     completion path could "redundantly reconfirm" the
+            #     scroll position later -- but that also meant this
+            #     ENTIRE block, including the linear scan, RE-RAN ON
+            #     EVERY SINGLE FRAME from the moment the target became
+            #     reachable until the page fully finished, each time
+            #     over an ever-growing line_abs_starts. For a deep
+            #     anchor reached partway through a 66,869-line page,
+            #     that's a compounding, ever-more-expensive scan
+            #     repeated across potentially hundreds of frames -- an
+            #     effective O(n^2)-shaped cost, not the one-time O(log n)
+            #     lookup this was supposed to be. This also silently
+            #     fought any manual scrolling the person tried to do in
+            #     that same window, resetting it back to the anchor
+            #     target every frame.
+            # Fix: bisect (matching every other sorted-offset lookup in
+            # this file -- style_at(), _para_spans_starts, etc.), AND
+            # clear current_anchor/current_char_off immediately once
+            # applied, so this runs AT MOST ONCE per navigation instead
+            # of once per frame for the rest of the build. The
+            # completion path below still handles the (now rarer) case
+            # where the target ISN'T covered until the page is fully
+            # done -- unaffected by this fix.
+            line_h, body_rows = _reader_body_layout(self.fonts)[1:3]
+            _char_off = None
+            _is_bookmark = False
+            if self.state.current_char_off is not None:
+                _char_off = self.state.current_char_off
+                _is_bookmark = True
+            elif self.state.current_anchor and self.state.current_anchor in anchors:
+                _char_off = anchors[self.state.current_anchor]
+            if _char_off is not None and line_abs_starts and line_abs_starts[-1] >= _char_off:
+                _target_line = max(0, bisect.bisect_right(line_abs_starts, _char_off) - 1)
+                if _is_bookmark:
+                    self.scroll = max(0, _target_line - 2)
+                elif _target_line >= body_rows:
+                    self.scroll = max(0, _target_line - 2)
+                else:
+                    self.scroll = 0
+                self.scroll = min(self.scroll, self._max_scroll(line_h, body_rows))
+                # v26.07.13.17: persist the resolved offset, keyed to
+                # THIS (page, size) combo, so the completion tail below
+                # can still restore selected_span to the right link once
+                # the page fully finishes -- see target_char_off's use
+                # further down. Keyed rather than a bare attribute so an
+                # abandoned navigation on a DIFFERENT page can never leak
+                # into this one's (or a later page's) span restoration.
+                self._pending_target_char_off = _char_off
+                self._pending_target_key = wrap_key
+                self.state.current_anchor = None
+                self.state.current_char_off = None
+            # v26.07.13.10: a progressive wrap is still in progress for
+            # this page -- self._lines etc above already reflect
+            # everything built so far (draw_reader() can render it, and
+            # _max_scroll() already naturally clamps to what's
+            # available), but do NOT mark this page "built" yet
+            # (self._page_cache_key stays as it was) and do NOT run the
+            # anchor/bookmark scroll-restore logic below -- that logic
+            # assumes the full page (in particular, the complete
+            # line_abs_starts/anchors mapping) is available, which isn't
+            # true yet. Leaving self._page_cache_key unset for this key
+            # is exactly what makes _ensure_page_built() re-enter (its
+            # own top-of-function guard only skips when the key ALREADY
+            # matches) and take another chunked step next frame, instead
+            # of getting stuck after the first partial slice.
+            return
+
         self._page_cache_key = key
 
         target_char_off = None
-        body_rows = _reader_body_layout(self.fonts)[2]
+        # v26.07.13.17: if the anchor/bookmark was already resolved
+        # early (progressive branch above, while this page was still
+        # building), current_anchor/current_char_off are already None
+        # by now -- pick up the persisted value instead, but ONLY if it
+        # was recorded for THIS exact (page, size), never a stale one
+        # left over from a different/abandoned page.
+        if getattr(self, "_pending_target_key", None) == wrap_key:
+            target_char_off = self._pending_target_char_off
+            self._pending_target_key = None
+            self._pending_target_char_off = None
+        line_h, body_rows = _reader_body_layout(self.fonts)[1:3]
         if self.state.current_char_off is not None:
             # v0.1.39: exact-position restore (bookmark/resume-reading).
             # Same line-search as the anchor path below, just driven by a
@@ -4779,7 +7304,7 @@ class App:
         # page_down()'s own formula -- target stays fully visible
         # (mathematically guaranteed for the last line), just at the
         # bottom of the screen instead of near the top.
-        self.scroll = min(self.scroll, max(0, len(self._lines) - body_rows))
+        self.scroll = min(self.scroll, self._max_scroll(line_h, body_rows))
         self.state.current_anchor = None
         self.state.current_char_off = None
         # v0.1.50: selected_span used to always reset to 0 (document-order
@@ -4812,6 +7337,23 @@ class App:
         for tex, w, h in self._text_texture_cache.values():
             SDL.SDL_DestroyTexture(tex)
         self._text_texture_cache.clear()
+
+    def _evict_text_texture_cache_if_needed(self):
+        """v26.07.15.18: bounds _text_texture_cache to
+        MAX_TEXT_TEXTURE_CACHE entries via LRU eviction, mirroring
+        _evict_image_textures_if_needed()'s pattern exactly. Without
+        this, _text_texture_cache only ever got a FULL clear on page/
+        font-size change (_clear_text_texture_cache() above) -- fine for
+        ordinary pages, but confirmed via real stress test to grow
+        without bound while staying on one extreme page: scrolling
+        linearly through the largest real page (~99,700 unique lines)
+        showed ~71MB RSS growth per 1000 scrolled lines with no
+        ceiling, which extrapolates to multiple GB on a page that size
+        -- far past the device's 1GB RAM. This caps it at a small fixed
+        number of textures regardless of how large the page is."""
+        while len(self._text_texture_cache) > self.MAX_TEXT_TEXTURE_CACHE:
+            _old_key, old_entry = self._text_texture_cache.popitem(last=False)  # evict least-recently-used
+            SDL.SDL_DestroyTexture(old_entry[0])
 
     def has_pending_image_updates(self):
         """True if any image on the current page is still decoding, so the
@@ -5018,33 +7560,66 @@ class App:
         error -- a corrupt or missing cache entry should just fall back
         to a normal (slower) wrap, never crash the app.
 
-        v26.07.10.20: unpacks the compact on-disk format
-        _save_wrap_to_disk() now writes -- see that method's docstring.
-        A pre-v26.07.10.20 cache file unpickles fine (it's still valid
-        pickle) but its first element is a LIST of lines, not a joined
-        string, so calling .split("\\n") on it raises AttributeError --
-        caught by the except below exactly like any other corrupt-cache
-        case, triggering one harmless rebuild+re-save instead of a
-        crash."""
+        v26.07.13.15: format changed again -- see WARM_CACHE_MAGIC's
+        module-level comment (chunked v2 instead of one single blob, so
+        the progressive warm-load path can grow the page as it reads).
+        This plain loader is only ever used for files UNDER
+        WARM_CACHE_LOADING_THRESHOLD (small enough that reading it all
+        synchronously in one go is already fast -- see the call site's
+        own comment), so it just reads every chunk in a straight loop
+        and reassembles the full result, no progress/threading needed. A
+        pre-v26.07.13.15 v1 file fails the magic-byte check below and
+        hits this same fail-soft path -- one harmless rebuild, not a
+        crash, same as every other format change before this one."""
         if not self._book_id:
             return None
         path = self._wrap_cache_path(key)
         if not os.path.isfile(path):
             return None
         try:
+            lines, line_span_map, line_style_runs, line_abs_starts = [], [], [], []
             with open(path, "rb") as f:
-                joined_lines, line_span_map, line_style_runs, packed_starts = pickle.load(f)
-            lines = joined_lines.split("\n")
-            arr = array.array("q")
-            arr.frombytes(packed_starts)
-            line_abs_starts = list(arr)
+                magic = f.read(len(WARM_CACHE_MAGIC))
+                if magic != WARM_CACHE_MAGIC:
+                    return None
+                total_bytes = f.read(8)
+                if len(total_bytes) < 8:
+                    return None
+                while True:
+                    len_bytes = f.read(8)
+                    if len(len_bytes) < 8:
+                        break
+                    chunk_len = struct.unpack("<Q", len_bytes)[0]
+                    chunk_bytes = f.read(chunk_len)
+                    if len(chunk_bytes) < chunk_len:
+                        return None
+                    joined, span_map, style_runs, packed_starts = pickle.loads(chunk_bytes)
+                    arr = array.array("q")
+                    arr.frombytes(packed_starts)
+                    lines.extend(joined.split("\n"))
+                    line_span_map.extend(span_map)
+                    line_style_runs.extend(style_runs)
+                    line_abs_starts.extend(arr)
             return lines, line_span_map, line_style_runs, line_abs_starts
         except Exception as e:
             _boot_log(f"wrap cache read failed for {path}: {e}\n")
             return None
 
     def _load_wrap_from_disk_with_progress(self, renderer, key):
-        """v26.07.11.03: shows a real live PERCENTAGE instead of an
+        """v26.07.13.15: no longer called by the real draw_reader() path
+        -- see _start_warm_load()/_step_warm_load() above, which replace
+        this with a genuinely progressive, input-responsive warm load
+        instead of this function's blocking wait-loop (found during a
+        full-app audit, Kaleb's own question: "is there no way to load
+        in while it's still loading?" -- there was, the read already ran
+        on a thread, but the CALLER blocked waiting for it anyway). Left
+        untouched below as a reference/fallback rather than deleted; it
+        also still assumes the v1 single-blob on-disk format, which
+        current cache files are no longer written in (see
+        WARM_CACHE_MAGIC), so it would need updating before it could be
+        reused as-is.
+
+        v26.07.11.03: shows a real live PERCENTAGE instead of an
         elapsed-seconds counter (Kaleb's request). The original
         v26.07.09.22 approach used elapsed seconds specifically because
         a single pickle.load(f) call has no natural chunk points -- for
@@ -5212,6 +7787,193 @@ class App:
             self._styles_starts = _saved_starts
             self._styles_prefix_max_end = _saved_prefix
 
+    # v26.07.13.11: _prerender_one_extreme_page() above is no longer
+    # called by the real draw_reader() path -- see _start_bg_prerender()/
+    # _step_bg_prerender() below, which replace it with the SAME
+    # chunked/progressive approach _ensure_page_built() already uses for
+    # the currently-displayed page (found during a full-app audit,
+    # Kaleb's request: the background L2/R2 queue was the one call site
+    # never converted when progressive wrapping was added, so it was
+    # still a full uninterrupted freeze whenever it fired). Left
+    # untouched above as a reference/fallback rather than deleted.
+
+    def _start_bg_prerender(self, href):
+        """Begin a chunked background prerender of `href` (popped from
+        app._extreme_page_queue by the caller). Sets up
+        self._bg_wrap_state/_bg_wrap_href; actual stepping happens in
+        _step_bg_prerender(), called once per frame thereafter. Mirrors
+        _prerender_one_extreme_page()'s original get_page()/style setup
+        exactly -- only the wrap call itself is now chunked instead of a
+        single blocking call."""
+        try:
+            text, links, images, anchors, styles, para_spans = self.doc.get_page(href)
+        except Exception as e:
+            _boot_log(f"prerender scan: could not load {href}: {e}\n")
+            return
+
+        # v26.07.10.24: see _prerender_one_extreme_page()'s original
+        # comment on why this must happen before any cache-put.
+        self._extreme_hrefs.add(href)
+
+        styles_starts = [sp.start for sp in styles]
+        running_max = 0
+        prefix_max_end = []
+        for sp in styles:
+            running_max = max(running_max, sp.end)
+            prefix_max_end.append(running_max)
+
+        combined = [("link", i, l.start, l.end) for i, l in enumerate(links)]
+        combined += [("image", i, im.start, im.end) for i, im in enumerate(images)]
+        avail_w = SW - _sx(40)
+
+        # v26.07.13.11: temporarily install this page's styles to build
+        # the initial chunked-wrap state (char_span/span-sorting setup
+        # in _wrap_chunked_start() doesn't itself touch self._styles, but
+        # this keeps the swap-in/swap-out pattern uniform with
+        # _step_bg_prerender() below, and costs nothing extra).
+        _saved_styles = self._styles
+        _saved_starts = self._styles_starts
+        _saved_prefix = self._styles_prefix_max_end
+        try:
+            self._styles = styles
+            self._styles_starts = styles_starts
+            self._styles_prefix_max_end = prefix_max_end
+            state = self._wrap_chunked_start(text, combined, avail_w)
+        finally:
+            self._styles = _saved_styles
+            self._styles_starts = _saved_starts
+            self._styles_prefix_max_end = _saved_prefix
+
+        state["_bg_styles"] = styles
+        state["_bg_styles_starts"] = styles_starts
+        state["_bg_styles_prefix_max_end"] = prefix_max_end
+        self._bg_wrap_state = state
+        self._bg_wrap_href = href
+
+    def _step_bg_prerender(self, time_budget=None):
+        """One bounded slice of whatever background prerender is in
+        progress (self._bg_wrap_state/_bg_wrap_href). Called once per
+        frame from draw_reader() alongside the CURRENTLY-DISPLAYED page's
+        own progressive step (_ensure_page_built()) -- the two are
+        completely independent: this never touches self._lines/etc (the
+        on-screen page's data), and the on-screen page's own step never
+        touches self._bg_wrap_state.
+
+        Swaps self._styles/_styles_starts/_styles_prefix_max_end to this
+        BACKGROUND page's values for the duration of this ONE step call
+        only, then restores whatever the CURRENTLY-DISPLAYED page had
+        immediately after -- safe because those three attributes are
+        only ever read DURING a wrap call itself (by
+        _compute_line_style_runs()/style_at()/_word_width()), never by
+        the actual on-screen rendering code (which reads the already-
+        computed self._line_style_runs, not self._styles directly) --
+        confirmed by grepping every call site during this audit. So a
+        several-frame-long background wrap can safely interleave with
+        the foreground page rendering every one of those frames without
+        the two ever seeing each other's styles.
+
+        v26.07.14.04 (Kaleb's request, extending the SAME adaptive ramp
+        already applied to the foreground cold-wrap -- see
+        _ensure_page_built()'s cold-wrap branch): when time_budget isn't
+        given explicitly, this now computes the same time-since-last-
+        real-input ramp instead of the old fixed 12ms every call. This
+        was the one place tonight's tuning never reached -- background
+        prerendering runs the EXACT SAME wrap algorithm, on the SAME
+        main thread, just for a page that isn't currently on screen, so
+        it carries the identical per-slice cost this whole session has
+        been fighting. The reasoning fits especially well here: while
+        the person is actively reading/scrolling elsewhere (recent
+        input), keep background slices small so they can't delay the
+        FOREGROUND page's own responsiveness; the longer they've been
+        idle, the more room there is to let background prerendering use
+        bigger, more efficient slices. Still accepts an explicit
+        time_budget override for tests/callers that want a fixed value.
+
+        Returns True once this page is fully done (saved to disk cache,
+        state cleared) so the caller can immediately start the next
+        queued page on the same frame if there is one -- continuous
+        draining while the person just keeps reading elsewhere, not
+        gated on another L2/R2 press per page the way the old one-shot
+        _prerender_one_extreme_page() was."""
+        if time_budget is None:
+            _since_input = time.perf_counter() - getattr(self, "_last_input_time", 0.0)
+            time_budget = cold_wrap_slice_budget(_since_input)
+        state = self._bg_wrap_state
+        href = self._bg_wrap_href
+        _saved_styles = self._styles
+        _saved_starts = self._styles_starts
+        _saved_prefix = self._styles_prefix_max_end
+        try:
+            self._styles = state["_bg_styles"]
+            self._styles_starts = state["_bg_styles_starts"]
+            self._styles_prefix_max_end = state["_bg_styles_prefix_max_end"]
+            done, state = self._wrap_chunked_step(state, time_budget=time_budget)
+        finally:
+            self._styles = _saved_styles
+            self._styles_starts = _saved_starts
+            self._styles_prefix_max_end = _saved_prefix
+
+        self._bg_wrap_state = state
+        if not done:
+            return False
+
+        result = (state["lines"], state["line_span_map"],
+                  state["line_style_runs"], state["line_abs_starts"])
+        self._save_wrap_to_disk(href, result)
+        self._bg_wrap_state = None
+        self._bg_wrap_href = None
+        return True
+
+    def advance_progressive_builds(self, renderer):
+        """v26.07.13.20 (Kaleb's report: total cold-build time on real
+        device, 4:17 for Track Your Bible Reading, was much worse than
+        the ~50s dev-hardware-scaled estimate). Suspected cause: the
+        v26.07.13.19 idle-fix made the main loop redraw continuously at
+        ~60fps while ANY build is in progress -- correctly fixing "never
+        finishes without button-mashing", but every one of those frames
+        also did a FULL visible-content render (all on-screen lines,
+        hint bar, toast) via draw_reader(), not just a wrap/warmload/
+        bg-prerender step. That's real per-frame work competing with the
+        wrap's own time budget on this single-threaded app, for the
+        entire build duration -- plausibly explaining a meaningful chunk
+        of the gap between the dev estimate and the real 4:17.
+
+        This method duplicates ONLY the state-advancing half of
+        draw_reader() -- the background-queue step (see
+        _step_bg_prerender()'s docstring) and _ensure_page_built()'s own
+        chunk-step -- with NO visible rendering at all. The main loop
+        calls this on every iteration while a build is active, and only
+        calls the full draw_reader() (real rendering + present) at a
+        throttled rate (see READER_BUILD_RENDER_THROTTLE) -- so nearly
+        all of each real second goes toward actual wrap/warmload/
+        bg-prerender progress instead of repeatedly redrawing content
+        that mostly hasn't changed since the last visible frame anyway.
+
+        Deliberately kept as a small, separate duplicate of
+        draw_reader()'s existing logic rather than restructuring
+        draw_reader() itself to share this exact code -- lower risk this
+        late in an already-large session; the two are simple enough
+        (one elif block, one function call) that keeping them in sync by
+        eye is safe, and any drift would fail this session's existing
+        regression suite immediately (both paths produce identical
+        self._lines/etc either way)."""
+        if (self.screen == SCREEN_READER
+                and (self._bg_wrap_state is not None
+                     or (self._extreme_page_queue and self._chapter_nav_pending))):
+            if self._chapter_nav_pending:
+                self._chapter_nav_pending = False
+                if self._bg_wrap_state is None and self._extreme_page_queue:
+                    href = self._extreme_page_queue.pop(0)
+                    if not os.path.isfile(self._wrap_cache_path(href)):
+                        self._start_bg_prerender(href)
+            if self._bg_wrap_state is not None:
+                finished = self._step_bg_prerender()
+                if finished and self._extreme_page_queue:
+                    href = self._extreme_page_queue.pop(0)
+                    if not os.path.isfile(self._wrap_cache_path(href)):
+                        self._start_bg_prerender(href)
+        self._ensure_page_built(renderer)
+
     def _prerender_extreme_pages_scan(self, expected_book_id=None):
         """v26.07.09.21: finds every spine file whose text exceeds
         PRERENDER_THRESHOLD and doesn't already have a disk wrap-cache
@@ -5320,19 +8082,137 @@ class App:
         before this change fail the new load path's assumptions and hit
         the existing fail-soft except-clause below/in
         _load_wrap_from_disk() -- a harmless one-time rebuild+re-save,
-        not a crash, same as any other corrupt-cache case."""
+        not a crash, same as any other corrupt-cache case.
+
+        v26.07.13.07 TRIED zlib-compressing this blob before writing --
+        see WARM_CACHE_LOADING_THRESHOLD's module-level comment for why
+        it was reverted in v26.07.13.08 (real on-device warm-open got
+        slower, not faster). This function is back to plain pickle,
+        exactly as it was in v26.07.13.06.
+
+        v26.07.13.15: format changed from one single pickle blob to a
+        sequence of length-prefixed chunks (WARM_CACHE_MAGIC header,
+        then repeated [8-byte length][pickled chunk] pairs until EOF,
+        each chunk covering WARM_LOAD_CHUNK_LINES lines) -- see
+        _start_warm_load()/_step_warm_load()'s docstrings for why. Old
+        v1 single-blob files fail the new magic-byte check on read and
+        hit the same fail-soft rebuild path as any other corrupt/old-
+        format cache -- harmless, not a crash."""
         if not self._book_id:
             return
         try:
             os.makedirs(WRAP_CACHE_DIR, exist_ok=True)
             path = self._wrap_cache_path(key)
             lines, line_span_map, line_style_runs, line_abs_starts = result
-            packed_starts = array.array("q", line_abs_starts).tobytes()
-            compact = ("\n".join(lines), line_span_map, line_style_runs, packed_starts)
+            n = len(lines)
+            # v26.07.13.31: scale chunk size to the page's actual length
+            # instead of using WARM_LOAD_CHUNK_LINES as a flat size --
+            # see WARM_LOAD_MIN_CHUNKS's module-level comment for why a
+            # fixed size alone broke progressive visibility for pages
+            # smaller than it. WARM_LOAD_CHUNK_LINES is now the CEILING
+            # (still caps chunk size for huge pages like Track Your
+            # Bible Reading, preserving that fewer-chunks win), while
+            # WARM_LOAD_MIN_CHUNKS guarantees real chunking still happens
+            # for smaller pages.
+            _chunk_size = min(WARM_LOAD_CHUNK_LINES,
+                               max(WARM_LOAD_MIN_CHUNK_LINES, n // WARM_LOAD_MIN_CHUNKS))
             with open(path, "wb") as f:
-                pickle.dump(compact, f, protocol=pickle.HIGHEST_PROTOCOL)
+                f.write(WARM_CACHE_MAGIC)
+                f.write(struct.pack("<Q", n))
+                for start in range(0, n, _chunk_size):
+                    end = min(n, start + _chunk_size)
+                    packed_starts = array.array("q", line_abs_starts[start:end]).tobytes()
+                    chunk = ("\n".join(lines[start:end]),
+                             line_span_map[start:end],
+                             line_style_runs[start:end],
+                             packed_starts)
+                    chunk_bytes = pickle.dumps(chunk, protocol=pickle.HIGHEST_PROTOCOL)
+                    f.write(struct.pack("<Q", len(chunk_bytes)))
+                    f.write(chunk_bytes)
         except Exception as e:
             _boot_log(f"wrap cache write failed for {key}: {e}\n")
+
+    def _start_warm_load(self, key):
+        """v26.07.13.15: begin a progressive, background-thread warm load
+        of `key`'s on-disk wrap-cache file (format v2 -- see
+        WARM_CACHE_MAGIC's module-level comment). Returns a state dict
+        for _step_warm_load() to poll once per frame, or None if there's
+        no cache file (or it's unreadable/old-format, in which case the
+        caller falls back to a normal cold wrap exactly as if no cache
+        existed at all).
+
+        Unlike the cold-wrap chunking (_wrap_chunked_start()/_step()),
+        this genuinely runs on a background thread -- disk I/O and
+        pickle.loads() never touch SDL_ttf/FreeType, so there's no
+        thread-safety concern here at all (see this feature's own notes
+        for why the OLD _load_wrap_from_disk_with_progress() already
+        used a thread for the read, but then blocked the calling code in
+        a wait-loop anyway, defeating the purpose). state['lines'] etc
+        are extended in place by the background thread as each chunk is
+        read+unpickled -- safe to read their current length/content from
+        the main thread at any time (CPython's GIL makes list.extend()
+        atomic enough that the main thread never sees a torn/partial
+        chunk, only "N chunks appended so far, atomically each")."""
+        path = self._wrap_cache_path(key)
+        if not self._book_id or not os.path.isfile(path):
+            return None
+        state = {
+            "lines": [], "line_span_map": [], "line_style_runs": [], "line_abs_starts": [],
+            "done": False, "error": False, "total_lines": 0,
+        }
+
+        def _do_load():
+            try:
+                with open(path, "rb") as f:
+                    magic = f.read(len(WARM_CACHE_MAGIC))
+                    if magic != WARM_CACHE_MAGIC:
+                        state["error"] = True
+                        return
+                    total_bytes = f.read(8)
+                    if len(total_bytes) < 8:
+                        state["error"] = True
+                        return
+                    state["total_lines"] = struct.unpack("<Q", total_bytes)[0]
+                    while True:
+                        len_bytes = f.read(8)
+                        if len(len_bytes) < 8:
+                            break
+                        chunk_len = struct.unpack("<Q", len_bytes)[0]
+                        chunk_bytes = f.read(chunk_len)
+                        if len(chunk_bytes) < chunk_len:
+                            state["error"] = True
+                            break
+                        joined, span_map, style_runs, packed_starts = pickle.loads(chunk_bytes)
+                        arr = array.array("q")
+                        arr.frombytes(packed_starts)
+                        state["lines"].extend(joined.split("\n"))
+                        state["line_span_map"].extend(span_map)
+                        state["line_style_runs"].extend(style_runs)
+                        state["line_abs_starts"].extend(arr)
+            except Exception as e:
+                _boot_log(f"warm load failed for {path}: {e}\n")
+                state["error"] = True
+            finally:
+                state["done"] = True
+
+        t = threading.Thread(target=_do_load, daemon=True)
+        state["_thread"] = t
+        t.start()
+        return state
+
+    def _step_warm_load(self, state):
+        """v26.07.13.15: called once per frame while a warm load is in
+        progress -- purely a non-blocking poll (checks state['done'],
+        does no work itself; the actual reading happens on the
+        background thread state['_thread'] started by
+        _start_warm_load()). Returns True once finished (successfully or
+        not -- check state['error'] to tell which). Deliberately does
+        NOT call state['_thread'].join() -- that would block waiting for
+        the thread exactly like the old code did; state['done'] being
+        True already means the thread set it as its very last action
+        before returning, so by the time this observes it, the thread's
+        work is complete and its data is safe to read."""
+        return state["done"]
 
     def _prefetch_adjacent_chapters(self):
         """Background-parse the prev and next chapter files into
@@ -5557,6 +8437,7 @@ class App:
             if self.doc is not None and self._book_id else None)
         self._storage_orphan_count = len(orphaned_bookmark_book_paths())
         self._storage_backups = list_bookmark_backups()
+        self._storage_theme_backups = list_custom_theme_backups()
 
     def _measure_words(self, para):
         """Split a paragraph into words plus each word's character offset
@@ -5729,7 +8610,24 @@ class App:
         into the hot wrap-time paths (_word_width, _force_break_word)
         where the same short strings repeat thousands of times; one-off
         UI text (hint bars, menu labels) gets no benefit from memoizing
-        and isn't worth the extra dict overhead there."""
+        and isn't worth the extra dict overhead there.
+
+        v26.07.16.11-EXPERIMENT (Kaleb's request, NOT kept -- reverted
+        same session, no version bump since net effect is a no-op):
+        tried a
+        nested dict[id(font)][sub] here instead of a single
+        dict[(id(font), sub)] tuple key, on the theory that avoiding a
+        per-lookup tuple allocation + combined hash would meaningfully
+        cut this cache layer's ~4.3s share of the 9.3s dev-hardware cold
+        wrap (real profile against "Track Your Bible Reading", only
+        ~1s of which is actual FreeType work). Real A/B timing (3 runs
+        each, same harness, alternating): nested averaged 9.04s, tuple
+        averaged 8.88s -- tuple was, if anything, slightly FASTER, not
+        slower. CPython's tuple hash for (int, str) is already cheap
+        enough that the theorized saving didn't materialize, and the
+        nested form pays its own small cost creating a new inner {}
+        dict on each font's first miss. Reverted -- keeping the simpler
+        single-dict form since it measured at least as fast."""
         key = (id(font), sub)
         cache = self._word_width_cache
         w = cache.get(key)
@@ -6159,6 +9057,183 @@ class App:
 
         return lines, line_span_map, line_style_runs, line_abs_starts
 
+    # ==========================================================
+    # PROTOTYPE ONLY -- v26.07.13.10 experiment, NOT wired into any real
+    # call site yet. Mechanically restructured from _wrap() above: same
+    # exact per-paragraph body, but the outer loop can pause after any
+    # paragraph and resume later via an explicit state dict, instead of
+    # always running to completion in one call. Being verified for
+    # byte-identical output against _wrap() before this goes anywhere
+    # near a real call site (_ensure_page_built()/_prerender_one_extreme_page()).
+    # ==========================================================
+    def _wrap_chunked_start(self, text, combined, avail_w_px):
+        """Phase 1 (one-time setup) -- identical to the setup at the top
+        of _wrap() above. Returns a state dict for _wrap_chunked_step()."""
+        text_len = len(text) or 1
+        span_ranges = [(s, e) for (_, _, s, e) in combined]
+        char_span = [-1] * len(text)
+        for i, (s, e) in enumerate(span_ranges):
+            for c in range(s, min(e, len(text))):
+                char_span[c] = i
+
+        _span_order = sorted(range(len(span_ranges)), key=lambda i: span_ranges[i][0])
+        span_starts_sorted = [span_ranges[i][0] for i in _span_order]
+        span_ranges_sorted = [span_ranges[i] for i in _span_order]
+        span_prefix_max_end = []
+        _running = 0
+        for _s, _e in span_ranges_sorted:
+            _running = max(_running, _e)
+            span_prefix_max_end.append(_running)
+        self._wrap_span_starts_sorted = span_starts_sorted
+        self._wrap_span_ranges_sorted = span_ranges_sorted
+        self._wrap_span_prefix_max_end = span_prefix_max_end
+
+        return {
+            "paragraphs": text.split("\n"),
+            "para_idx": 0,
+            "text_len": text_len,
+            "offset": 0,
+            "char_span": char_span,
+            "avail_w_px": avail_w_px,
+            "lines": [],
+            "line_span_map": [],
+            "line_style_runs": [],
+            "line_abs_starts": [],
+        }
+
+    def _wrap_chunked_step(self, state, time_budget=0.012, progress_cb=None):
+        """Phase 2 (resumable loop) -- processes paragraphs from
+        state['para_idx'] onward, checking elapsed wall-clock time after
+        each paragraph (same checkpoint _wrap()'s progress_cb call sits
+        at). Returns (done, state): done=False means time_budget was hit
+        -- call again with the same state to continue. done=True means
+        state['lines']/['line_span_map']/['line_style_runs']/
+        ['line_abs_starts'] hold the COMPLETE result, identical in shape
+        to _wrap()'s return tuple.
+
+        Per-paragraph body below is IDENTICAL to _wrap()'s -- copied
+        verbatim, only the outer loop's boundary (index-based resume
+        instead of a flat `for`) and offset threading (through `state`
+        instead of a plain local) changed. cur_words/cur_word_starts
+        stay per-paragraph locals exactly as before -- they never need
+        to survive a checkpoint since checkpoints only happen BETWEEN
+        paragraphs, never mid-paragraph (see this prototype's own
+        profiling notes on the rare large-paragraph outlier case)."""
+        t_start = time.perf_counter()
+        paragraphs = state["paragraphs"]
+        lines = state["lines"]
+        line_span_map = state["line_span_map"]
+        line_style_runs = state["line_style_runs"]
+        line_abs_starts = state["line_abs_starts"]
+        char_span = state["char_span"]
+        avail_w_px = state["avail_w_px"]
+        text_len = state["text_len"]
+        space_w = text_width(self.fonts.body, " ") or max(4, _sx(6))
+
+        while state["para_idx"] < len(paragraphs):
+            if time.perf_counter() - t_start > time_budget:
+                return False, state
+
+            para = paragraphs[state["para_idx"]]
+            offset = state["offset"]
+
+            if progress_cb is not None:
+                progress_cb(offset / text_len)
+
+            if para.strip() == "":
+                lines.append("")
+                line_span_map.append([])
+                line_style_runs.append([(0, 0, False, False)])
+                line_abs_starts.append(offset)
+                state["offset"] = offset + len(para) + 1
+                state["para_idx"] += 1
+                continue
+
+            words, starts = self._measure_words(para)
+            cur_words = []
+            cur_word_starts = []
+            cur_start_idx = None
+            cur_w = 0
+
+            def _flush_line(words_to_flush, word_starts_to_flush):
+                w_list = list(words_to_flush)
+                s_list = list(word_starts_to_flush)
+                style_runs_val = None
+                style_runs_line_text = None
+                while len(w_list) > 1:
+                    line_text = " ".join(w_list)
+                    abs_start = s_list[0]
+                    style_runs_val = self._compute_line_style_runs(line_text, abs_start)
+                    style_runs_line_text = line_text
+                    if not any(b or it for (_, _, b, it) in style_runs_val):
+                        break
+                    real_w = sum(
+                        self._measured_word_width(self.fonts.body_styled(b, it), line_text[rs:re_])
+                        for (rs, re_, b, it) in style_runs_val
+                    )
+                    if real_w <= avail_w_px:
+                        break
+                    w_list.pop()
+                    s_list.pop()
+                line_text = " ".join(w_list)
+                abs_start = s_list[0]
+                lines.append(line_text)
+                line_span_map.append(self._line_spans(line_text, abs_start, char_span))
+                if style_runs_val is None or style_runs_line_text != line_text:
+                    style_runs_val = self._compute_line_style_runs(line_text, abs_start)
+                line_style_runs.append(style_runs_val)
+                line_abs_starts.append(abs_start)
+                return words_to_flush[len(w_list):], word_starts_to_flush[len(w_list):]
+
+            for wi, w in enumerate(words):
+                if w == "":
+                    continue
+                w_w = self._word_width(w, offset + starts[wi])
+                if w_w > avail_w_px:
+                    if cur_words:
+                        leftover_w, leftover_s = _flush_line(cur_words, cur_word_starts)
+                        cur_words = leftover_w
+                        cur_word_starts = leftover_s
+                        if cur_words:
+                            cur_start_idx = wi
+                            cur_w = sum(self._word_width(ww, ss) for ww, ss in zip(cur_words, cur_word_starts))
+                            cur_w += space_w * (len(cur_words) - 1)
+                        else:
+                            cur_w = 0
+                    abs_w_start = offset + starts[wi]
+                    for cs, ce in self._force_break_word(w, abs_w_start, avail_w_px):
+                        chunk_text = w[cs:ce]
+                        abs_start = abs_w_start + cs
+                        lines.append(chunk_text)
+                        line_span_map.append(self._line_spans(chunk_text, abs_start, char_span))
+                        line_style_runs.append(self._compute_line_style_runs(chunk_text, abs_start))
+                        line_abs_starts.append(abs_start)
+                    continue
+                add_w = w_w + (space_w if cur_words else 0)
+                if cur_words and cur_w + add_w > avail_w_px - WRAP_SAFETY_MARGIN:
+                    leftover_w, leftover_s = _flush_line(cur_words, cur_word_starts)
+                    cur_words = leftover_w + [w]
+                    cur_word_starts = leftover_s + [offset + starts[wi]]
+                    cur_start_idx = wi
+                    cur_w = sum(self._word_width(ww, ss) for ww, ss in zip(cur_words, cur_word_starts))
+                    cur_w += space_w * (len(cur_words) - 1)
+                else:
+                    if not cur_words:
+                        cur_start_idx = wi
+                    cur_words.append(w)
+                    cur_word_starts.append(offset + starts[wi])
+                    cur_w += add_w
+
+            if cur_words:
+                leftover_w, leftover_s = _flush_line(cur_words, cur_word_starts)
+                if leftover_w:
+                    _flush_line(leftover_w, leftover_s)
+
+            state["offset"] = offset + len(para) + 1
+            state["para_idx"] += 1
+
+        return True, state
+
     def visible_span_indices(self, line_h, body_rows):
         """Which link/image spans are actually visible on screen right now.
         Must walk the SAME way draw_reader() does: an image consumes
@@ -6525,6 +9600,53 @@ class App:
         capped_rows = max(MIN_IMG_BOX_ROWS, body_rows - _cap_margin_rows(body_rows))
         return min(rows, capped_rows)
 
+    def _max_scroll(self, line_h, body_rows):
+        """The scroll index at which the final full screenful of this
+        page begins, in the same VISUAL ROW units _rows_for_li()/
+        _image_box_rows() already use -- NOT len(self._lines) - body_rows,
+        which is a raw line-index count and silently disagrees with
+        row cost the moment any line on the page costs more than 1 row
+        (an image; see _image_box_rows()). That mismatch let scroll get
+        clamped to 0 (or otherwise short) on pages where the LINE count
+        was small enough to fit under body_rows even though the real
+        RENDERED row count (image box rows + text lines) ran well past
+        it -- confirmed on a real book's pre-title scripture-citation
+        page (large cover image + a handful of short text lines below
+        it): at small Font Sizes the image's row cost stayed under
+        body_rows so total rows ~= total lines and nothing looked wrong,
+        but at 32pt the image alone cost 13 rows, pushing total rows to
+        25 against a 16-row screen -- the old `len(self._lines) -
+        body_rows` ceiling saw only 13 lines < 16 and clamped scroll to
+        0, permanently hiding the last ~9 rows of real content off the
+        bottom of the screen with no way to reach them.
+
+        Mirrors page_up()'s own backward walk (same row-cost loop,
+        same row>0 guard so a single oversized image is still always
+        included rather than skipped) but WITHOUT page_up()'s
+        content_drawn leading-blank-line skip -- this is a pure ceiling,
+        not a page-turn navigation, so it must agree exactly with
+        page_down()'s forward walk landing on the identical position
+        that a page_down() from here would return to (same guarantee
+        page_down()'s v0.1.154 fix already relies on -- see that
+        docstring). Every other scroll-clamping call site in the app
+        (anchor/bookmark-jump clamp, UP/DOWN/LEFT/RIGHT d-pad ceiling,
+        the %-complete indicator's denominator) now calls this instead
+        of hand-rolling the same broken line-count formula."""
+        n = len(self._lines)
+        if not n:
+            return 0
+        li = n - 1
+        row = 0
+        while li >= 0:
+            cost = self._rows_for_li(li, line_h, body_rows)
+            if row + cost > body_rows and row > 0:
+                break
+            row += cost
+            li -= 1
+            if row >= body_rows:
+                break
+        return max(0, li + 1)
+
     def _rows_for_li(self, li, line_h, body_rows):
         """Visual row cost of one _lines[] entry: this image's box-row
         reservation (see _image_box_rows()) for an image-only line, 1 for
@@ -6610,7 +9732,7 @@ class App:
         # page-turn always lands exactly on the final screenful -- text
         # or image flush to the bottom, nothing beyond it -- and pct
         # cannot exceed 100%.
-        self.scroll = min(li, max(0, n - body_rows))
+        self.scroll = min(li, self._max_scroll(line_h, body_rows))
 
     def page_up(self, line_h, body_rows):
         """Backward counterpart to page_down() -- walks li's downward
@@ -6863,7 +9985,100 @@ class App:
 
     def set_status(self, msg, duration=2.5):
         self.status_msg = msg
-        self.status_until = time.time() + duration
+        self.status_started = time.time()
+        self.status_until = self.status_started + duration
+
+    STATUS_FADE_IN_SECONDS = 0.12
+    STATUS_FADE_OUT_SECONDS = 0.25
+
+    def status_alpha(self):
+        """Soft fade-in/fade-out alpha (0-255) for the current status
+        toast, instead of an abrupt pop-in/pop-out (Kaleb's request).
+        Fade-in is short (120ms) since it's reacting to something the
+        person just did; fade-out is a bit longer (250ms) so the
+        message doesn't feel like it's snatched away."""
+        now = time.time()
+        if now < self.status_started:
+            return 255  # clock skew guard, shouldn't happen
+        fade_in_end = self.status_started + self.STATUS_FADE_IN_SECONDS
+        fade_out_start = self.status_until - self.STATUS_FADE_OUT_SECONDS
+        if now < fade_in_end:
+            frac = (now - self.status_started) / self.STATUS_FADE_IN_SECONDS
+            return max(0, min(255, int(255 * frac)))
+        if now > fade_out_start:
+            frac = (self.status_until - now) / self.STATUS_FADE_OUT_SECONDS
+            return max(0, min(255, int(255 * frac)))
+        return 255
+
+    SEL_ANIM_SNAP_EPSILON_PX = 0.5  # v26.07.16.09: below this distance,
+                                # the glide snaps exactly to target and
+                                # stops being marked "active" -- see
+                                # eased_sel_y()'s docstring for why this
+                                # is required (exponential decay never
+                                # exactly reaches 1.0 on its own).
+
+    def eased_sel_y(self, key, target_y, row_h, time_constant=0.05):
+        """Generic 'selection highlight glides to its new row' helper
+        (v26.07.16.07, extended to every list screen in v26.07.16.08),
+        keyed by a per-screen string (e.g. "library", "menu",
+        "chapters", "bookmarks", "storage") so every list screen shares
+        one mechanism instead of each needing its own dedicated pair of
+        attributes. Time-based (not frame-counted) so it converges in
+        the same ~2-3 frames' worth of wall-clock time regardless of
+        the actual redraw rate. Snaps instantly instead of gliding if
+        there's no prior position for this key yet, OR the jump is
+        larger than 3 row-heights (e.g. wrapping from the bottom of a
+        list back to the top, or switching to a different screen that
+        happens to reuse the same key) -- a slow sweep across the whole
+        list would read as lag, not polish.
+
+        v26.07.16.09 (Kaleb's request to double-check CPU/behavior):
+        also sets self._sel_anim_active = True whenever a call is still
+        meaningfully mid-glide. Non-reader screens only redraw when
+        app.dirty is set (a button press) -- WITHOUT this flag feeding
+        into the main loop's redraw-forcing checks (see main(), next to
+        the theme-transition/status-toast ones), a glide would only get
+        ONE frame to move on the triggering button press and then
+        freeze partway there until the next input, since nothing else
+        would mark the app dirty again while the glide is still
+        converging. This was a real correctness gap, not just a CPU
+        question -- caught by actually tracing through the redraw-
+        gating logic rather than assuming the isolated draw_*() pixel
+        tests (which call draw_library() etc. directly, bypassing
+        need_redraw entirely) proved real on-device behavior.
+
+        SECOND bug caught the same way: this uses exponential-decay
+        easing (each call moves a FRACTION of the remaining distance),
+        which mathematically never reaches the target EXACTLY --
+        frac only hits 1.0 in the degenerate case of a single very
+        long dt, never through normal repeated short-dt calls. Without
+        an explicit "close enough" snap, _sel_anim_active would never
+        naturally go quiet again once a glide started, meaning ONE
+        selection change would force full-screen redraws every frame
+        FOREVER afterward -- a real, meaningful, easily-missed CPU/
+        battery cost, not a cosmetic bug. Fixed by snapping to the
+        exact target (and not marking active) once within
+        SEL_ANIM_SNAP_EPSILON_PX pixels, rather than trusting frac to
+        ever literally equal 1.0."""
+        cur, last_t = self._sel_anim.get(key, (None, None))
+        snap_threshold = row_h * 3
+        if cur is None or abs(target_y - cur) > snap_threshold:
+            self._sel_anim[key] = (target_y, time.time())
+            return target_y
+        now = time.time()
+        dt = max(0.0, now - (last_t or now))
+        frac = 1.0 if time_constant <= 0 else min(1.0, dt / time_constant)
+        new_val = cur + (target_y - cur) * frac
+        if abs(target_y - new_val) < self.SEL_ANIM_SNAP_EPSILON_PX:
+            # close enough to be visually identical to the real target --
+            # snap exactly and DON'T mark active, so redraws stop being
+            # forced. Without this, exponential decay's asymptotic
+            # approach would keep _sel_anim_active True indefinitely.
+            new_val = target_y
+        else:
+            self._sel_anim_active = True
+        self._sel_anim[key] = (new_val, now)
+        return new_val
 
     def _current_char_offset(self):
         """Character offset of the first line currently on screen --
@@ -6919,6 +10134,10 @@ class App:
 # Rendering
 # ============================================================
 HINT_H_BASE = 40  # single-line height at the reference 18pt UI size
+HINT_BAR_MIN_PAD = 5  # v26.07.13.04: fixed top+bottom padding hint_height()
+    # shrinks toward (instead of the old flat HINT_H_BASE*0.35=14px) --
+    # see hint_height()'s own comment for why a small fixed pad, not a
+    # proportional one, is what actually gains body_rows lines.
 HINT_H_MAX_LINES = 3  # Absolute ceiling on hint bar lines. In practice the
                        # bar only uses 1-2 (see _hint_lines_needed()) --
                        # this is just the outer bound _hint_pt()'s font-
@@ -7343,7 +10562,37 @@ def hint_height(fonts, calibration=None):
     lines = _hint_lines_needed(fonts, calibration=calibration)
     if fonts and pt:
         font = fonts._get(pt)
-        # v0.1.133 BUG FIX: was TTF_FontHeight(font)/_SY alone -- draw_hint()
+        # v26.07.13.02: padding term below used to be a flat
+        # `HINT_H_BASE * 0.35` regardless of pt -- Kaleb noticed this
+        # meant the SAME ~14px of top/bottom breathing room got reserved
+        # at 14pt (42% of that bar's total height) as at 32pt (only 15%
+        # of a much taller bar). Not a bug (the anti-overlap invariant --
+        # every screen reserves the same height at a given Font Size --
+        # was never violated, and v0.1.153/v0.1.133 already fixed the
+        # real over/under-reservation bugs in this area).
+        # v26.07.13.03: first attempt scaled the flat 14px by pt/18 --
+        # made the percentage more consistent across sizes, but Kaleb's
+        # actual goal was more READING LINES, and body_rows is
+        # `body_h // line_h` (integer floor) -- so what matters isn't
+        # padding's PERCENTAGE, it's whether shrinking it crosses a
+        # whole line_h boundary. A proportional shrink at pt>=18pt (the
+        # HINT_H_BASE reference) only shrinks bar_h by a few px, which
+        # doesn't cross that boundary at most sizes and gains nothing,
+        # while STILL risking losing a row wherever it happened to
+        # shrink too far in the wrong direction (32pt did, see that
+        # changelog entry).
+        # v26.07.13.04: switched to a small FIXED minimum pad (8px total,
+        # 4 top + 4 bottom) instead of a proportional fraction. Verified
+        # via headless sim against every Font Size step's real content_h:
+        # this gains a full extra body_rows line at 14pt/18pt/21pt (their
+        # slack happens to cross the next line_h boundary) and is a
+        # provable no-op everywhere else (16pt/24pt/28pt/32pt can't gain
+        # a row even at 0px padding -- their slack never reaches the next
+        # line_h boundary -- so they just get a tighter, still-safe bar).
+        # Floored at min(old flat pad, MIN) so this can never exceed the
+        # original pad and can therefore never regress body_rows below
+        # what it was before this session touched hint_height() at all.
+
         # actually spaces lines using TTF_FontHeight(font) + _sy(6) (a 6px
         # per-line gap), so for a 3-line hint this formula under-reserved
         # by ~18px design-unit-equivalent, letting the real text block be
@@ -7357,7 +10606,7 @@ def hint_height(fonts, calibration=None):
         line_h_design = (TTF.TTF_FontHeight(font) + _sy(6)) / _SY
     else:
         line_h_design = HINT_H_BASE * 0.6
-    return line_h_design * lines + HINT_H_BASE * 0.35
+    return line_h_design * lines + min(HINT_H_BASE * 0.35, HINT_BAR_MIN_PAD)
 
 
 def _status_msg_lines(fonts, msg):
@@ -7379,7 +10628,7 @@ def _status_msg_lines(fonts, msg):
     return _wrap_hint_text_unbounded(fonts.ui_small, msg, SW - 2 * HINT_SIDE_PAD)
 
 
-def _draw_status_bar(renderer, fonts, msg, color, bottom_y):
+def _draw_status_bar(renderer, fonts, msg, color, bottom_y, alpha=255):
     """v0.1.101: draws a (possibly multi-line) status/toast bar whose
     bottom edge sits at bottom_y (e.g. just above the hint bar), growing
     UPWARD as needed for extra lines instead of a single fixed-height
@@ -7426,7 +10675,8 @@ def _draw_status_bar(renderer, fonts, msg, color, bottom_y):
     start_y = top_y + max(0, (bar_h - content_h) // 2)
     for i, line in enumerate(lines):
         render_text(renderer, fonts.ui_small, line, color,
-                     pill_x + TOAST_PILL_PAD_X, start_y + i * line_h + _sy(3))
+                     pill_x + TOAST_PILL_PAD_X, start_y + i * line_h + _sy(3),
+                     alpha=alpha)
     return bar_h
 
 
@@ -7887,26 +11137,28 @@ def draw_library(renderer, app):
     render_text(renderer, app.fonts.ui_small, _fit_text(app.fonts.ui_small, sort_line, SW - _sx(40)),
                 COL_DIM, _sx(20), sort_y)
 
-    row_h = _row_h(app.fonts.ui_body)
-    top = sort_y + TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(10)
-    # v26.07.12.16: Pinned/rest-of-library separator (Kaleb's request --
-    # replaces the old per-row heart icon; pinned books already sort to
-    # the top via sort_library(), this just marks where that block ends
-    # visually). Deliberately NOT tied 1:1 to ui_small's font height --
-    # Kaleb's note "at larger fonts I may not need such a big gap" --
-    # sep_label_h contributes at HALF weight plus a small flat base, so
-    # the gap grows only modestly across the 7 Font Size steps (measured
-    # 16px->26px) instead of doubling the way a full-weight row would.
-    sep_label_h = TTF.TTF_FontHeight(app.fonts.ui_small)
-    sep_top_gap = _sy(8) + sep_label_h // 4  # extra breathing room above
-                                              # the label so the pinned
-                                              # block above doesn't read
-                                              # as run-on with the label
-    sep_bottom_gap = _sy(6) + sep_label_h // 4
-    sep_h = sep_top_gap + sep_label_h + sep_bottom_gap
+    # v26.07.13.05 (Kaleb's request): the old "PINNED" marker lived
+    # INSIDE the scrolling list as a separator drawn only once, right
+    # before the first post-pinned row scrolled into view -- Kaleb's
+    # report: it sat visually BELOW the pinned books it was meant to
+    # label (marking where the block ENDS, not where it begins), read
+    # as unclear, and left a blank gap in the list on scroll positions
+    # where that exact row wasn't the one on screen. Replaced with a
+    # static header line right under Sort -- same treatment as the sort
+    # line itself, never scrolls, so there's no separator row to leave a
+    # gap when it's off-screen. Only rendered when pinned_count > 0 (per
+    # Kaleb's explicit follow-up) -- no reserved space at all otherwise,
+    # so an empty-pins library looks identical to before this change.
     pinned_count = sum(1 for b in app.books if b["filename"] in app.pinned)
-    have_sep = 0 < pinned_count < len(app.books)
-    visible = (SH - top - _sy(hint_height(app.fonts)) - (sep_h if have_sep else 0)) // row_h
+    next_y = sort_y + TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(2)
+    if pinned_count > 0:
+        render_text(renderer, app.fonts.ui_small, f"\u2665 {pinned_count} Pinned",
+                    COL_DIM, _sx(20), next_y)
+        next_y += TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(2)
+
+    row_h = _row_h(app.fonts.ui_body)
+    top = next_y + _sy(8)
+    visible = (SH - top - _sy(hint_height(app.fonts))) // row_h
     row_max_w = SW - _sx(44)
 
     # v0.1.125: Kaleb's report -- a book that's been started only ever
@@ -7949,21 +11201,30 @@ def draw_library(renderer, app):
         if bi >= len(app.books):
             break
         book = app.books[bi]
-        extra = sep_h if (have_sep and bi >= pinned_count) else 0
-        y = top + i * row_h + extra
-        if have_sep and bi == pinned_count:
-            # v26.07.12.16: label sits vertically centered in sep_top_gap/
-            # sep_bottom_gap around it, drawn once right before the first
-            # post-pinned row scrolls into view.
-            _sep_y = y - sep_h + sep_top_gap
-            render_text(renderer, app.fonts.ui_small, "\u2665 PINNED", COL_DIM, _sx(24), _sep_y)
-        # v0.1.117: the armed-for-delete row used to live here (SELECT on
-        # this screen) -- delete moved into the Library Menu (X; was
-        # START before v26.07.12.05), so SELECT is now the Finished/
-        # Unfinished toggle and this row is back to a plain selection
-        # highlight.
+        y = top + i * row_h
+        # v26.07.13.06 (Kaleb's follow-up): a thin divider line marking
+        # the pinned/unpinned boundary, but -- unlike the old v26.07.12.16
+        # separator this replaces -- reserving ZERO extra vertical space.
+        # It's drawn inside the small _sy(4) gap _row_h() already leaves
+        # between every row's highlight rect and the next row's top (see
+        # _row_h()'s docstring), so nothing shifts: row_h, top, and
+        # `visible` are all completely unaffected by whether this line
+        # draws or not. That's what fixes Kaleb's actual complaint about
+        # the old separator (a real reserved sep_h gap that only visually
+        # existed for rows AT or PAST the boundary, i.e. it appeared to
+        # "pop in" as a blank row once you scrolled to it) -- this line
+        # instead just overlays on top of a gap that was ALWAYS there,
+        # at every scroll position, whether the boundary is on screen or
+        # not, so there's nothing to leave behind when it isn't.
+        if pinned_count and bi == pinned_count:
+            fill_rect(renderer, _sx(20), y - _sy(2), SW - _sx(40), 1, COL_DIM)
         if bi == app.lib_index:
-            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            # v26.07.16.07 (Kaleb's request): highlight GLIDES to its new
+            # row instead of jumping there instantly (v26.07.16.08:
+            # migrated to the shared eased_sel_y() helper, same one
+            # every other list screen now uses).
+            anim_y = app.eased_sel_y("library", y, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if bi == app.lib_index else COL_TEXT
         is_continue = continue_filename is not None and book["filename"] == continue_filename
         # Status icons (resume/pin/finished) live in a fixed-width left
@@ -7972,7 +11233,7 @@ def draw_library(renderer, app):
         # of which icons a given row shows. Continue marker uses U+25BA
         # (►) and finished uses U+2713 (✓) -- both confirmed present and
         # rasterizing a real glyph in the bundled font. No per-row pin
-        # heart -- the "PINNED" separator above already marks that block.
+        # heart -- the static "Pinned" header above already marks that block.
         icons_str = ""
         if is_continue:
             icons_str += "\u25ba"  # unambiguous "resume here" marker,
@@ -8048,7 +11309,7 @@ def draw_library(renderer, app):
 
     if app.status_msg and time.time() < app.status_until:
         _draw_status_bar(renderer, app.fonts, app.status_msg, COL_WARNING,
-                          SH - _sy(hint_height(app.fonts)))
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
 
     # v26.07.09.02: X Pin and SELECT Finished dropped from this bar (was
     # 8-9 shortcuts, often wrapping to 2+ lines at larger Font Sizes).
@@ -8143,44 +11404,36 @@ def draw_reader(renderer, app):
     needs_build = app.doc and (key != app._page_cache_key or app.state.current_anchor is not None)
     if needs_build:
         wrap_key = (key, app.fonts.size_index)
-        if wrap_key not in app._wrapped_cache:
-            # Check the on-disk extreme-page cache before doing a fresh
-            # wrap: if this exact (book, page, font size) was already
-            # wrapped before (even in a previous session), load it
-            # straight into RAM. See App._load_wrap_from_disk()/
-            # _save_wrap_to_disk() and WRAP_CACHE_DIR's module-level
-            # comment for scope. Files over WARM_CACHE_LOADING_THRESHOLD
-            # bytes get a live progress screen while reading (disk I/O
-            # on real hardware isn't free -- Enjoy Life Forever's real
-            # cache file takes several seconds); smaller files load
-            # silently through the same plain loader the background
-            # prefetch thread uses, so a small extreme-page cache (e.g.
-            # Daily Text's schedule page) doesn't flash a screen for a
-            # sub-second read.
+        if wrap_key not in app._wrapped_cache and app._live_warmload_key != wrap_key:
+            # v26.07.13.15: only the SMALL-file case stays here now --
+            # files over WARM_CACHE_LOADING_THRESHOLD are handled by the
+            # progressive warm-load branch inside _ensure_page_built()
+            # (see that function's own comment), which needs to run
+            # every frame to keep polling, not just once here. A small
+            # cache file (e.g. Daily Text's schedule page) is fast enough
+            # to just read synchronously and be done with it -- no
+            # progressive treatment needed, unchanged from before.
             _cache_path = app._wrap_cache_path(key)
             if os.path.isfile(_cache_path):
                 try:
                     _cache_size = os.path.getsize(_cache_path)
                 except OSError:
                     _cache_size = 0
-                if _cache_size > WARM_CACHE_LOADING_THRESHOLD:
-                    _disk_loaded = app._load_wrap_from_disk_with_progress(renderer, key)
-                else:
+                if _cache_size <= WARM_CACHE_LOADING_THRESHOLD:
                     _disk_loaded = app._load_wrap_from_disk(key)
-            else:
-                _disk_loaded = None
-            if _disk_loaded is not None:
-                # v26.07.10.24: a WRAP_CACHE_DIR file only ever exists
-                # for an extreme page (see that dir's module-level
-                # comment) -- so reaching this line already guarantees
-                # `key` is extreme, even if the background scan hasn't
-                # gotten around to confirming it yet (e.g. right after
-                # app startup, loading a page cached in a PREVIOUS
-                # session). Tag it explicitly rather than relying only
-                # on the other two seeding paths.
-                app._extreme_hrefs.add(key)
-                app._wrapped_cache_put(wrap_key, _disk_loaded)
-        if wrap_key not in app._wrapped_cache:
+                    if _disk_loaded is not None:
+                        # v26.07.10.24: a WRAP_CACHE_DIR file only ever
+                        # exists for an extreme page (see that dir's
+                        # module-level comment) -- so reaching this line
+                        # already guarantees `key` is extreme, even if
+                        # the background scan hasn't gotten around to
+                        # confirming it yet (e.g. right after app startup,
+                        # loading a page cached in a PREVIOUS session).
+                        # Tag it explicitly rather than relying only on
+                        # the other two seeding paths.
+                        app._extreme_hrefs.add(key)
+                        app._wrapped_cache_put(wrap_key, _disk_loaded)
+        if wrap_key not in app._wrapped_cache and app._live_warmload_key != wrap_key:
             cached = app._page_text_cache.get(key)
             if cached is not None:
                 peek_text = cached[0]
@@ -8191,54 +11444,68 @@ def draw_reader(renderer, app):
                     peek_text = page_result[0]
                 except Exception:
                     peek_text = ""
-            if len(peek_text) > LARGE_PAGE_LOADING_THRESHOLD:
-                # v26.07.10.03: if this exact page is sitting in
-                # _extreme_page_queue (either from the proactive
-                # book-open scan, or re-queued after a B/L2/R2 bail-out
-                # -- see _handle_wrap_abort()), say so, with its
-                # position, instead of a plain "Rendering..." that gives
-                # no sense of whether background progress has been
-                # happening. Purely informational -- this frame still
-                # goes on to call _ensure_page_built() below either way,
-                # same as always.
-                if key in app._extreme_page_queue:
-                    _qpos = app._extreme_page_queue.index(key)
-                    _qmsg = ("Rendering large page... (queued, next up)" if _qpos == 0
-                             else f"Rendering large page... (queued, {_qpos} ahead)")
-                    _draw_large_page_loading_screen(renderer, app, message=_qmsg)
-                else:
-                    _draw_large_page_loading_screen(renderer, app)
-                SDL.SDL_RenderPresent(renderer)
-    elif (app._extreme_page_queue and app.screen == SCREEN_READER
-          and app._chapter_nav_pending):
-        # v26.07.09.21: only touch the background pre-render queue when
-        # the CURRENTLY-viewed page didn't itself need any work this
-        # frame -- never delay the person's own navigation to do
-        # proactive work for a page they haven't asked for yet. One
-        # candidate per draw_reader() call (not the whole queue at once)
-        # so this can't itself become a multi-page synchronous stall.
+            # v26.07.13.16 BUG FIX (found while auditing for Kaleb's "remove
+            # the old loading screen" request): this used to draw+present a
+            # static "Rendering large page..." screen HERE, every single
+            # frame, unconditionally, whenever a cold wrap was still in
+            # progress -- immediately BEFORE _ensure_page_built() (below)
+            # takes that frame's real progressive step and the real,
+            # growing self._lines content gets drawn further down in this
+            # same function. Since draw_reader() has only ONE
+            # SDL_RenderPresent() call of its own (the one this block used
+            # to make), and the real per-frame content draw relies on the
+            # caller presenting AFTERWARD, this old screen was never
+            # actually needed to be seen -- at best it was a wasted extra
+            # present every frame, at worst (real hardware, real vsync
+            # timing) a visible flicker between this static message and
+            # the real growing page, once per frame, for the entire
+            # cold-wrap duration. The growing content itself (plus the
+            # "N%*" indicator -- see that indicator's own v26.07.13.10
+            # comment) already communicates "still loading" now, same as
+            # it does for a warm load -- this static overlay is fully
+            # superseded, not just redundant, so it's removed rather than
+            # kept as a silent no-op. peek_text/get_page() above is still
+            # needed regardless (populates _page_text_cache for
+            # _ensure_page_built() to reuse) -- only the screen it used to
+            # trigger is gone.
+    elif (app.screen == SCREEN_READER
+          and (app._bg_wrap_state is not None
+               or (app._extreme_page_queue and app._chapter_nav_pending))):
+        # v26.07.13.11: rewired to use the SAME chunked/progressive
+        # approach as _ensure_page_built() -- found during a full-app
+        # audit that this was the one call site never converted (still
+        # a full uninterrupted freeze whenever it fired). See
+        # _start_bg_prerender()/_step_bg_prerender()'s docstrings.
         #
-        # Narrowed to L2/R2 chapter-nav only via a one-shot flag
-        # (App._chapter_nav_pending, armed by L2/R2 or a TOC-entry
-        # selection) rather than idle-time draining, so this is fully
-        # predictable: the transition's own page build consumes the "if
-        # needs_build" branch above on the SAME frame the flag is armed,
-        # so this elif can only fire on a LATER frame -- the flag
-        # survives until then and clears itself right below, draining
-        # exactly one page per transition.
-        #
-        # The `app.screen == SCREEN_READER` check above is required
-        # because draw_menu()/draw_splash() also call draw_reader() as a
-        # backdrop to paint whatever's behind their own overlay -- this
-        # branch can't otherwise tell that apart from a genuine reading
-        # frame, since both share "needs_build is False." Without it,
-        # opening the menu on a book with extreme pages could trigger a
-        # visible "Pre-rendering large page..." block as a side effect
-        # of the backdrop composite.
-        app._chapter_nav_pending = False
-        href = app._extreme_page_queue.pop(0)
-        if not os.path.isfile(app._wrap_cache_path(href)):
-            app._prerender_one_extreme_page(renderer, href)
+        # Starting a NEW page from the queue is still gated on the
+        # one-shot app._chapter_nav_pending flag (armed by L2/R2 or a
+        # TOC-entry selection -- see the original v26.07.09.21 comment
+        # preserved below) so this can never delay the person's OWN
+        # navigation to begin proactive work for a page they haven't
+        # asked for yet. But CONTINUING an already-started background
+        # wrap is NOT gated on that flag -- it keeps taking one slice
+        # per frame on every later frame where the on-screen page didn't
+        # itself need work, exactly like the on-screen progressive wrap
+        # does, so a single L2/R2 press can kick off draining that then
+        # keeps going by itself while the person just keeps reading
+        # elsewhere, rather than needing one more press per page.
+        if app._chapter_nav_pending:
+            app._chapter_nav_pending = False
+            if app._bg_wrap_state is None and app._extreme_page_queue:
+                href = app._extreme_page_queue.pop(0)
+                if not os.path.isfile(app._wrap_cache_path(href)):
+                    app._start_bg_prerender(href)
+
+        if app._bg_wrap_state is not None:
+            finished = app._step_bg_prerender()
+            # v26.07.13.11: if that page just finished and more are
+            # queued, start the next one immediately on this SAME frame
+            # rather than waiting for another nav event -- see this
+            # elif's own docstring above.
+            if finished and app._extreme_page_queue:
+                href = app._extreme_page_queue.pop(0)
+                if not os.path.isfile(app._wrap_cache_path(href)):
+                    app._start_bg_prerender(href)
 
     app._ensure_page_built(renderer)
 
@@ -8451,11 +11718,33 @@ def draw_reader(renderer, app):
         line_abs_end = line_abs_start + len(line)
         para_kind = None
         para_extra = ""
-        for ps in app._para_spans:
-            if ps.start < line_abs_end and ps.end > line_abs_start:
-                para_kind = ps.kind
-                para_extra = ps.extra
+        # v26.07.13.09 BUG FIX (found during a full pre-cache audit,
+        # unrelated to the reverted v26.07.13.07 compression attempt):
+        # this used to be a linear `for ps in app._para_spans` scan, run
+        # fresh for every visible line, every frame. Harmless on an
+        # ordinary page (a few hundred spans) but on a real extreme page
+        # (Enjoy Life Forever's "Track Your Bible Reading": 29,889
+        # para_spans) it meant walking most of that list per line, times
+        # ~30 visible lines, every single frame while reading or
+        # scrolling that page. Measured on the real page/cache file:
+        # ~800us/line for the old linear scan vs ~1.5us/line for this
+        # bisect version (~530x), 0 mismatches across all 66,869 real
+        # lines at 18pt. Safe because app._para_spans_starts is always
+        # kept as a sorted-.start parallel list alongside app._para_spans
+        # (see every assignment site's own comment) -- para_spans are
+        # produced in document order and never overlap/nest, so the
+        # first span at-or-before this line's end whose own .end still
+        # reaches past this line's start is the (unique) match, same
+        # logic the old linear scan implemented, just without walking
+        # every earlier span to get there.
+        _para_idx = bisect.bisect_left(app._para_spans_starts, line_abs_end) - 1
+        while _para_idx >= 0 and app._para_spans[_para_idx].end > line_abs_start:
+            _ps = app._para_spans[_para_idx]
+            if _ps.start < line_abs_end:
+                para_kind = _ps.kind
+                para_extra = _ps.extra
                 break
+            _para_idx -= 1
 
         # box_rule lines: draw the rule text in COL_DIM, skip normal render.
         if para_kind == "box_rule":
@@ -8496,7 +11785,7 @@ def draw_reader(renderer, app):
 
     if app.status_msg and time.time() < app.status_until:
         _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
-                          SH - _sy(hint_height(app.fonts)))
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
 
     # v26.07.09.04: Immersive Mode hides this bar's TEXT/GRAPHICS only --
     # the reserved bottom margin body_rows accounts for via
@@ -8532,8 +11821,24 @@ def draw_reader(renderer, app):
 
     # progress indicator
     if app._lines:
-        pct = int(100 * app.scroll / max(1, len(app._lines) - body_rows))
-        label = f"{pct}%"
+        pct = int(100 * app.scroll / max(1, app._max_scroll(line_h, body_rows)))
+        # v26.07.13.10: while this exact page is still being progressively
+        # wrapped (see _ensure_page_built()'s progressive branch), the
+        # %-complete figure above is relative to "ready so far", not the
+        # page's eventual true length -- so it's misleading on its own
+        # (100% could mean "you've read everything wrapped so far", not
+        # "you've read the whole page"). Append a small marker rather
+        # than a separate bar/indicator, reusing existing UI space.
+        # v26.07.13.11 BUG FIX (found during a full-app audit, Kaleb's
+        # request): this compared app._live_wrap_key (a (href, size_index)
+        # TUPLE) against app.state.current_file (a plain href STRING) --
+        # a tuple can never equal a string, so this was ALWAYS False.
+        # The "*" marker below never actually displayed, even during a
+        # live progressive build -- silent, no crash, so nothing caught
+        # it until this audit. Fixed to compare against the same
+        # (href, size_index) shape _live_wrap_key actually holds.
+        _still_loading = (app._live_wrap_key == (app.state.current_file, app.fonts.size_index))
+        label = f"{pct}%*" if _still_loading else f"{pct}%"
         color = COL_ACCENT if app.fast_scroll else COL_DIM
         # Marker sits in the hint bar's bottom-right corner, sharing the
         # row with the hint text rather than a separate reserved band --
@@ -8564,6 +11869,48 @@ def draw_reader(renderer, app):
         label_y = last_line_y + (TTF.TTF_FontHeight(hfont) - TTF.TTF_FontHeight(label_font)) // 2
         render_text(renderer, label_font, label, color,
                     SW - label_w - HINT_SIDE_PAD, label_y)
+
+    # v26.07.13.18 (Kaleb's request): a small "Rendering... N%" overlay
+    # just ABOVE the hint bar, shown ONLY while the CURRENTLY-VIEWED
+    # page is actively building (cold wrap or warm load) -- not for
+    # background prerender of some other page, which the person can't
+    # see anyway and doesn't need a toast for. Deliberately drawn as a
+    # pure overlay on top of the already-rendered content, same as the
+    # %* marker above -- costs no body row and can't drift the scroll
+    # ceiling/pagination math, which _reader_body_layout() alone still
+    # governs entirely unchanged.
+    #
+    # This is a DIFFERENT number from the %* marker above: that one is
+    # "how far you've scrolled through what's built so far" (can hit
+    # 100% while the page is still only half-wrapped); this one is
+    # genuine wrap/read progress through the whole page, using the same
+    # underlying offset/total-lines figures the old removed loading
+    # screen used to show, just as a small overlay instead of a
+    # full-screen block.
+    _wrap_key_now = (app.state.current_file, app.fonts.size_index)
+    _render_pct = None
+    if app._live_wrap_key == _wrap_key_now and app._live_wrap_state:
+        _st = app._live_wrap_state
+        _total = _st.get("text_len") or 1
+        _render_pct = int(100 * min(1.0, _st.get("offset", 0) / _total))
+    elif app._live_warmload_key == _wrap_key_now and app._live_warmload_state:
+        _st = app._live_warmload_state
+        _total = _st.get("total_lines") or 1
+        _render_pct = int(100 * min(1.0, len(_st.get("lines", [])) / _total))
+    if _render_pct is not None:
+        _toast_text = f"Rendering... {_render_pct}%"
+        _toast_font = app.fonts.ui_small
+        _toast_w = text_width(_toast_font, _toast_text)
+        _toast_h = TTF.TTF_FontHeight(_toast_font) + _sy(6)
+        if _hint_result is not None:
+            _, _, _, _hbar_top, _, _ = _hint_result
+        else:
+            _, _, _, _hbar_top, _, _ = _hint_layout(app.fonts, READER_HINT_TEXT)
+        _toast_y = _hbar_top - _toast_h
+        _toast_x = SW - _toast_w - HINT_SIDE_PAD
+        fill_rect(renderer, _toast_x - _sx(8), _toast_y, _toast_w + _sx(16), _toast_h,
+                  Color(COL_HINT_BG.r, COL_HINT_BG.g, COL_HINT_BG.b, 220))
+        render_text(renderer, _toast_font, _toast_text, COL_TEXT, _toast_x, _toast_y + _sy(3))
 
 
 IMGVIEW_ZOOM_STEP = 1.15       # multiplicative zoom per L/R press
@@ -8832,8 +12179,11 @@ def draw_menu(renderer, app):
         label = item
         if item == "Immersive Mode":
             label = f"Immersive Mode: {'On' if app.immersive_mode else 'Off'}"
+        if item == "Sound Effects":
+            label = f"Sound Effects: {'On' if app.sound_enabled else 'Off'}"
         if mi == app.menu_index:
-            fill_rect_rounded(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("menu", y, row_h)
+            fill_rect_rounded(renderer, SW - overlay_w + _sx(10), int(_anim_y), overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
         color = COL_ACCENT if mi == app.menu_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
                     color, SW - overlay_w + _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 6))
@@ -8856,7 +12206,8 @@ def draw_toc(renderer, app):
         entry = app.toc_flat[ti]
         y = top + i * row_h
         if ti == app.toc_index:
-            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("chapters", y, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if ti == app.toc_index else COL_TEXT
         label = ("  " * entry.level) + entry.title
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, row_max_w),
@@ -8934,6 +12285,153 @@ def draw_text_entry(renderer, app):
     draw_hint(renderer, app.fonts, "D-PAD Move   A Select   X Backspace   B Cancel")
 
 
+# v26.07.16.24: Settings > Credits / License. Same (text, is_heading)
+# format as HELP_PARAGRAPHS below -- thank-you note + GitHub bug-report
+# link first, then the full MIT + bundled-font license text (kept in
+# sync with LICENSE.md/FONT_LICENSE.txt; if either changes, update here
+# too since this is what's actually shown on-device).
+# v26.07.16.27: exact-text set checked by _draw_static_scroll_overlay()
+# to decide which lines render centered instead of left-aligned --
+# every line in LICENSE_PARAGRAPHS' credits block above the LICENSE
+# heading. Kept as a set literal here (not inferred from paragraph
+# position) so it can't silently start matching new left-aligned text
+# added to the license body later.
+_CENTERED_OVERLAY_LINES = {
+    "Thank you for using:",
+    FACE_MENU_LOGO,
+    "PICO READER",
+    "Designed by: Kaleb Fabsik (PuppetHoundZ).",
+    "Happy Reading,",
+    "Kaleb",
+    "Found a Bug? Report it on GitHub:",
+    "github.com/PuppetHoundZ/PicoReader",
+}
+
+
+LICENSE_PARAGRAPHS = [
+    ("CREDITS", True),
+    ("Thank you for using:", False),
+    ("", False),
+    (FACE_MENU_LOGO, True),
+    ("PICO READER", True),
+    ("", False),
+    ("Designed by: Kaleb Fabsik (PuppetHoundZ).", False),
+    ("", False),
+    ("Happy Reading,", False),
+    ("", False),
+    ("Kaleb", False),
+    ("", False),
+    ("Found a Bug? Report it on GitHub:", False),
+    ("github.com/PuppetHoundZ/PicoReader", False),
+    ("LICENSE", True),
+    ("Copyright (c) 2026 Kaleb Fabsik (PuppetHoundZ)", False),
+    ("1. PICOREADER SOURCE CODE -- MIT LICENSE", True),
+    ("Permission is hereby granted, free of charge, to any person "
+     "obtaining a copy of this software and associated documentation "
+     "files (the \"Software\"), to deal in the Software without "
+     "restriction, including without limitation the rights to use, "
+     "copy, modify, merge, publish, distribute, sublicense, and/or "
+     "sell copies of the Software, and to permit persons to whom the "
+     "Software is furnished to do so, subject to the following "
+     "conditions:", False),
+    ("The above copyright notice and this permission notice shall be "
+     "included in all copies or substantial portions of the Software.", False),
+    ("THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, "
+     "EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES "
+     "OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND "
+     "NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT "
+     "HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, "
+     "WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING "
+     "FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR "
+     "OTHER DEALINGS IN THE SOFTWARE.", False),
+    ("This MIT license covers main.py, epub_engine.py, mini_jpeg.py, "
+     "mux_launch.sh, gutenberg_fetch.py, and PLUGIN_TEMPLATE.py -- the "
+     "original code written for this project. It does NOT cover the "
+     "bundled fonts below, which remain under their own license.", False),
+    ("2. BUNDLED FONTS -- BITSTREAM VERA-DERIVED LICENSE (THIRD-PARTY)", True),
+    ("Bundled fonts: DejaVu Sans Condensed (Regular, Bold, Oblique, "
+     "Bold Oblique). Source: the fonts-dejavu-core Debian/Ubuntu "
+     "package (2.37-8), upstream dejavu-fonts.github.io. Third-party "
+     "open-source software, not written by this project.", False),
+    ("Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. "
+     "Bitstream Vera is a trademark of Bitstream, Inc. DejaVu changes "
+     "are in the public domain.", False),
+    ("Permission is hereby granted, free of charge, to any person "
+     "obtaining a copy of the fonts accompanying this license "
+     "(\"Fonts\") and associated documentation files (the \"Font "
+     "Software\"), to reproduce and distribute the Font Software, "
+     "including without limitation the rights to use, copy, merge, "
+     "publish, distribute, and/or sell copies of the Font Software, "
+     "and to permit persons to whom the Font Software is furnished to "
+     "do so, subject to the following conditions:", False),
+    ("The above copyright and trademark notices and this permission "
+     "notice shall be included in all copies of one or more of the "
+     "Font Software typefaces.", False),
+    ("The Font Software may be modified, altered, or added to, and in "
+     "particular the designs of glyphs or characters in the Fonts may "
+     "be modified and additional glyphs or characters may be added to "
+     "the Fonts, only if the fonts are renamed to names not containing "
+     "either the words \"Bitstream\" or the word \"Vera\".", False),
+    ("This License becomes null and void to the extent applicable to "
+     "Fonts or Font Software that has been modified and is distributed "
+     "under the \"Bitstream Vera\" names.", False),
+    ("The Font Software may be sold as part of a larger software "
+     "package but no copy of one or more of the Font Software "
+     "typefaces may be sold by itself.", False),
+    ("THE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY "
+     "KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY "
+     "WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE "
+     "AND NONINFRINGEMENT OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER "
+     "RIGHT. IN NO EVENT SHALL BITSTREAM OR THE GNOME FOUNDATION BE "
+     "LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING ANY "
+     "GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL "
+     "DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, "
+     "ARISING FROM, OUT OF THE USE OR INABILITY TO USE THE FONT "
+     "SOFTWARE OR FROM OTHER DEALINGS IN THE FONT SOFTWARE.", False),
+    ("Except as contained in this notice, the names of Gnome, the "
+     "Gnome Foundation, and Bitstream Inc. shall not be used in "
+     "advertising or otherwise to promote the sale, use or other "
+     "dealings in this Font Software without prior written "
+     "authorization from the Gnome Foundation or Bitstream Inc.", False),
+]
+
+
+# v26.07.16.24: Settings > Help. Plain-language basics -- where to put
+# book files and how to use the core controls -- separate from
+# HELP_PARAGRAPHS below, which is specifically about the downloader's
+# search/pub-code UI, not general app usage.
+APP_HELP_PARAGRAPHS = [
+    ("ADDING BOOKS", True),
+    ("Copy your .epub files onto the SD card, into the ROMS/Book Reader "
+     "folder (muOS's shared Book Reader content folder -- create it if "
+     "it isn't there yet). PicoReader scans this folder for books each "
+     "time the Library screen opens.", False),
+    ("Titles and authors shown in the Library come from each book's "
+     "own metadata, not the filename -- so an oddly-named file will "
+     "still show up correctly once it's in the folder.", False),
+    ("BASIC CONTROLS", True),
+    ("D-PAD UP/DOWN -- scroll the page, or move selection in a list.", False),
+    ("D-PAD LEFT/RIGHT -- (Reader) cycle link selection on the same "
+     "line; (Library) quick-scroll, jump 10 rows.", False),
+    ("A -- open the selected book / follow a selected link / confirm "
+     "a menu choice.", False),
+    ("B -- go back, or close the current menu; (Library) exits "
+     "PicoReader.", False),
+    ("L / R -- previous / next page.", False),
+    ("L2 / R2 -- previous / next chapter (while reading).", False),
+    ("X -- open the popup menu (Chapters, Bookmarks, Font Size, "
+     "Themes, Settings, and more); (Library) open the Library menu.", False),
+    ("Y -- (Reader) toggle fast-scroll, D-pad moves 10 at a time; "
+     "(Library) cycle sort order.", False),
+    ("GETTING STARTED", True),
+    ("From the Library, highlight a book and press A to start reading. "
+     "Press X at any time -- in the Reader for the popup menu, or in "
+     "the Library for the Library menu -- to reach Settings, where "
+     "this Help screen and Credits / License both live, alongside "
+     "backup, theme, and storage options.", False),
+]
+
+
 HELP_PARAGRAPHS = [
     # v0.1.155: Kaleb: "this code thing is confusing" -- plain-language
     # explanation of the two ways to find a publication, shown via a new
@@ -8996,6 +12494,102 @@ def draw_download_help(renderer, app):
     draw_hint(renderer, app.fonts, hint)
 
 
+def _draw_static_scroll_overlay(renderer, app, title, paragraphs, scroll_attr):
+    """v26.07.16.24: shared body for the three static (text, is_heading)
+    scroll overlays -- Download Help, Credits/License, and App Help.
+    Pulled out of draw_download_help() once a third near-identical copy
+    would've existed; behavior is unchanged from the original, this is
+    a pure de-dup, not a functional change. scroll_attr is the App
+    attribute name (string) holding this overlay's own scroll offset."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, title, COL_ACCENT, _sx(20), heading_y)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    max_w = SW - _sx(48)
+    font = app.fonts.ui_body
+    line_h = TTF.TTF_FontHeight(font) + _sy(6)
+
+    all_lines = []  # list of (text, is_heading)
+    for para, is_heading in paragraphs:
+        # v26.07.16.27 (Kaleb's request): blank line BEFORE every
+        # heading too, not just after -- skipped if one's already
+        # there (e.g. right after the previous heading's own trailing
+        # blank, or a manual blank paragraph in the list) so headings
+        # don't end up with a double gap.
+        if is_heading and all_lines and all_lines[-1][0] != "":
+            all_lines.append(("", False))
+        wrapped = _wrap_hint_text_unbounded(font, para, max_w) or [para]
+        for line in wrapped:
+            all_lines.append((line, is_heading))
+        # v26.07.16.26 (Kaleb's request): blank line after every heading,
+        # so section titles read as clearly separated from the paragraph
+        # text that follows -- applies to all three overlays that share
+        # this helper (Download Help, Credits/License, App Help), not
+        # just the one it was requested for.
+        if is_heading:
+            all_lines.append(("", False))
+    # Collapse any remaining run of consecutive blank lines down to one --
+    # catches a manual ("", False) paragraph sitting right next to a
+    # heading's own auto-inserted blank.
+    _collapsed = []
+    for entry in all_lines:
+        if entry[0] == "" and _collapsed and _collapsed[-1][0] == "":
+            continue
+        _collapsed.append(entry)
+    all_lines = _collapsed
+    # v26.07.16.29 (Kaleb's request): the face+"PICO READER" lockup is
+    # one unit, same as on the boot splash/menu sidebar -- no blank line
+    # between them even though both are headings and would otherwise get
+    # the standard before/after heading spacing above. Drop a blank line
+    # ONLY when it sits directly between these two specific lines.
+    _final = []
+    for i, entry in enumerate(all_lines):
+        if (entry[0] == "" and 0 < i < len(all_lines) - 1
+                and all_lines[i - 1][0] == FACE_MENU_LOGO
+                and all_lines[i + 1][0] == "PICO READER"):
+            continue
+        _final.append(entry)
+    all_lines = _final
+
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // line_h)
+    total = len(all_lines)
+    max_scroll = max(0, total - visible)
+    scroll = max(0, min(getattr(app, scroll_attr, 0), max_scroll))
+    setattr(app, scroll_attr, scroll)
+
+    y = top
+    for i in range(scroll, min(total, scroll + visible)):
+        text, is_heading = all_lines[i]
+        color = COL_ACCENT if is_heading else COL_TEXT
+        # v26.07.16.27 (widened from .25's 2-string check, Kaleb's
+        # request for the whole credits block to be centered): checks
+        # against _CENTERED_OVERLAY_LINES, a fixed set of exact strings
+        # that appear in LICENSE_PARAGRAPHS' credits block (thank-you
+        # line, the FACE_MENU_LOGO+"PICO READER" lockup, name, sign-off,
+        # bug-report line + link) plus HELP_PARAGRAPHS/APP_HELP_PARAGRAPHS
+        # -- neither of which currently contains any of these strings,
+        # so this stays safe to share across all three overlays.
+        if text in _CENTERED_OVERLAY_LINES:
+            x = max(_sx(24), (SW - text_width(font, text)) // 2)
+        else:
+            x = _sx(24)
+        render_text(renderer, font, text, color, x, y)
+        y += line_h
+
+    hint = "UP/DOWN Scroll   B Back" if max_scroll > 0 else "B Back"
+    draw_hint(renderer, app.fonts, hint)
+
+
+def draw_licenses(renderer, app):
+    _draw_static_scroll_overlay(renderer, app, "CREDITS / LICENSE",
+                                 LICENSE_PARAGRAPHS, "licenses_scroll")
+
+
+def draw_app_help(renderer, app):
+    _draw_static_scroll_overlay(renderer, app, "HELP",
+                                 APP_HELP_PARAGRAPHS, "help_scroll")
+
+
 def draw_download_categories(renderer, app):
     fill_rect(renderer, 0, 0, SW, SH, COL_BG)
     heading_y = _sy(16)
@@ -9012,7 +12606,8 @@ def draw_download_categories(renderer, app):
         cat = categories[i]
         y = top + (i - start) * row_h
         if i == app.dl_cat_index:
-            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("download_categories", y, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.dl_cat_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, cat, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
     hint_parts = ["UP/DOWN Select", "L/R Jump 10"]
@@ -9037,7 +12632,8 @@ def draw_download_sources(renderer, app):
         plugin = DOWNLOAD_PLUGINS[i]
         y = top + (i - start) * row_h
         if i == app.dl_source_index:
-            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("download_sources", y, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.dl_source_index else COL_TEXT
         name = getattr(plugin, "PLUGIN_NAME", plugin.__name__)
         render_text(renderer, app.fonts.ui_body, name, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
@@ -9060,7 +12656,8 @@ def draw_download_video_sources(renderer, app):
     for i in range(start, min(n_items, start + visible)):
         y = top + (i - start) * row_h
         if i == app.video_source_index:
-            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("video_sources", y, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.video_source_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, VIDEO_SOURCE_ITEMS[i], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
@@ -9082,7 +12679,8 @@ def draw_download_audio_sources(renderer, app):
     for i in range(start, min(n_items, start + visible)):
         y = top + (i - start) * row_h
         if i == app.audio_source_index:
-            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("audio_sources", y, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.audio_source_index else COL_TEXT
         render_text(renderer, app.fonts.ui_body, AUDIO_SOURCE_ITEMS[i], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
@@ -9106,10 +12704,41 @@ def draw_download_audio_books(renderer, app):
     for i in range(start, min(n_items, start + visible)):
         y = top + (i - start) * row_h
         if i == app.audio_book_index:
-            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("audio_books", y, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_ACCENT if i == app.audio_book_index else COL_TEXT
         _, name = books[i]
         render_text(renderer, app.fonts.ui_body, name, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
+
+
+def draw_download_video_series(renderer, app):
+    """v26.07.15.09: sub-picker for VIDEO_SOURCES entries marked
+    "subcategories" (currently just "Series") -- same simple list
+    pattern as draw_download_audio_books() just above, but fully
+    generic: unlike that function (which reads jw_fetch.BIBLE_BOOKS
+    directly, a JW-specific attribute), this reads its list from
+    app._pending_video_source["subcategories"] -- whatever VIDEO_SOURCES
+    entry opened this screen, from whichever plugin defined it. No
+    plugin-specific code here at all."""
+    fill_rect(renderer, 0, 0, SW, SH, COL_BG)
+    source = app._pending_video_source
+    label = (source or {}).get("label", "SERIES").upper()
+    subs = (source or {}).get("subcategories", [])
+    heading_y = _sy(16)
+    render_text(renderer, app.fonts.ui_heading, label, COL_ACCENT, _sx(20), heading_y)
+    row_h = _row_h(app.fonts.ui_body)
+    top = heading_y + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    n_items = len(subs)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.video_series_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        y = top + (i - start) * row_h
+        if i == app.video_series_index:
+            _anim_y = app.eased_sel_y("video_series", y, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.video_series_index else COL_TEXT
+        render_text(renderer, app.fonts.ui_body, subs[i]["label"], color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Open   B Back")
 
 
@@ -9195,18 +12824,48 @@ def draw_download_browse(renderer, app):
             item = app.dl_items[di]
             y = top + i * row_h
             if di == app.dl_index:
-                fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+                _anim_y = app.eased_sel_y("download_browse", y, row_h)
+                fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
             color = COL_ACCENT if di == app.dl_index else COL_TEXT
             title_line = item.get("title", "")[:56]
             if di == app._dl_downloading_idx:
                 title_line += "  (downloading...)"
-            render_text(renderer, app.fonts.ui_body, title_line, color, _sx(24), _row_text_y(y, row_h, app.fonts.ui_body, 4))
+            # v26.07.15.26 BUG FIX (Kaleb's real-device photo: title and
+            # subtitle overlapping on every row of every JW category --
+            # Videos, Audio, Bibles, Watchtower, Meeting Workbooks, etc.,
+            # since they all share this one renderer, plus Gutenberg).
+            # Root cause: the title used _row_text_y() -- a helper built
+            # to vertically CENTER A SINGLE LINE within row_h (see its
+            # own docstring) -- but this is a TWO-line row (title +
+            # subtitle). Centering the title as if it were the row's
+            # only content pushes it down by roughly half of the
+            # subtitle's own height, while the subtitle below it was
+            # positioned independently via a raw "y + title_h + _sy(10)"
+            # offset that assumed the title started at the row's
+            # unshifted top -- the two assumptions didn't match, so the
+            # (now lower) title collided with the subtitle every time,
+            # at every Font Size (title_h/sub_h both scale together, so
+            # this was never a small-Font-Size-only glitch). Fixed by
+            # computing the actual two-line BLOCK height (title_h + a
+            # real inter-line gap + sub_h) and centering THAT block
+            # within the row's slack, same spirit as _row_text_y() but
+            # for two lines instead of one -- title and subtitle now
+            # both derive their y from the same block_top, so they can
+            # never desync again regardless of row_h's own tuning.
+            block_gap = _sy(4)  # visual gap between title and subtitle lines
+            block_h = title_h + block_gap + sub_h
+            slack = max(0, row_h - _sy(4) - block_h)  # _sy(4) matches the
+                                                        # highlight_shrink
+                                                        # used for this row's
+                                                        # selection rect above
+            block_top = y + slack // 2
+            render_text(renderer, app.fonts.ui_body, title_line, color, _sx(24), block_top)
             render_text(renderer, app.fonts.ui_small, item.get("subtitle", "")[:70], COL_DIM,
-                        _sx(24), y + title_h + _sy(10))
+                        _sx(24), block_top + title_h + block_gap)
 
     if app.status_msg and time.time() < app.status_until:
         _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
-                          SH - _sy(hint_height(app.fonts)))
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
 
     hint = "UP/DOWN Select   A Download   B Back"
     if app.dl_has_next or app.dl_page > 1:
@@ -9316,11 +12975,138 @@ def draw_library_menu(renderer, app):
         if armed_warning:
             fill_rect_rounded(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_WARNING)
         elif i == app.lib_menu_index:
-            fill_rect_rounded(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("library_menu", y, row_h)
+            fill_rect_rounded(renderer, SW - overlay_w + _sx(10), int(_anim_y), overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
         color = COL_BG if armed_warning else (COL_ACCENT if i == app.lib_menu_index else COL_TEXT)
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
                     color, SW - overlay_w + _sx(20), _row_text_y(y, row_h, app.fonts.ui_body, 6))
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
+
+
+def draw_theme_menu(renderer, app):
+    """v26.07.15.24: overlay, NOT a full-screen takeover (see
+    THEME_MENU_ITEMS' own comment for why Kaleb's follow-up question
+    about this mattered) -- draws the real backdrop (whichever of
+    Reader/Library opened it) first, exactly like draw_menu()/
+    draw_library_menu(), so Theme +/-, Randomize, and Regenerate all
+    stay visible against real content while this panel is open."""
+    if app._theme_menu_return_screen == SCREEN_MENU:
+        draw_reader(renderer, app)
+    else:
+        draw_library(renderer, app)
+    overlay_w = _sx(320)
+    fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
+    render_text(renderer, app.fonts.ui_heading, "THEMES", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    themes = all_themes()
+    current_name = themes[THEME_INDEX]["name"] if 0 <= THEME_INDEX < len(themes) else "?"
+    # v26.07.15.27 (Kaleb's report): the current theme's name used to be
+    # appended to BOTH the "Theme +" and "Theme -" row labels (so it
+    # showed up twice in the list itself) on top of a THIRD showing in
+    # the toast set_status() already gives after pressing either one.
+    # Shown ONCE here instead, as a persistent subtitle under the
+    # heading -- still visible at a glance while browsing the submenu,
+    # without repeating per-row or fighting with the toast.
+    current_y = _sy(20) + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(4)
+    render_text(renderer, app.fonts.ui_small, f"Current: {current_name}", COL_DIM,
+                SW - overlay_w + _sx(20), current_y)
+    small_h = TTF.TTF_FontHeight(app.fonts.ui_small)
+    # v26.07.15.31 (Kaleb's usability pass): two more at-a-glance lines --
+    # how many of the 3 custom slots are used (so saving a new one and
+    # silently evicting the oldest isn't a surprise), and a pointer to
+    # where Backup/Restore actually live (Storage screen, reachable via
+    # Settings from the PARENT menu, not from inside this submenu at
+    # all -- easy to not know it exists otherwise).
+    saved_y = current_y + small_h + _sy(2)
+    render_text(renderer, app.fonts.ui_small,
+                f"Saved: {len(CUSTOM_THEMES)}/{MAX_CUSTOM_THEMES}", COL_DIM,
+                SW - overlay_w + _sx(20), saved_y)
+    backup_y = saved_y + small_h + _sy(2)
+    render_text(renderer, app.fonts.ui_small, "Backup/Restore: see Settings", COL_DIM,
+                SW - overlay_w + _sx(20), backup_y)
+    row_h = _row_h(app.fonts.ui_body)
+    top = backup_y + small_h + _sy(14)
+    item_max_w = overlay_w - _sx(40)
+    n_items = len(THEME_MENU_ITEMS)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.theme_menu_index - visible // 2, max(0, n_items - visible)))
+    # v26.07.15.27 (Kaleb's report): Theme +/- rows used to append
+    # "(current_name)" to their OWN labels -- since both rows did this,
+    # the current theme's name showed up TWICE just sitting in the
+    # menu, and a THIRD time in the toast set_status() already shows
+    # after pressing either one. Removed the per-row suffix entirely;
+    # the toast alone is the feedback for what Theme +/- just switched
+    # to. The current theme name is still shown once, persistently, in
+    # the "Current: X" subtitle above (see current_name's first
+    # assignment, right after the heading) rather than duplicated
+    # across every row.
+    for i in range(start, min(n_items, start + visible)):
+        item = THEME_MENU_ITEMS[i]
+        y = top + (i - start) * row_h
+        label = item
+        if item == "Regenerate Theme" and _DRAFT_REPLACE_NAME is not None:
+            label = f"Regenerate Theme  (re-rolling \"{_DRAFT_REPLACE_NAME}\")"
+        elif item == "Save Regenerated Theme" and _DRAFT_REPLACE_NAME is None:
+            label = "Save Regenerated Theme  (nothing pending)"
+        elif item == "Rename Theme":
+            local_idx = THEME_INDEX - len(THEMES)
+            if 0 <= local_idx < len(CUSTOM_THEMES):
+                label = f"Rename Theme  (\"{CUSTOM_THEMES[local_idx]['name']}\")"
+            else:
+                label = "Rename Theme  (cycle to a saved theme first)"
+        elif item == "Delete Theme":
+            if app._theme_delete_armed:
+                label = "Press A again to DELETE"
+            else:
+                local_idx = THEME_INDEX - len(THEMES)
+                if 0 <= local_idx < len(CUSTOM_THEMES):
+                    label = f"Delete Theme  (\"{CUSTOM_THEMES[local_idx]['name']}\")"
+                else:
+                    label = "Delete Theme  (cycle to a saved theme first)"
+        armed_warning = (item == "Delete Theme" and app._theme_delete_armed)
+        if armed_warning:
+            fill_rect_rounded(renderer, SW - overlay_w + _sx(10), y, overlay_w - _sx(20), row_h - _sy(6), COL_WARNING)
+        elif i == app.theme_menu_index:
+            _anim_y = app.eased_sel_y("theme_menu", y, row_h)
+            fill_rect_rounded(renderer, SW - overlay_w + _sx(10), int(_anim_y), overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
+        color = COL_BG if armed_warning else (COL_ACCENT if i == app.theme_menu_index else COL_TEXT)
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
+                    color, SW - overlay_w + _sx(20), _row_text_y(y, row_h, app.fonts.ui_body, 6))
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Close")
+
+
+def draw_theme_select(renderer, app):
+    """v26.07.15.31 (Kaleb's request): jump directly to any theme by
+    name instead of stepping through Theme +/- one at a time. Overlay
+    over the same live backdrop as draw_theme_menu() -- UP/DOWN in
+    handle_button() already applied the highlighted theme live before
+    this draws, so what's behind the panel IS the live preview; this
+    function only needs to render the list itself."""
+    if app._theme_menu_return_screen == SCREEN_MENU:
+        draw_reader(renderer, app)
+    else:
+        draw_library(renderer, app)
+    overlay_w = _sx(320)
+    fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
+    render_text(renderer, app.fonts.ui_heading, "SELECT THEME", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    row_h = _row_h(app.fonts.ui_body)
+    top = _sy(20) + TTF.TTF_FontHeight(app.fonts.ui_heading) + _sy(14)
+    item_max_w = overlay_w - _sx(40)
+    themes = all_themes()
+    n_items = len(themes)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.theme_select_index - visible // 2, max(0, n_items - visible)))
+    for i in range(start, min(n_items, start + visible)):
+        y = top + (i - start) * row_h
+        label = themes[i]["name"]
+        if i >= len(THEMES):
+            label += "  (custom)"
+        if i == app.theme_select_index:
+            _anim_y = app.eased_sel_y("theme_select", y, row_h)
+            fill_rect_rounded(renderer, SW - overlay_w + _sx(10), int(_anim_y), overlay_w - _sx(20), row_h - _sy(6), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.theme_select_index else COL_TEXT
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, item_max_w),
+                    color, SW - overlay_w + _sx(20), _row_text_y(y, row_h, app.fonts.ui_body, 6))
+    draw_hint(renderer, app.fonts, "UP/DOWN Preview   A Confirm   B Cancel")
 
 
 def draw_bookmarks(renderer, app):
@@ -9347,7 +13133,8 @@ def draw_bookmarks(renderer, app):
         if armed:
             fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_WARNING)
         elif i == app.bookmarks_index:
-            fill_rect_rounded(renderer, _sx(10), y, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("bookmarks", y, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_BG if armed else (COL_ACCENT if i == app.bookmarks_index else COL_TEXT)
         ts = time.strftime("%b %d %H:%M", time.localtime(bm["ts"]))
         label = f"{bm['label'][:45]}  ({ts})"
@@ -9390,6 +13177,18 @@ def draw_storage(renderer, app):
     else:
         latest_str = None
 
+    theme_backups = app._storage_theme_backups
+    if theme_backups:
+        # filenames are custom_themes_backup_YYYYMMDD_HHMMSS.json
+        ts_part = theme_backups[0][len("custom_themes_backup_"):-len(".json")]
+        try:
+            latest_theme_str = time.strftime("%b %d %H:%M",
+                                              time.strptime(ts_part, "%Y%m%d_%H%M%S"))
+        except ValueError:
+            latest_theme_str = "unknown time"
+    else:
+        latest_theme_str = None
+
     row_h = _row_h(app.fonts.ui_body)
     top = _sy(60)
     action_max_w = SW - _sx(40)
@@ -9421,12 +13220,26 @@ def draw_storage(renderer, app):
         # reachable from this screen right now.
         if action == "Toggle Disk Cache (RAM-only mode)" and native_image is not None and native_image.available:
             continue
+        # v26.07.14.11: only show this action if there's actually a
+        # roms/PORTS shortcut on disk to remove -- same conditional-hide
+        # pattern as Pre-render/Disk-Cache above, so the row doesn't sit
+        # there as a permanent no-op for people who never got the
+        # self-install (e.g. non-standard roms mount) or already removed it.
+        if action == "Remove Ports Shortcut" and not os.path.exists(_ports_launcher_path()):
+            continue
+        # v26.07.14.12: mirror image of the hide above -- only show the
+        # reinstall option once someone has actually opted out, so the
+        # two rows are mutually exclusive from the person's perspective
+        # (never both visible, never both hidden in the normal case).
+        if action == "Reinstall Ports Shortcut" and not load_settings().get("ports_shortcut_opted_out"):
+            continue
         ry = top + (idx - start) * row_h
         armed = (idx == app._storage_confirm_idx)
         if armed:
             fill_rect_rounded(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_WARNING)
         elif idx == app.storage_index:
-            fill_rect_rounded(renderer, _sx(10), ry, SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+            _anim_y = app.eased_sel_y("storage", ry, row_h)
+            fill_rect_rounded(renderer, _sx(10), int(_anim_y), SW - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
         color = COL_BG if armed else (COL_ACCENT if idx == app.storage_index else COL_TEXT)
         label = action
         if action == "Clear Image Cache":
@@ -9442,6 +13255,12 @@ def draw_storage(renderer, app):
         elif action == "Restore Latest Backup":
             label = (f"Restore Latest Backup ({len(backups)} available, latest {latest_str})"
                      if backups else "Restore Latest Backup (none available)")
+        elif action == "Backup Custom Themes Now":
+            label = (f"Backup Custom Themes Now (last: {latest_theme_str})" if latest_theme_str
+                     else "Backup Custom Themes Now (no backups yet)")
+        elif action == "Restore Custom Themes Backup":
+            label = (f"Restore Custom Themes Backup ({len(theme_backups)} available, latest {latest_theme_str})"
+                     if theme_backups else "Restore Custom Themes Backup (none available)")
         elif action == "Toggle Disk Cache (RAM-only mode)":
             state = "ON (cached to disk)" if app.disk_cache_enabled else "OFF (RAM-only)"
             label = f"Disk Cache: {state}"
@@ -9451,6 +13270,9 @@ def draw_storage(renderer, app):
         elif action == "Toggle Open Last Book on Launch":
             state = "ON" if app.open_last_book_enabled else "OFF"
             label = f"Open Last Book on Launch: {state}"
+        elif action == "Toggle Sound Effects":
+            state = "ON" if app.sound_enabled else "OFF"
+            label = f"Sound Effects: {state}"
         if action == "Pre-render Book Images":
             if app._prerender_active:
                 done, total, scanning = app.prerender_progress()
@@ -9476,8 +13298,10 @@ def draw_storage(renderer, app):
     if app.status_msg and time.time() < app.status_until:
         msg_y = top + min(visible, n_items) * row_h + _sy(20)
         line_h = TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(6)
+        _msg_alpha = app.status_alpha()
         for i, line in enumerate(_status_msg_lines(app.fonts, app.status_msg)):
-            render_text(renderer, app.fonts.ui_small, line, COL_ACCENT, _sx(20), msg_y + i * line_h)
+            render_text(renderer, app.fonts.ui_small, line, COL_ACCENT, _sx(20), msg_y + i * line_h,
+                        alpha=_msg_alpha)
 
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
 
@@ -9485,7 +13309,190 @@ def draw_storage(renderer, app):
 # ============================================================
 # Main loop
 # ============================================================
+_PORTS_LAUNCHER_SH = """#!/bin/sh
+
+# HELP: Read EPUB books with full link, footnote, and image support
+# ICON: picoreader
+# GRID: PicoReader
+
+# v26.07.14.10 BUG FIX (Kaleb's report: quitting PicoReader when launched
+# from roms/PORTS froze on the Library screen after the "Exiting..." toast
+# -- required a hard reboot, no crash log, no exception -- while the exact
+# same quit from Applications worked fine). Root cause confirmed on real
+# device: sourcing func.sh and calling SETUP_APP (the Applications-menu
+# helper) from a Ports-launched script. Real PortMaster ports never call
+# this at all -- they source their own control.txt instead -- so SETUP_APP
+# is suspected of leaving Applications-list-specific lifecycle state (a
+# lock/PID file) that expects a teardown signal only the Applications list
+# ever sends, which a Ports-launched quit never triggers. Confirmed fix on
+# real device: drop func.sh/SETUP_APP entirely for this launch path. Exact
+# internal mechanism NOT fully verified (GitHub blocked automated browsing
+# of MustardOS/internal's script/ folder during troubleshooting) -- this is
+# an empirically-confirmed fix, not a fully explained one.
+# -----------------------------------------------------------------------------
+APP_DIR="/run/muos/storage/application/PicoReader"
+cd "$APP_DIR" || exit 1
+exec python3 "$APP_DIR/main.py"
+"""
+
+
+def _ports_launcher_path():
+    """v26.07.14.11: shared path lookup so the self-install, the removal
+    action, and the Storage screen's conditional visibility check all stay
+    in sync against exactly one definition -- no risk of the uninstall
+    button and the self-install re-creating each other's work out of sync.
+
+    v26.07.14.15 BUG FIX (Kaleb's file-manager screenshot, confirming his
+    actual real, working PortMaster .sh files' location): the previous
+    guess, /run/muos/storage/roms/PORTS, was wrong on TWO counts --
+    (1) wrong base prefix: the real path is under /mnt/union, muOS's
+    unified overlay merging both SD cards (SD1 "mmc" + SD2 "sdcard") into
+    one view -- this IS the "universal shared roms directory" Kaleb asked
+    for, not /run/muos/storage (that prefix is confirmed correct for this
+    app's OWN Applications install path, but doesn't extend to content/
+    roms the way it was assumed to). (2) wrong casing: the real folder is
+    ROMS/Ports (title-case "Ports"), not roms/PORTS (all-caps). This is
+    why self-install logged "dir_existed_before=False" every single boot
+    with zero effect -- it was faithfully creating a stray, never-scanned
+    directory tree at the wrong location instead of ever touching the
+    real one. CONFIRMED via direct file-manager inspection, not inferred
+    by analogy this time."""
+    return "/mnt/union/ROMS/Ports/PicoReader.sh"
+
+
+def _remove_ports_launcher():
+    """v26.07.14.11 (Kaleb's request): deletes roms/PORTS/PicoReader.sh if
+    present, for people who want to fully uninstall PicoReader one day --
+    Archive Manager's Applications removal doesn't know this file exists
+    (it lives outside the Applications folder), so without this it would be
+    silently orphaned, pointing at an install directory that no longer
+    exists. Returns True if a file was actually removed, False if there
+    was nothing to remove. Raises on real OSError -- the Storage screen's
+    caller catches this and shows a status message, same fail-soft
+    principle as every other action here, just without swallowing silently
+    since this one is a direct, deliberate user action worth reporting.
+
+    v26.07.14.12 (Kaleb's follow-up): also persists an opt-out flag in
+    settings.json so _self_install_ports_launcher() stops silently
+    recreating the file on the very next boot -- without this, "Remove"
+    was pointless, since the self-install runs unconditionally every
+    launch. See _reinstall_ports_launcher() for the matching opt back in."""
+    target = _ports_launcher_path()
+    save_settings({"ports_shortcut_opted_out": True})
+    if not os.path.exists(target):
+        return False
+    os.remove(target)
+    _boot_log("removed roms/PORTS/PicoReader.sh (user-requested)\n")
+    return True
+
+
+def _reinstall_ports_launcher():
+    """v26.07.14.12 (Kaleb's request): the opt back in to
+    _remove_ports_launcher()'s opt-out -- clears the settings.json flag
+    and immediately writes the launcher, rather than just clearing the
+    flag and waiting for the next boot's self-install to notice. Returns
+    True/raises exactly like _remove_ports_launcher() so the Storage
+    screen caller can handle both the same way."""
+    save_settings({"ports_shortcut_opted_out": False})
+    return _self_install_ports_launcher(force=True)
+
+
+def _self_install_ports_launcher(force=False):
+    """v26.07.14.09, repair logic added v26.07.14.10: write roms/PORTS/
+    PicoReader.sh if it's missing OR out of date, so PicoReader shows up
+    under Explore Content > Ports as well as Applications, and anyone who
+    already has the old SETUP_APP-calling version (the one with the
+    confirmed exit-hang bug -- see _PORTS_LAUNCHER_SH's own comment) gets
+    it silently replaced on next launch instead of staying stuck with it
+    forever. Compares actual file content, not just existence, so this
+    stays correct across any future launcher-script fix too. Fail-soft --
+    any error here (path doesn't exist, read-only filesystem, permissions)
+    is logged and swallowed, never raised, since this must never be able to
+    block a normal app launch. See this function's caller in main() for the
+    NEEDS REAL-DEVICE CONFIRMATION note on the path itself (CONFIRMED as of
+    v26.07.14.10 -- see that comment).
+
+    v26.07.14.12: respects the settings.json opt-out flag set by
+    _remove_ports_launcher() -- without this check, Remove Ports Shortcut
+    would get silently undone on the very next launch, since this function
+    runs unconditionally at every startup. force=True (only ever passed by
+    _reinstall_ports_launcher(), a direct user action) bypasses the flag
+    check so opting back in doesn't need a second boot to take effect;
+    the normal every-boot call from main() never passes force.
+
+    v26.07.14.14 BUG FIX (Kaleb's report: shortcut never showed up under
+    Ports at all, and /tmp/picoreader_crash.log had NO line about it
+    whatsoever): this used to bail out silently if roms/PORTS didn't
+    resolve as a real directory (os.path.isdir() check, then bare
+    `return`) -- isdir() returning False isn't an exception, so even the
+    fail-soft except clause below never logged it, which is exactly why
+    the log was silent. ORIGINAL GUESS (proven wrong -- Kaleb confirmed he
+    already has real PortMaster games installed and working, so roms/
+    PORTS does exist on his device): assumed the folder had simply never
+    been created. Real cause still UNCONFIRMED -- Kaleb is on a two-SD-
+    card setup, so the more likely explanation is that
+    /run/muos/storage/roms/PORTS (inferred by analogy to this app's own
+    /run/muos/storage/application/PicoReader install path, and to a
+    community forum's reference to /run/muos/storage/info/core) simply
+    isn't the correct resolved path for his card configuration -- e.g. if
+    his real Ports folder lives under whichever SD card muOS's unified
+    storage overlay treats differently. Two changes this version: (1)
+    creates the directory instead of giving up, in case that ever is the
+    real cause on some setup, and (2) ALWAYS logs the exact resolved
+    target path and whether the directory existed before this ran --
+    unconditionally, on every single call, success or not -- so the next
+    real-device test is conclusive instead of another silent no-op."""
+    _boot_log(f"roms/PORTS self-install check: target={_ports_launcher_path()} "
+               f"dir_existed_before={os.path.isdir(os.path.dirname(_ports_launcher_path()))}\n")
+    try:
+        # v26.07.14.15: clean up the stray tree the previous WRONG path
+        # guess (/run/muos/storage/roms/PORTS) may have created via
+        # v26.07.14.14's makedirs call -- that path was never scanned by
+        # muOS (confirmed real path is /mnt/union/ROMS/Ports), so anyone
+        # who ran that version has an orphaned, harmless-but-pointless
+        # empty-ish directory tree sitting on their device. One-time,
+        # best-effort, never blocks the real install below on failure.
+        _stray_old_path = "/run/muos/storage/roms/PORTS/PicoReader.sh"
+        if os.path.exists(_stray_old_path):
+            try:
+                os.remove(_stray_old_path)
+                _boot_log("removed stray old-path file from wrong-path guess\n")
+            except Exception:
+                pass
+
+        if not force and load_settings().get("ports_shortcut_opted_out"):
+            return
+        target = _ports_launcher_path()
+        ports_dir = os.path.dirname(target)
+        os.makedirs(ports_dir, exist_ok=True)
+        if os.path.exists(target):
+            with open(target, "r") as f:
+                if f.read() == _PORTS_LAUNCHER_SH:
+                    return  # already current, nothing to do
+        with open(target, "w") as f:
+            f.write(_PORTS_LAUNCHER_SH)
+        os.chmod(target, 0o755)
+        _boot_log("self-installed/updated roms/PORTS/PicoReader.sh\n")
+    except Exception as e:
+        _boot_log(f"roms/PORTS self-install skipped: {e}\n")
+
+
 def main():
+    global SH  # v26.07.16.15: reassigned below for the RG34XX/RG34XX SP
+               # native short-height profile; must be declared before
+               # any read of SH in this function.
+    # v26.07.14.09 (Kaleb's request): self-install a roms/PORTS/PicoReader.sh
+    # launcher on every startup if it's missing/stale, so PicoReader shows up
+    # under Explore Content > Ports (not just Applications) and gets picked
+    # up by muOS's normal content-launch/History tracking -- without needing
+    # a second manual file drop alongside the .muxapp install. CONFIRMED on
+    # real device (v26.07.14.10 session): /run/muos/storage/roms/PORTS is
+    # the correct live path, and content launched this way IS picked up by
+    # History/last-played, same as any real ROM/port. See
+    # _self_install_ports_launcher()'s own docstring for the SETUP_APP
+    # exit-hang bug this had to work around (fixed same session).
+    _self_install_ports_launcher()
+
     # v0.1.79: CPython's default GIL switch interval (5ms) turned out not
     # to be tight enough on the real ARM device -- Kaleb confirmed a real
     # background-decode stall (image loading, and worse, whole-book
@@ -9523,16 +13530,72 @@ def main():
 
     _boot_log(f"Detected display: {DEV_W}x{DEV_H}\n")
 
-    if (DEV_W, DEV_H) == (SW, SH):
+    # v26.07.16.20: CANVAS PROFILE TABLE, replacing the .15-.19 hand-
+    # written if/elif chain with one data-driven rule (Kaleb's request:
+    # "adapt to ratios without breaking the 720-wide logic"). SW stays
+    # hardcoded 720 everywhere, unchanged -- every entry here is just a
+    # canvas HEIGHT paired with the aspect ratio it represents. For any
+    # detected device, pick whichever canvas height's aspect ratio is
+    # numerically CLOSEST to the device's real aspect ratio -- this is
+    # the exact reasoning that hand-picked 3:2 (not a shrunk-further
+    # 16:9-exact 720x405) for TrimUI Smart Pro in .19, now generalized
+    # so any FUTURE device resolution gets a sensible canvas without
+    # writing a new branch: SDL_RenderSetLogicalSize's own scale-to-fit
+    # already handles the exact-match-vs-scaled-with-bars distinction
+    # automatically (scale lands on exactly 1.0, i.e. zero bars, when
+    # the device's own aspect ratio exactly equals a table entry's --
+    # RG34XX/RG34XX SP, RG28XX/RG35XX/RG40XX, and TrimUI Brick all hit
+    # this for free; TrimUI Smart Pro's genuine 16:9-vs-3:2 mismatch
+    # still gets left/right bars, same as .19).
+    CANVAS_HEIGHT_PROFILES = [
+        (720, "1:1  (RGCubeXX-H)"),
+        (480, "3:2  (RG34XX/RG34XX SP native; nearest fit for 16:9 -- TrimUI Smart Pro)"),
+        (540, "4:3  (TrimUI Brick, RG28XX/RG35XX/RG40XX)"),
+    ]
+
+    def _pick_canvas_height(dev_w, dev_h):
+        if dev_w <= 0 or dev_h <= 0:
+            return SW  # detection garbage -- fall back to the 1:1 square
+        dev_ratio = dev_w / dev_h
+        best_h, best_diff = SW, None
+        for h, _label in CANVAS_HEIGHT_PROFILES:
+            diff = abs(dev_ratio - (SW / h))
+            if best_diff is None or diff < best_diff:
+                best_h, best_diff = h, diff
+        return best_h
+
+    if (DEV_W, DEV_H) == (SW, SW):
+        # v0.1.148: RGCubeXX-H keeps the EXACT original window path (no
+        # fullscreen flag, no scaling) -- zero regression risk on the
+        # primary dev device, byte-identical to every version before
+        # any of this profile work started.
+        SH = SW
         win = SDL.SDL_CreateWindow(b"PicoReader", SDL_WINDOWPOS_CENTERED,
                                     SDL_WINDOWPOS_CENTERED, SW, SH, 0)
     else:
+        SH = _pick_canvas_height(DEV_W, DEV_H)
+        _boot_log(f"Canvas profile: {SW}x{SH}, window {DEV_W}x{DEV_H} "
+                   f"(nearest-aspect match; SDL scale-to-fit adds bars "
+                   f"only if the match isn't exact)\n")
         win = SDL.SDL_CreateWindow(b"PicoReader", SDL_WINDOWPOS_CENTERED,
                                     SDL_WINDOWPOS_CENTERED, DEV_W, DEV_H,
                                     SDL_WINDOW_FULLSCREEN_DESKTOP)
     if not win:
         _boot_log(f"SDL_CreateWindow failed: {SDL.SDL_GetError()}\n")
         sys.exit(1)
+
+    # v26.07.16.23 (Kaleb's final call, removing .21/.22): no render
+    # scale-quality hint at all. .22's linear-only-for-downscale split
+    # was a real, defensible fix for RG28XX/RG35XX/RG40XX's 0.889x
+    # scale (nearest-neighbor that close to 1:1 can drop a thin font
+    # stroke here and there), but Kaleb weighed it against a flat
+    # "keep everything crisp, one simple rule, no per-device branching"
+    # and chose consistency -- the downscale effect is subtle at 0.889x
+    # (not a dramatic ratio), so the simplicity win outweighs a marginal,
+    # possibly-imperceptible improvement. SDL2's own default IS
+    # "nearest" already, so simply not calling SDL_SetHint at all
+    # reproduces this -- no explicit hint call needed, no
+    # SDL_HINT_RENDER_SCALE_QUALITY reference anywhere in this file.
     renderer = SDL.SDL_CreateRenderer(win, -1, 2)
     if not renderer:
         renderer = SDL.SDL_CreateRenderer(win, -1, 1)
@@ -9541,10 +13604,13 @@ def main():
         sys.exit(1)
 
     # v0.1.148: pin the renderer's logical coordinate space to the app's
-    # native 720x720 canvas. On the CubeXX-H this is a 1:1 no-op (window
-    # already is 720x720). On any other resolution SDL2 itself computes
-    # the integer-safe scale-to-fit and centers it -- none of the app's
-    # own layout math (SW/SH/_sx/_sy, used everywhere) has to change.
+    # canvas (SW x SH -- SH picked by the nearest-aspect-match table
+    # above, v26.07.16.20). SDL2 itself computes the integer-safe
+    # scale-to-fit and centers it, landing on scale=1.0 (zero bars)
+    # whenever the device's aspect ratio exactly matches the picked
+    # canvas, or adding bars on whichever axis has leftover room
+    # otherwise -- none of the app's own layout math (SW/SH/_sx/_sy,
+    # used everywhere) has to change.
     SDL.SDL_RenderSetLogicalSize(renderer, SW, SH)
 
     if SDL.SDL_NumJoysticks() > 0:
@@ -9667,6 +13733,15 @@ def main():
 
             if btn:
                 app.dirty = True
+                # v26.07.14.03 (Kaleb's request, adaptive/dynamic budget
+                # for the cold-wrap slice size -- see
+                # _ensure_page_built()'s cold-wrap branch): records the
+                # moment of any REAL button press, so the wrap step size
+                # can ramp back down to small/responsive immediately the
+                # instant input happens, rather than staying on big
+                # slices for the rest of a build just because the old
+                # fixed initial-responsive-window already elapsed.
+                app._last_input_time = time.perf_counter()
                 # v26.07.10.22: arm the extreme-page-queue drain gate on
                 # L2/R2, disarm it on any other button -- see
                 # App._chapter_nav_pending's docstring (App.__init__).
@@ -9677,7 +13752,7 @@ def main():
                     app._chapter_nav_pending = True
                 else:
                     app._chapter_nav_pending = False
-                handle_button(app, btn)
+                handle_button(app, btn, renderer=renderer)
                 if app.quit_requested:
                     # v26.07.10.04: brief exit toast (Kaleb's request)
                     # instead of the window just vanishing the instant B
@@ -9708,8 +13783,46 @@ def main():
                     break
 
         need_redraw = app.dirty
+        _build_only_redraw = False
         if not need_redraw and app.screen == SCREEN_SPLASH:
             need_redraw = True  # must animate every frame, no button press to wait for
+        if not need_redraw and app.screen == SCREEN_READER:
+            # v26.07.13.19 CRITICAL BUG FIX (Kaleb's report): without
+            # this, a page's progressive wrap/warm-load/background-
+            # prerender NEVER advanced unless a button press happened to
+            # force a redraw that frame -- need_redraw = app.dirty only
+            # becomes True on an actual input event or state change, and
+            # NOTHING about a chunk step itself marks the app dirty. So a
+            # person just sitting on a loading page, pressing nothing,
+            # saw the %-progress marker never move at all; it only crept
+            # forward when button-mashing happened to force enough
+            # redraws -- exactly matching Kaleb's report of "~1% per
+            # 3-6 button presses" and pages that would never finish
+            # loading if left alone. This is the same class of gap
+            # already handled for images two lines below
+            # (has_pending_image_updates()) -- extending it to cover the
+            # wrap/warm-load/bg-prerender states this session added.
+            #
+            # Scoped to the CURRENTLY-VIEWED page's own build (live_wrap_
+            # key/live_warmload_key matching (current_file, size_index))
+            # plus the background queue (_bg_wrap_state) -- NOT a blanket
+            # "always redraw on the reader screen", so this stops forcing
+            # extra frames the instant nothing is left to build, exactly
+            # like Kaleb asked ("make sure the idle checker is stopped
+            # so it doesn't cause lag").
+            _wrap_key_for_redraw = (app.state.current_file, app.fonts.size_index)
+            need_redraw = (
+                app._live_wrap_key == _wrap_key_for_redraw
+                or app._live_warmload_key == _wrap_key_for_redraw
+                or app._bg_wrap_state is not None
+            )
+            # v26.07.13.20: this redraw is happening ONLY because a
+            # build is active -- nothing the person did caused it. Marks
+            # it so the throttle below can tell "must render because of
+            # real input/other reasons" apart from "just keeping the
+            # build moving" -- see advance_progressive_builds()'s
+            # docstring for why that distinction matters.
+            _build_only_redraw = need_redraw
         if not need_redraw and app.screen == SCREEN_READER:
             need_redraw = app.has_pending_image_updates()
         if not need_redraw and app.screen == SCREEN_IMAGE_VIEW and app._imgview_span is not None:
@@ -9723,8 +13836,60 @@ def main():
             need_redraw = app._prerender_active
         if not need_redraw and app.status_msg and time.time() < app.status_until:
             need_redraw = True
+        if not need_redraw and _THEME_TRANS_FROM is not None:
+            need_redraw = True  # v26.07.16.07: keep redrawing every
+                                  # frame while the theme color slider
+                                  # transition is in progress
+        if not need_redraw and app._sel_anim_active:
+            need_redraw = True  # v26.07.16.09: keep redrawing every
+                                  # frame while a selection-highlight
+                                  # glide (any list screen) is still
+                                  # mid-animation -- see eased_sel_y()'s
+                                  # docstring for the bug this fixes.
+        app._sel_anim_active = False  # reset BEFORE this frame's draw --
+                                        # eased_sel_y() will set it True
+                                        # again during the draw below if
+                                        # (and only if) a glide is still
+                                        # converging as of THIS frame,
+                                        # which is what next frame's
+                                        # check above will read.
+
+        if need_redraw and _build_only_redraw and \
+                (time.time() - app._last_build_render_time) < READER_BUILD_RENDER_THROTTLE:
+            # v26.07.13.20 (Kaleb's report: real device total cold-build
+            # time, 4:17, far worse than the ~50s dev-hardware-scaled
+            # estimate -- suspected cause: continuous 60fps FULL
+            # rendering during the entire build, competing with the
+            # wrap's own time budget). Advance the build's actual state
+            # every single iteration regardless (unthrottled -- this is
+            # the real work, never slowed down), but only pay for a full
+            # visible render+present a few times a second instead of
+            # every iteration. See advance_progressive_builds()'s
+            # docstring for the full reasoning.
+            app.advance_progressive_builds(renderer)
+            # v26.07.13.26 BUG FIX (Kaleb's report: a build reaching
+            # ~100% doesn't visibly finish -- the "N%" toast just stays
+            # frozen on screen -- until a button is pressed). Same root
+            # cause as v26.07.13.25's fix: once the build actually
+            # completes INSIDE the call just above (self._page_cache_key
+            # now matches the page being viewed), the build-in-progress
+            # condition that's been forcing redraws goes false on the
+            # very next check -- so nothing ever forces one more real,
+            # visible render to replace the stale mid-build toast with
+            # the actual completed page. Detect that exact transition
+            # here and fall through to a real render THIS frame instead
+            # of skipping it, rather than leaving the last throttled
+            # frame's now-stale content on screen indefinitely.
+            if app._page_cache_key != app.state.current_file:
+                time.sleep(0.001)
+                continue
 
         if need_redraw:
+            _tick_theme_transition()  # v26.07.16.07: interpolate COL_*
+                                        # globals BEFORE any draw_*() this
+                                        # frame reads them
+            if _build_only_redraw:
+                app._last_build_render_time = time.time()
             # v0.1.83 fix: clear dirty BEFORE drawing, not after. The old
             # order (draw, then app.dirty=False) raced with the ImageLoader
             # worker thread's on_update() callback (setattr(self,"dirty",
@@ -9776,6 +13941,10 @@ def main():
                 draw_storage(renderer, app)
             elif app.screen == SCREEN_LIBRARY_MENU:
                 draw_library_menu(renderer, app)
+            elif app.screen == SCREEN_THEME_MENU:
+                draw_theme_menu(renderer, app)
+            elif app.screen == SCREEN_THEME_SELECT:
+                draw_theme_select(renderer, app)
             elif app.screen == SCREEN_TEXT_ENTRY:
                 draw_text_entry(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_SOURCES:
@@ -9788,10 +13957,16 @@ def main():
                 draw_download_audio_sources(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_AUDIO_BOOKS:
                 draw_download_audio_books(renderer, app)
+            elif app.screen == SCREEN_DOWNLOAD_VIDEO_SERIES:
+                draw_download_video_series(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_BROWSE:
                 draw_download_browse(renderer, app)
             elif app.screen == SCREEN_DOWNLOAD_HELP:
                 draw_download_help(renderer, app)
+            elif app.screen == SCREEN_LICENSES:
+                draw_licenses(renderer, app)
+            elif app.screen == SCREEN_HELP:
+                draw_app_help(renderer, app)
             elif app.screen == SCREEN_IMAGE_VIEW:
                 draw_image_view(renderer, app)
 
@@ -9816,7 +13991,13 @@ def main():
     SDL.SDL_Quit()
 
 
-def handle_button(app, btn, body_h_px=None):
+def handle_button(app, btn, body_h_px=None, renderer=None):
+    # v26.07.16.01: single choke point for UI sound effects -- see
+    # SND_BTN_MAP's docstring (near SoundEngine) for why this is a flat
+    # button->sound table rather than instrumented per screen branch.
+    _snd = SND_BTN_MAP.get(btn)
+    if _snd:
+        app.play_sound(_snd)
     # body_h_px param kept for call-site compatibility but no longer used
     # -- v0.1.86: replaced with _reader_body_layout(), the same formula
     # draw_reader() uses, so the two can never disagree about body_rows
@@ -9880,6 +14061,11 @@ def handle_button(app, btn, body_h_px=None):
             # step.
             app.toggle_finished(app.books[app.lib_index])
         elif btn == "B":
+            app.play_sound("error")  # v26.07.16.02 (Kaleb's request):
+                                      # the "wonk" sound doubles as the
+                                      # exit-app cue -- distinct/final-
+                                      # feeling without needing a new
+                                      # dedicated sound.
             app.quit_requested = True
         elif btn == "L2" and DOWNLOAD_PLUGINS:
             if len(DOWNLOAD_PLUGINS) == 1:
@@ -9995,18 +14181,14 @@ def handle_button(app, btn, body_h_px=None):
                     # first press -- arm it, same two-press-confirm safety
                     # the old Library-screen SELECT delete used
                     app._menu_delete_armed = True
-            elif choice == "Theme +":
-                new_index = (THEME_INDEX + 1) % len(THEMES)
-                apply_theme(new_index)
-                save_settings({"theme_index": new_index})
-                app._page_cache_key = None
-                app.set_status(f"Theme: {THEMES[new_index]['name']}")
-            elif choice == "Theme -":
-                new_index = (THEME_INDEX - 1) % len(THEMES)
-                apply_theme(new_index)
-                save_settings({"theme_index": new_index})
-                app._page_cache_key = None
-                app.set_status(f"Theme: {THEMES[new_index]['name']}")
+            elif choice == "Themes...":
+                app.theme_menu_index = 0
+                app._theme_menu_return_screen = SCREEN_LIBRARY_MENU
+                app._theme_delete_armed = False  # v26.07.15.30: defensive --
+                                       # every exit path already clears this,
+                                       # but reset explicitly on entry too
+                                       # rather than relying on that alone
+                app.screen = SCREEN_THEME_MENU
             elif choice == "Download Books" and DOWNLOAD_PLUGINS:
                 if len(DOWNLOAD_PLUGINS) == 1:
                     app.open_downloader(DOWNLOAD_PLUGINS[0])
@@ -10021,6 +14203,93 @@ def handle_button(app, btn, body_h_px=None):
                 app.screen = SCREEN_STORAGE
             elif choice == "Back":
                 app.screen = SCREEN_LIBRARY
+
+    elif app.screen == SCREEN_THEME_MENU:
+        n = len(THEME_MENU_ITEMS)
+        if btn == "UP":
+            app.theme_menu_index = (app.theme_menu_index - 1) % n
+            app._theme_delete_armed = False
+        elif btn == "DOWN":
+            app.theme_menu_index = (app.theme_menu_index + 1) % n
+            app._theme_delete_armed = False
+        elif btn == "B":
+            app._theme_delete_armed = False
+            app.screen = app._theme_menu_return_screen
+        elif btn == "A":
+            choice = THEME_MENU_ITEMS[app.theme_menu_index]
+            if choice != "Delete Theme":
+                app._theme_delete_armed = False
+            if choice == "Select Theme...":
+                app._theme_select_prev_index = THEME_INDEX
+                app.theme_select_index = THEME_INDEX
+                app.screen = SCREEN_THEME_SELECT
+            elif choice == "Theme +":
+                themes = all_themes()
+                new_index = (THEME_INDEX + 1) % len(themes)
+                apply_theme(new_index)
+                save_settings({"theme_index": new_index})
+                app._page_cache_key = None
+                app.set_status(f"Theme: {themes[new_index]['name']}")
+            elif choice == "Theme -":
+                themes = all_themes()
+                new_index = (THEME_INDEX - 1) % len(themes)
+                apply_theme(new_index)
+                save_settings({"theme_index": new_index})
+                app._page_cache_key = None
+                app.set_status(f"Theme: {themes[new_index]['name']}")
+            elif choice == "Reset to Default":
+                apply_theme(0)
+                save_settings({"theme_index": 0})
+                app._page_cache_key = None
+                app.set_status(f"Theme: {THEMES[0]['name']}")
+            elif choice == "Randomize Theme":
+                app.randomize_theme(SCREEN_THEME_MENU)
+            elif choice == "Regenerate Theme":
+                app.regenerate_theme(SCREEN_THEME_MENU)
+            elif choice == "Save Regenerated Theme":
+                app.save_regenerated_theme(SCREEN_THEME_MENU)
+            elif choice == "Rename Theme":
+                app.rename_theme(SCREEN_THEME_MENU)
+            elif choice == "Delete Theme":
+                # Same two-press confirm pattern as Delete Book/Clear All
+                # Finished -- destructive, so a single accidental A press
+                # can't lose a saved theme.
+                if app._theme_delete_armed:
+                    app._theme_delete_armed = False
+                    app.delete_theme()
+                else:
+                    local_idx = THEME_INDEX - len(THEMES)
+                    if 0 <= local_idx < len(CUSTOM_THEMES):
+                        app._theme_delete_armed = True
+                    else:
+                        app.set_status("Cycle to one of your saved themes first (Theme +/-)")
+            elif choice == "Back":
+                app.screen = app._theme_menu_return_screen
+
+    elif app.screen == SCREEN_THEME_SELECT:
+        themes = all_themes()
+        n = len(themes)
+        if btn == "UP":
+            app.theme_select_index = (app.theme_select_index - 1) % n
+            apply_theme(app.theme_select_index)  # live preview as you move
+            app._page_cache_key = None
+        elif btn == "DOWN":
+            app.theme_select_index = (app.theme_select_index + 1) % n
+            apply_theme(app.theme_select_index)
+            app._page_cache_key = None
+        elif btn == "B":
+            # Cancel -- revert to whatever was active before this screen
+            # opened, same "preview live, revert on cancel" contract as
+            # Randomize/Regenerate's own draft mechanism.
+            apply_theme(app._theme_select_prev_index)
+            save_settings({"theme_index": THEME_INDEX})
+            app._page_cache_key = None
+            app.screen = SCREEN_THEME_MENU
+        elif btn == "A":
+            # Confirm -- already applied live by UP/DOWN above, just persist.
+            save_settings({"theme_index": THEME_INDEX})
+            app.set_status(f"Theme: {themes[app.theme_select_index]['name']}")
+            app.screen = SCREEN_THEME_MENU
 
     elif app.screen == SCREEN_DOWNLOAD_SOURCES:
         n = len(DOWNLOAD_PLUGINS)
@@ -10173,12 +14442,52 @@ def handle_button(app, btn, body_h_px=None):
                                      SCREEN_DOWNLOAD_VIDEO_SOURCES,
                                      on_validate=_on_video_search_validate,
                                      hint='e.g. "faith", "family life", "Jeremiah"')
+            elif source and source.get("subcategories"):
+                app._pending_video_source = source
+                app.video_series_index = 0
+                app.screen = SCREEN_DOWNLOAD_VIDEO_SERIES
             elif source:
+                app._pending_video_source = None
                 app.open_plugin_video_list(source["loader"], **source.get("args", {}))
             else:
                 # choice == "Back", or (defensive) an unrecognized label --
                 # either way, there's nothing to open.
                 app.screen = SCREEN_DOWNLOAD_CATEGORIES
+
+    elif app.screen == SCREEN_DOWNLOAD_VIDEO_SERIES:
+        # v26.07.15.09: sub-picker for VIDEO_SOURCES entries marked
+        # "subcategories" (currently just "Series") -- only reachable via
+        # one of those, so app._pending_video_source is always set here.
+        # Choosing an entry normally merges its own "key"/"label" into
+        # the parent source's "loader"/"args" (list_mediator_category
+        # (key, title)), exactly like the Bible-book picker merges
+        # booknum in.
+        #
+        # v26.07.15.15: a subcategory entry MAY instead carry its own
+        # "loader" (and optional "args") to fully override the parent's
+        # -- needed when a specific entry has real behavior beyond a
+        # plain category fetch (e.g. Series > "The Good News According
+        # to Jesus" uses list_good_news_items(), which re-sorts by
+        # episode number instead of the generic newest-first date sort,
+        # since these episodes weren't published in narrative order --
+        # see that function's own v26.07.09.14 bug-fix comment). Generic
+        # mechanism, not JW-specific: any future plugin's subcategory
+        # can do the same by adding "loader"/"args" to its own entry.
+        source = app._pending_video_source
+        subs = source.get("subcategories", []) if source else []
+        n = len(subs)
+        if btn == "UP": app.video_series_index = (app.video_series_index - 1) % n if n else 0
+        elif btn == "DOWN": app.video_series_index = (app.video_series_index + 1) % n if n else 0
+        elif btn == "B": app.screen = SCREEN_DOWNLOAD_VIDEO_SOURCES
+        elif btn == "A" and n:
+            sub = subs[app.video_series_index]
+            if "loader" in sub:
+                app.open_plugin_video_list(sub["loader"], **sub.get("args", {}))
+            else:
+                args = dict(source.get("args", {}))
+                args["key"] = sub["key"]
+                args["title"] = sub["label"]
+                app.open_plugin_video_list(source["loader"], **args)
 
     elif app.screen == SCREEN_DOWNLOAD_AUDIO_SOURCES:
         # v26.07.10.01/.02: same shape as SCREEN_DOWNLOAD_VIDEO_SOURCES
@@ -10378,8 +14687,15 @@ def handle_button(app, btn, body_h_px=None):
                 # back there, letting Kaleb pick a different video source
                 # without walking all the way back through Library Menu >
                 # Download Books > JW > Videos again.
+                # v26.07.15.09: if a Series sub-category was chosen first
+                # (a "subcategories" source), go back to
+                # SCREEN_DOWNLOAD_VIDEO_SERIES instead, mirroring the
+                # audio branch just below exactly -- same reasoning,
+                # picking a different series shouldn't re-open Videos
+                # from scratch.
                 app.dl_is_video = False
-                app.screen = SCREEN_DOWNLOAD_VIDEO_SOURCES
+                app.screen = (SCREEN_DOWNLOAD_VIDEO_SERIES if app._pending_video_source
+                              else SCREEN_DOWNLOAD_VIDEO_SOURCES)
             elif app.dl_is_audio:
                 # v26.07.10.01: same idea as the video branch just above --
                 # B goes back to whichever audio picker screen got you
@@ -10434,6 +14750,22 @@ def handle_button(app, btn, body_h_px=None):
         elif btn == "B":
             app.screen = app.dl_help_return_screen
 
+    elif app.screen == SCREEN_LICENSES:
+        if btn == "UP":
+            app.licenses_scroll = max(0, app.licenses_scroll - 1)
+        elif btn == "DOWN":
+            app.licenses_scroll += 1  # clamped for real inside draw_licenses()
+        elif btn == "B":
+            app.screen = app.licenses_return_screen
+
+    elif app.screen == SCREEN_HELP:
+        if btn == "UP":
+            app.help_scroll = max(0, app.help_scroll - 1)
+        elif btn == "DOWN":
+            app.help_scroll += 1  # clamped for real inside draw_app_help()
+        elif btn == "B":
+            app.screen = app.help_return_screen
+
     elif app.screen == SCREEN_TEXT_ENTRY:
         rows = TEXT_ENTRY_GRID
         if btn == "UP":
@@ -10479,7 +14811,22 @@ def handle_button(app, btn, body_h_px=None):
                         callback(app, value)
 
     elif app.screen == SCREEN_READER:
-        app._ensure_page_built()
+        # v26.07.13.14 BUG FIX (found while testing B/link behavior on a
+        # still-building extreme page, Kaleb's request): this call used
+        # to always run with renderer=None (handle_button() had no
+        # renderer parameter at all) -- harmless before progressive
+        # wrapping existed (the wrap was ALWAYS a single blocking call
+        # either way), but _ensure_page_built()'s progressive branch
+        # only activates when renderer is not None. With renderer=None
+        # here, EVERY button press on a still-building extreme page
+        # (not just B -- this line runs for ALL of them) silently fell
+        # back to the old one-shot _wrap() and fully completed the
+        # ENTIRE remaining page synchronously, right here, before the
+        # button's own action even ran -- defeating the whole point of
+        # chunking. Passing the real renderer through fixes it: this
+        # now takes one bounded slice like every other call, same as
+        # draw_reader()'s own call the same frame.
+        app._ensure_page_built(renderer)
         visible_spans = app.visible_span_indices(line_h, body_rows)
         step = 10 if app.fast_scroll else 1
         if btn == "UP":
@@ -10497,9 +14844,9 @@ def handle_button(app, btn, body_h_px=None):
                 if pos + step < len(visible_spans):
                     app.selected_span = visible_spans[pos + step]
                 else:
-                    app.scroll = min(app.scroll + step, max(0, len(app._lines) - body_rows))
+                    app.scroll = min(app.scroll + step, app._max_scroll(line_h, body_rows))
             else:
-                app.scroll = min(app.scroll + step, max(0, len(app._lines) - body_rows))
+                app.scroll = min(app.scroll + step, app._max_scroll(line_h, body_rows))
         elif btn == "LEFT":
             if visible_spans and app.selected_span in visible_spans:
                 pos = visible_spans.index(app.selected_span)
@@ -10515,9 +14862,9 @@ def handle_button(app, btn, body_h_px=None):
                 if pos + 1 < len(visible_spans):
                     app.selected_span = visible_spans[pos + 1]
                 else:
-                    app.scroll = min(app.scroll + 1, max(0, len(app._lines) - body_rows))
+                    app.scroll = min(app.scroll + 1, app._max_scroll(line_h, body_rows))
             else:
-                app.scroll = min(app.scroll + 1, max(0, len(app._lines) - body_rows))
+                app.scroll = min(app.scroll + 1, app._max_scroll(line_h, body_rows))
         elif btn == "A":
             app.follow_selected()
         elif btn == "B":
@@ -10592,23 +14939,22 @@ def handle_button(app, btn, body_h_px=None):
                     app.set_status(f"Font size: {pt}pt (smallest)")
                 else:
                     app.set_status(f"Font size: {pt}pt")
-            elif choice == "Theme +":
-                new_index = (THEME_INDEX + 1) % len(THEMES)
-                apply_theme(new_index)
-                save_settings({"theme_index": new_index})
-                app._page_cache_key = None
-                app.set_status(f"Theme: {THEMES[new_index]['name']}")
-            elif choice == "Theme -":
-                new_index = (THEME_INDEX - 1) % len(THEMES)
-                apply_theme(new_index)
-                save_settings({"theme_index": new_index})
-                app._page_cache_key = None
-                app.set_status(f"Theme: {THEMES[new_index]['name']}")
+            elif choice == "Themes...":
+                app.theme_menu_index = 0
+                app._theme_menu_return_screen = SCREEN_MENU
+                app._theme_delete_armed = False  # v26.07.15.30: same
+                                       # defensive reset as the Library
+                                       # Menu's Themes... entry above
+                app.screen = SCREEN_THEME_MENU
             elif choice == "Immersive Mode":
                 app.immersive_mode = not app.immersive_mode
                 save_settings({"immersive_mode": app.immersive_mode})
                 # stays open, same as Theme +/- -- lets the label update
                 # in place without re-opening the menu
+            elif choice == "Sound Effects":
+                app.sound_enabled = not app.sound_enabled
+                save_settings({"sound_enabled": app.sound_enabled})
+                # stays open, same pattern as Immersive Mode above
             elif choice == "Library":
                 app.save_progress()
                 app.refresh_library()
@@ -10629,6 +14975,8 @@ def handle_button(app, btn, body_h_px=None):
                 # isn't lost by exiting straight from the reader instead
                 # of going through Library's B-to-quit path first.
                 app.save_progress()
+                app.play_sound("error")  # v26.07.16.02: same exit cue
+                                          # as Library's B-to-quit path
                 app.quit_requested = True
 
     elif app.screen == SCREEN_TOC:
@@ -10826,6 +15174,19 @@ def handle_button(app, btn, body_h_px=None):
                 save_settings({"open_last_book_enabled": app.open_last_book_enabled})
                 state = "ON" if app.open_last_book_enabled else "OFF"
                 app.set_status(f"Open Last Book on Launch: {state}")
+            elif action == "Toggle Sound Effects":
+                app.sound_enabled = not app.sound_enabled
+                save_settings({"sound_enabled": app.sound_enabled})
+                state = "ON" if app.sound_enabled else "OFF"
+                app.set_status(f"Sound Effects: {state}")
+            elif action == "Help":
+                app.help_return_screen = SCREEN_STORAGE
+                app.help_scroll = 0
+                app.screen = SCREEN_HELP
+            elif action == "Credits / License":
+                app.licenses_return_screen = SCREEN_STORAGE
+                app.licenses_scroll = 0
+                app.screen = SCREEN_LICENSES
             elif action == "Pre-render Book Images":
                 # v0.1.82: confirmed on-device (Kaleb: "full native
                 # instantaneous image rendering") that native_jpeg.py's
@@ -10859,6 +15220,26 @@ def handle_button(app, btn, body_h_px=None):
                     app.refresh_storage_stats()
                 else:
                     app.set_status("Nothing to back up -- no bookmarks yet")
+            elif action == "Backup Custom Themes Now":
+                # Same non-destructive/instant reasoning as Backup
+                # Bookmarks Now above.
+                fname = backup_custom_themes()
+                if fname:
+                    app.set_status(f"Backed up to backups/{fname}")
+                    app.refresh_storage_stats()
+                else:
+                    app.set_status("Nothing to back up -- no custom themes yet")
+            elif action == "Reinstall Ports Shortcut":
+                # v26.07.14.12: non-destructive, instant, same reasoning as
+                # Backup Bookmarks Now above -- this only ever ADDS the
+                # shortcut back (and clears the opt-out flag), never
+                # touches anything a person could lose, so no confirm
+                # needed even though its sibling Remove does need one.
+                try:
+                    _reinstall_ports_launcher()
+                    app.set_status("Ports shortcut reinstalled")
+                except Exception as e:
+                    app.set_status(f"Couldn't reinstall Ports shortcut: {e}")
             elif app._storage_confirm_idx == app.storage_index:
                 # second A on the same destructive/data-changing action --
                 # actually do it
@@ -10894,8 +15275,58 @@ def handle_button(app, btn, body_h_px=None):
                         app.refresh_storage_stats()
                     else:
                         app.set_status("No backup found to restore")
+                elif action == "Restore Custom Themes Backup":
+                    # v26.07.15.23 BUG FIX: if a randomized-but-not-yet-
+                    # saved draft was the currently active theme, its
+                    # position in all_themes() is always LAST -- but
+                    # "last" is a moving target as CUSTOM_THEMES' length
+                    # changes. Blindly re-applying the pre-restore
+                    # THEME_INDEX (as this used to do) could silently
+                    # land on a real restored custom theme instead of
+                    # the still-pending draft, if the restored list's
+                    # length differs from what it was when the draft
+                    # was generated. Captured BEFORE the restore call,
+                    # since all_themes()'s length is about to change.
+                    was_showing_draft = (_DRAFT_THEME is not None and
+                                          THEME_INDEX == len(all_themes()) - 1)
+                    fname = restore_latest_custom_themes_backup()
+                    if fname:
+                        app.set_status(f"Restored {fname} ({len(CUSTOM_THEMES)} theme(s))")
+                        app.refresh_storage_stats()
+                        if was_showing_draft:
+                            # Draft is unaffected by the restore (it's
+                            # session-only, not part of CUSTOM_THEMES)
+                            # and always sits last -- re-find that spot.
+                            apply_theme(len(all_themes()) - 1)
+                        else:
+                            # Currently showing a fixed THEMES entry (index
+                            # unaffected) or a real custom slot (index may
+                            # now resolve to a different theme, or be out
+                            # of range) -- re-apply defensively, same
+                            # "clamp handles it" pattern apply_theme()
+                            # already uses everywhere else.
+                            apply_theme(THEME_INDEX)
+                        app._page_cache_key = None
+                    else:
+                        app.set_status("No backup found to restore")
+                elif action == "Remove Ports Shortcut":
+                    # v26.07.14.11: same fail-soft-to-a-status-message
+                    # principle as every other action here -- this only
+                    # ever touches one small .sh file, never anything a
+                    # person would lose real data from, but a permission/
+                    # read-only-filesystem error is still worth SHOWING
+                    # rather than silently swallowing, unlike the
+                    # self-install's own log-and-move-on version of this.
+                    try:
+                        if _remove_ports_launcher():
+                            app.set_status("Ports shortcut removed")
+                        else:
+                            app.set_status("No Ports shortcut found to remove")
+                    except Exception as e:
+                        app.set_status(f"Couldn't remove Ports shortcut: {e}")
             elif action in ("Clear Image Cache", "Clean Up Orphaned Bookmarks",
-                             "Restore Latest Backup"):
+                             "Restore Latest Backup", "Restore Custom Themes Backup",
+                             "Remove Ports Shortcut"):
                 # first A on a destructive/data-changing action -- arm it,
                 # require a second press to confirm
                 app._storage_confirm_idx = app.storage_index

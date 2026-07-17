@@ -321,13 +321,28 @@ def download(item, dest_dir):
     if not book_id:
         return False, "No book ID for this item", None
 
-    dest_path = os.path.join(dest_dir, item["filename"])
+    # v26.07.15.16: sanitize with basename() before join -- filename
+    # comes from the Gutenberg API response, which is trusted, but
+    # this is a cheap defense-in-depth guard against a spoofed/MITM'd
+    # response trying to write outside dest_dir via "../" segments.
+    # basename() also strips any leading path, so real filenames
+    # (always a plain "title.epub" string) are completely unaffected.
+    safe_filename = os.path.basename(item["filename"])
+    dest_path = os.path.join(dest_dir, safe_filename)
     if os.path.exists(dest_path):
-        return False, f'"{item["filename"]}" already in Library', dest_path
+        return False, f'"{safe_filename}" already in Library', dest_path
 
     url, err = _resolve_download_url(book_id)
     if not url:
         return False, err or "Could not resolve a download link", None
+
+    # v26.07.15.17: gutenberg.org's own OPDS response supplies `url`
+    # unvalidated -- if that response were ever spoofed/MITM'd, a
+    # non-https URL (e.g. file:// for local-file disclosure) could
+    # otherwise be handed straight to urlopen(). Real Gutenberg links
+    # are always https, so this costs nothing for legitimate downloads.
+    if not url.startswith("https://"):
+        return False, "Rejected non-https download URL", None
 
     tmp_path = dest_path + ".part"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})

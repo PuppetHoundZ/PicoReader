@@ -39,6 +39,16 @@ NS = {
     "epub": "http://www.idpf.org/2007/ops",
 }
 
+# v26.07.15.17: decompression-bomb guard. zipfile.getinfo().file_size is
+# read from the zip's central directory (no decompression needed to
+# read it), so this check is free. A malicious EPUB could store a tiny
+# compressed entry that decompresses to hundreds of MB/GB and exhaust
+# the device's 1GB RAM. The largest known REAL single spine file (the
+# "Track Your Bible Reading" page, ~4.5M chars) decompresses to well
+# under 10MB, so 64MB leaves generous headroom for any real book while
+# still refusing anything bomb-sized.
+MAX_SINGLE_FILE_DECOMPRESSED_BYTES = 64 * 1024 * 1024
+
 # v0.1.151: populated by main.py at startup (set_active_glyph_subs()),
 # after it checks the ACTIVE bundled font's real cmap via
 # TTF_GlyphIsProvided32 -- see the call site in main.py right after
@@ -270,10 +280,33 @@ class EpubDocument:
         self.anchor_cache_path = anchor_cache_path
 
     def _read(self, path: str) -> str:
+        # v26.07.15.17: check the (free, no-decompression) declared
+        # size before actually decompressing -- see
+        # MAX_SINGLE_FILE_DECOMPRESSED_BYTES's comment for why.
+        try:
+            declared_size = self.zip.getinfo(path).file_size
+        except KeyError:
+            declared_size = 0
+        if declared_size > MAX_SINGLE_FILE_DECOMPRESSED_BYTES:
+            raise ValueError(
+                f"{path} declares {declared_size} bytes uncompressed, "
+                f"exceeding the {MAX_SINGLE_FILE_DECOMPRESSED_BYTES}-byte safety cap"
+            )
         with self.zip.open(path) as f:
             return f.read().decode("utf-8", errors="replace")
 
     def _parse_xml(self, text: str):
+        # v26.07.15.16: stdlib ElementTree doesn't guard against XML
+        # entity-expansion ("billion laughs") bombs -- a tiny malicious
+        # container.xml/opf/ncx/nav file could define nested custom
+        # entities that expand to gigabytes and hang/crash the app on
+        # 1GB RAM. Real EPUBs never define custom ENTITYs in these
+        # files, so refusing any DOCTYPE with an ENTITY declaration is
+        # a safe, zero-cost guard -- cheap substring check, no real
+        # book affected. Raises ValueError, which existing callers
+        # already handle the same way a malformed-XML ParseError would.
+        if "<!ENTITY" in text:
+            raise ValueError("XML entity declarations are not permitted in EPUB metadata files")
         return ET.fromstring(text.encode("utf-8"))
 
     def _resolve(self, base_dir: str, href: str) -> str:
@@ -526,7 +559,12 @@ class EpubDocument:
                     try:
                         root = self._parse_xml(self._read(name))
                         ids = {e.get("id") for e in root.iter() if e.get("id")}
-                    except ET.ParseError:
+                    except (ET.ParseError, ValueError):
+                        # v26.07.15.16: _parse_xml's entity-bomb guard
+                        # raises ValueError (not ET.ParseError) -- must
+                        # be caught here too, or a malicious file turns
+                        # this "skip and continue" fallback into an
+                        # uncaught crash instead.
                         continue
                 self._anchor_index[name] = ids
 

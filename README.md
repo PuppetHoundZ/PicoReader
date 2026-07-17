@@ -63,11 +63,19 @@ the same hardware and ended up becoming the main passion project.
   straight past it) before landing in your Library or last-read book.
 - **Graceful handling of unusually large pages** — a few real-world
   EPUBs have individual pages that are genuinely huge (footnote-heavy
-  reference works, long daily-reading schedules). PicoReader shows a
-  progress screen while it prepares one of these, caches the result so
-  it's instant on every future visit, and lets you back out or jump
-  chapters mid-preparation instead of forcing you to wait — the page
-  keeps preparing in the background while you keep reading elsewhere.
+  reference works, long daily-reading schedules — one real example
+  weighs in at 4.5 million characters on a single page). PicoReader
+  builds these progressively in the background, a chunk at a time, so
+  the page is already readable and scrollable while the rest keeps
+  building behind it — no long blocking wait, no frozen screen. The
+  finished result is cached so every future visit is instant, and you
+  can back out or jump chapters mid-build at any time.
+- **Built with reliability in mind** — EPUB parsing is hardened against
+  malformed or maliciously-crafted files (a single bad book can't crash
+  the reader, corrupt your library, or write outside its own folder),
+  and every on-screen/on-disk cache is bounded in size, so long reading
+  sessions stay within the device's memory rather than growing
+  unbounded over time.
 
 ## Controls
 
