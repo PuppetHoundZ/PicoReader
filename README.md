@@ -22,27 +22,6 @@ running PICO-8 games (which are natively square), with minimalism as
 the whole point. The ebook reader started as a smaller side idea on
 the same hardware and ended up becoming the main passion project.
 
-## Screenshots
-
-<p align="center">
-  <img src="screenshots/library.png" width="360" alt="Library screen listing eleven public-domain books sorted title A-Z, with A Room with a View highlighted">
-  <img src="screenshots/reader.png" width="360" alt="Reader screen showing the opening page of The Adventures of Sherlock Holmes in the Default theme">
-</p>
-
-<p align="center"><em>Library and Reader screens, captured directly from PicoReader's real rendering code (headless SDL2, real bundled font, real books) — not mockups.</em></p>
-
-### Themes
-
-<p align="center">
-  <img src="screenshots/theme_default.png" width="140" alt="Default theme sample page">
-  <img src="screenshots/theme_dim_warm.png" width="140" alt="Dim Warm theme sample page">
-  <img src="screenshots/theme_deep_amber.png" width="140" alt="Deep Amber theme sample page">
-  <img src="screenshots/theme_red_shift.png" width="140" alt="Red Shift theme sample page">
-  <img src="screenshots/theme_adventure.png" width="140" alt="Adventure theme sample page">
-</p>
-
-<p align="center"><em>Default · Dim Warm · Deep Amber · Red Shift · Adventure</em></p>
-
 ## Quick start
 
 1. Grab `PicoReader.muxapp` from [Releases](../../releases).
@@ -164,10 +143,24 @@ it looks right — or doesn't — please open an issue or PR.
 
 ## Building the `.muxapp` yourself
 
-The app is just the contents of this repo. Zip the folder so its files
-sit at the **root** of the zip (not inside an extra `application/`
-folder), name it `PicoReader.muxapp`, and install it the same way as a
-downloaded release.
+The app is just the contents of this repo. Stage everything inside a
+folder named `PicoReader/` (`main.py`, `epub_engine.py`, `mini_jpeg.py`,
+`native_image.py`, `gutenberg_fetch.py`, `mux_launch.sh`, `assets/`,
+`README.md`, `LICENSE.md`), then zip from **one level above** that
+folder so `PicoReader/` itself is the zip's top-level entry:
+
+```
+zip -r PicoReader.muxapp PicoReader/
+```
+
+Don't zip from inside the staging folder (e.g. `zip -r ../out.muxapp .`)
+— that omits the wrapping folder, and muOS's unpacker will dump the
+files straight into `applications/` instead of `applications/PicoReader/`,
+which breaks the install silently (the app just won't launch, with no
+clear error). You can sanity-check any `.muxapp` before installing with
+`unzip -l PicoReader.muxapp` — every path listed should start with
+`PicoReader/`. Name the finished file `PicoReader.muxapp` and install it
+the same way as a downloaded release.
 
 ## Project files
 
@@ -207,5 +200,7 @@ me.
 ## Credits
 
 - [DejaVu Fonts](https://dejavu-fonts.github.io/) — public domain
+  changes over a Bitstream Vera base, permissively licensed
+- Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-H
   changes over a Bitstream Vera base, permissively licensed
 - Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-H
