@@ -1,11 +1,16 @@
+Scope: LICENSE.md (pure MIT text) covers this project's own source code --
+main.py, epub_engine.py, mini_jpeg.py, mux_launch.sh, gutenberg_fetch.py,
+native_image.py, jw_fetch.py, and PLUGIN_TEMPLATE.py. It does NOT cover the
+bundled fonts below, which ship under the separate, permissive license
+described in this file.
+
 Bundled fonts: DejaVu Sans Condensed -- assets/font.ttf (Regular),
 assets/font-bold.ttf (Bold), assets/font-italic.ttf (Oblique),
 assets/font-bolditalic.ttf (Bold Oblique).
 
-Full license text (bitstream-vera license, a permissive font license
-predating and distinct from OFL 1.1) has moved into the project's
-consolidated LICENSE file, alongside the MIT license that covers this
-project's own source code. See LICENSE in the repo root.
+License summary follows below (bitstream-vera license, a permissive font
+license predating and distinct from OFL 1.1). Full canonical text:
+https://dejavu-fonts.github.io/License.html
 
 Source: the fonts-dejavu-core Debian/Ubuntu package (version 2.37-8),
 upstream https://dejavu-fonts.github.io/. Embedded name-table version
