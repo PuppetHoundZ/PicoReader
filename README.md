@@ -22,6 +22,27 @@ running PICO-8 games (which are natively square), with minimalism as
 the whole point. The ebook reader started as a smaller side idea on
 the same hardware and ended up becoming the main passion project.
 
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/library.png" width="360" alt="Library screen listing eleven public-domain books sorted title A-Z, with A Room with a View highlighted">
+  <img src="screenshots/reader.png" width="360" alt="Reader screen showing the opening page of The Adventures of Sherlock Holmes in the Default theme">
+</p>
+
+<p align="center"><em>Library and Reader screens, captured directly from PicoReader's real rendering code (headless SDL2, real bundled font, real books) — not mockups.</em></p>
+
+### Themes
+
+<p align="center">
+  <img src="screenshots/theme_default.png" width="140" alt="Default theme sample page">
+  <img src="screenshots/theme_dim_warm.png" width="140" alt="Dim Warm theme sample page">
+  <img src="screenshots/theme_deep_amber.png" width="140" alt="Deep Amber theme sample page">
+  <img src="screenshots/theme_red_shift.png" width="140" alt="Red Shift theme sample page">
+  <img src="screenshots/theme_adventure.png" width="140" alt="Adventure theme sample page">
+</p>
+
+<p align="center"><em>Default · Dim Warm · Deep Amber · Red Shift · Adventure</em></p>
+
 ## Quick start
 
 1. Grab `PicoReader.muxapp` from [Releases](../../releases).
@@ -200,7 +221,5 @@ me.
 ## Credits
 
 - [DejaVu Fonts](https://dejavu-fonts.github.io/) — public domain
-  changes over a Bitstream Vera base, permissively licensed
-- Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-H
   changes over a Bitstream Vera base, permissively licensed
 - Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-H
