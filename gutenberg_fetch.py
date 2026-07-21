@@ -1,7 +1,7 @@
 """
 gutenberg_fetch.py
 
-Current version: v26.07.12.27 (matches main.py's date-based scheme,
+Current version: v26.07.20.03 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Inline "# vYY.MM.DD.XX" comments document non-obvious
 behavior near the relevant code, same convention as main.py.
 
@@ -207,6 +207,115 @@ CATEGORY_TOPIC = {
     CATEGORY_TRAVEL:               "Travel",
 }
 
+# ---------------------------------------------------------------------------
+# Adult-content filter (v26.07.20.01) -- always on, no user toggle.
+#
+# WHY THIS EXISTS: OPDS search.opds results carry only title/author/id per
+# entry -- no subject/category tags (confirmed live: a book's own
+# {id}.opds detail page DOES carry <category> tags incl. bookshelf/subject
+# links, but lightweight search-result entries do not). Per-entry live
+# tag-checking isn't possible without an extra request PER RESULT, which is
+# both slow on this hardware and against Gutenberg's own ToS ("no more
+# requests than a user with a browser would make"). Instead: a static ID
+# blocklist snapshotted directly from Gutenberg's own bookshelves/subjects,
+# confirmed 2026-07-20, all pages walked until an empty page confirmed the
+# end:
+#   - Bookshelf 703 "Sexuality & Erotica"        -- 125 IDs
+#   - Bookshelf 33  "Erotic Fiction"              -- 16 IDs (overlap)
+#   - Subject 10417 "Pornography"                 -- 1 new ID (51015)
+#   - All 14 "Erotic *" LCSH subject headings (fiction/literature/poetry,
+#     by language: French/Chinese/Latin/Portuguese/American/English, plus
+#     "Erotic literature -- History and criticism" and "-- Early works to
+#     1800") -- 82 unique IDs, 30 newly found beyond the above
+#   - 2 IDs (67025, 29049) found via live "Subject: Erotic literature"
+#     per-book tag spot-checks, filed under neither bookshelf nor any of
+#     the 14 subject headings above
+# 170 unique IDs total, this is now a systematic sweep of every Gutenberg
+# LCSH heading with "Erotic" or "Pornography" in the name, not a spot check.
+# Backed by a small title/subtitle keyword check as defense-in-depth for
+# anything not yet caught by any of the above.
+#
+# NOTE ON SCOPE -- checked and DELIBERATELY EXCLUDED (legitimate, not
+# pornography):
+#   - Subject 8217  "Sex instruction" -- historical sex-ed/medical texts
+#     (e.g. Margaret Sanger's "What Every Girl Should Know")
+#   - Subject 32254 "Sex in literature" -- incl. Jeannette Foster's academic
+#     survey "Sex variant women in literature"
+#   - Subject 24799 "Sex -- Humor" -- incl. Thurber & E.B. White's classic
+#     satire "Is Sex Necessary?"
+#   - Subject 33938 "Sex -- Fiction" -- general fiction thematically tagged
+#     with sex/relationships (pulp sci-fi, etc.), not erotica
+#   - Subject 31474 "Nudity -- Therapeutic use" -- historical German
+#     naturism/health-gymnastics text
+# A few IDs from subjects 11120 and 15837 (sex-ed/caricature subjects) do
+# appear below only because they're independently filed under bookshelf 703
+# by Gutenberg itself, not because those subjects were blocked wholesale.
+#
+# This list is a snapshot, not live -- Gutenberg adds new public-domain
+# scans over time. Re-fetch periodically to refresh BLOCKED_GUTENBERG_IDS
+# if accuracy drift matters.
+BLOCKED_GUTENBERG_IDS = frozenset({
+    2959, 2965, 3726, 4300, 5224, 5225, 5325, 6852, 7875, 7889, 13102,
+    13161, 13610, 13611, 13612, 13614, 13722, 13971, 13972, 14005, 14323,
+    14609, 14969, 15858, 16135, 16820, 16885, 16920, 17707, 17779, 18370,
+    18610, 19591, 19924, 20028, 20244, 20568, 21840, 23238, 23609, 23680,
+    24156, 24766, 25286, 25305, 25543, 26456, 26562, 26607, 26685, 26739,
+    26804, 26806, 26807, 26808, 26809, 26837, 27269, 27827, 28279, 28402,
+    28521, 28522, 28718, 28789, 28812, 29049, 29827, 29896, 29903, 30254,
+    31284, 31352, 31671, 31732, 36378, 36528, 37356, 37491, 37776, 39220,
+    39305, 39938, 40496, 40623, 40877, 40902, 41873, 42075, 42212, 42406,
+    42586, 43438, 43712, 43757, 43822, 43823, 44181, 44368, 44877, 45150,
+    47482, 47501, 47947, 48943, 49855, 51015, 52059, 52205, 53807, 53823,
+    53944, 53964, 54419, 54672, 54713, 56156, 56779, 57284, 57331, 57865,
+    57870, 58254, 58475, 58522, 58689, 59827, 60229, 60825, 60827, 60896,
+    60918, 60968, 61091, 61162, 61239, 61303, 61408, 61579, 61920, 61980,
+    62024, 62120, 62300, 62705, 63246, 63274, 63305, 63329, 63577, 63679,
+    64830, 65130, 66565, 66781, 67025, 67026, 67961, 67969, 68400, 69126,
+    69311, 69939, 71898, 73144, 76252, 76353, 76646, 76833, 76836,
+})
+
+# Keyword backstop -- lowercase substring match against title + subtitle
+# (author). Kept short and high-signal on purpose: safety net for gaps in
+# the ID snapshot above, not the primary mechanism -- favors precision over
+# an exhaustive list that risks false-positives against legitimate
+# literature/medical/history titles.
+_BLOCKED_KEYWORDS = (
+    "erotic", "erotica", "pornograph", "kama sutra",
+)
+
+
+def _is_blocked(item):
+    if item.get("_gb_id") in BLOCKED_GUTENBERG_IDS:
+        return True
+    haystack = f'{item.get("title", "")} {item.get("subtitle", "")}'.lower()
+    return any(kw in haystack for kw in _BLOCKED_KEYWORDS)
+
+
+# v26.07.20.02: live tag check, used only at download time (not display
+# time -- see WHY THIS EXISTS above for why display-time results can't
+# afford a per-item request). download() already fetches this book's own
+# .opds detail page once to resolve the real EPUB URL -- that response DOES
+# carry real <category> tags (LCSH subject terms + a "related" link back to
+# any bookshelf it's filed under, e.g. title="In Category: Sexuality &
+# Erotica..."). Checking those tags here is zero extra network cost and
+# catches anything genuinely new that the static snapshot above hasn't seen
+# yet -- the live counterpart to the offline blocklist, not a replacement
+# for it (still worth having the static list so blocked items never even
+# display in the first place).
+_LIVE_TAG_KEYWORDS = ("erotic", "pornograph")
+
+
+def _detail_page_is_blocked(root):
+    for cat in root.findall(".//a:entry/a:category", NS):
+        term = (cat.get("term") or "").lower()
+        if any(kw in term for kw in _LIVE_TAG_KEYWORDS):
+            return True
+    for link in root.findall(".//a:entry/a:link[@rel='related']", NS):
+        title = (link.get("title") or "").lower()
+        if any(kw in title for kw in _LIVE_TAG_KEYWORDS):
+            return True
+    return False
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -257,6 +366,13 @@ def _resolve_download_url(book_id):
         root = _get_xml(url)
     except (urllib.error.URLError, TimeoutError, ET.ParseError, OSError) as e:
         return None, str(e)
+
+    # v26.07.20.02: live check against this response's real category/
+    # subject tags -- see _detail_page_is_blocked() above. Checked before
+    # the static blocklist even matters here, since this catches items the
+    # static snapshot doesn't know about yet.
+    if _detail_page_is_blocked(root):
+        return None, "Can't download this content"
 
     candidates = {}
     for entry in root.findall("a:entry", NS):
@@ -310,7 +426,7 @@ def list_items(query=None, page=1, category=None):
     items = []
     for entry in root.findall("a:entry", NS):
         item = _entry_to_item(entry)
-        if item:
+        if item and not _is_blocked(item):
             items.append(item)
     has_next = root.find("a:link[@rel='next']", NS) is not None
     return items, has_next, None
@@ -320,6 +436,13 @@ def download(item, dest_dir):
     book_id = item.get("_gb_id")
     if not book_id:
         return False, "No book ID for this item", None
+
+    # v26.07.20.01: belt-and-suspenders -- list_items() already filters
+    # blocked items out of every browse/search/category result, so this
+    # should never trigger in normal use. Kept here as a hard backstop in
+    # case download() is ever reached some other way with a stale item.
+    if _is_blocked(item):
+        return False, "Can't download this content", None
 
     # v26.07.15.16: sanitize with basename() before join -- filename
     # comes from the Gutenberg API response, which is trusted, but

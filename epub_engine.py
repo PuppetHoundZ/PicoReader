@@ -14,7 +14,7 @@ publications) produce.
 Designed to be UI-agnostic so it can be driven from a terminal or an
 SDL2 render loop.
 
-Current version: v26.07.12.27 (matches main.py's date-based scheme,
+Current version: v26.07.19.01 (matches main.py's date-based scheme,
 YY.MM.DD.XX). Non-obvious behavior is explained via inline
 "# vYY.MM.DD.XX" comments above the relevant code, same convention as
 main.py -- see that file's own AI NOTES header for the full policy.
@@ -263,11 +263,35 @@ def collapse_blank_line_runs(text, images, links, styles, para_spans, anchor_off
 
 
 class EpubDocument:
-    def __init__(self, path: str, anchor_cache_path: str | None = None):
+    def __init__(self, path: str, anchor_cache_path: str | None = None,
+                 opf_cache_path: str | None = None):
         self.path = path
         self.zip = zipfile.ZipFile(path, "r")
-        self.opf_path, self.opf_dir = self._find_opf()
-        self.manifest, self.spine, self.ncx_path, self.nav_path = self._parse_opf()
+        self.opf_cache_path = opf_cache_path
+        # v26.07.19.XX (Kaleb's request, after profiling confirmed
+        # ET.fromstring() on the OPF is the real cost -- 34.55ms of a
+        # 48.94ms _parse_opf() on nwt_E.epub's 526KB/4040-item OPF,
+        # ~70% of the total, scaling to ~142ms of ~201ms on real ARM
+        # hardware per this project's confirmed 4.1x factor. Unlike
+        # _parse_toc() (profiled the same session: only ~10ms/~40ms
+        # scaled for NWT -- genuinely small, NOT the bottleneck a prior
+        # hypothesis this session assumed it was), this OPF-manifest
+        # parse is real, repeat, avoidable cost: the OPF never changes
+        # between opens of the same unchanged book file, so re-parsing
+        # its full XML tree from scratch every single open is pure
+        # waste after the first time. Cached to disk (mtime-fingerprint
+        # invalidated, identical pattern to _build_anchor_index()'s
+        # existing anchor_cache_path mechanism below) rather than kept
+        # only in RAM, so the saving persists across app restarts too,
+        # not just within one session.
+        cached = self._load_opf_cache()
+        if cached is not None:
+            (self.opf_path, self.opf_dir, self.manifest,
+             self.spine, self.ncx_path, self.nav_path) = cached
+        else:
+            self.opf_path, self.opf_dir = self._find_opf()
+            self.manifest, self.spine, self.ncx_path, self.nav_path = self._parse_opf()
+            self._save_opf_cache()
         self.toc: list[TocEntry] = self._parse_toc()
         # v26.07.12.12: values can be EITHER set[str] (freshly built this
         # session, from the regex/XML-parse path) or list[str] (loaded
@@ -278,6 +302,57 @@ class EpubDocument:
         # deliberately never normalized to one type or the other.
         self._anchor_index: dict[str, set[str] | list[str]] | None = None
         self.anchor_cache_path = anchor_cache_path
+
+    def _load_opf_cache(self):
+        """Returns (opf_path, opf_dir, manifest, spine, ncx_path,
+        nav_path) from disk if a valid, up-to-date cache exists, else
+        None (caller falls through to the real _find_opf()/_parse_opf()
+        parse -- identical behavior to today whenever this misses).
+        Same mtime-fingerprint invalidation as _build_anchor_index()'s
+        existing anchor_cache_path mechanism: if the EPUB file's mtime
+        doesn't match what's recorded, the cache is stale (book was
+        replaced/updated) and is silently ignored rather than trusted."""
+        if not self.opf_cache_path or not os.path.exists(self.opf_cache_path):
+            return None
+        try:
+            mtime = os.path.getmtime(self.path)
+        except OSError:
+            return None
+        try:
+            with open(self.opf_cache_path) as f:
+                cached = json.load(f)
+        except Exception:
+            return None
+        if cached.get("mtime") != mtime:
+            return None
+        try:
+            return (cached["opf_path"], cached["opf_dir"], cached["manifest"],
+                    cached["spine"], cached["ncx_path"], cached["nav_path"])
+        except KeyError:
+            return None  # malformed/old-format cache -- fall through to real parse
+
+    def _save_opf_cache(self):
+        if not self.opf_cache_path:
+            return
+        try:
+            mtime = os.path.getmtime(self.path)
+        except OSError:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.opf_cache_path), exist_ok=True)
+            payload = {
+                "mtime": mtime,
+                "opf_path": self.opf_path,
+                "opf_dir": self.opf_dir,
+                "manifest": self.manifest,
+                "spine": self.spine,
+                "ncx_path": self.ncx_path,
+                "nav_path": self.nav_path,
+            }
+            with open(self.opf_cache_path, "w") as f:
+                json.dump(payload, f)
+        except Exception:
+            pass  # non-fatal -- worst case, next open just re-parses same as today
 
     def _read(self, path: str) -> str:
         # v26.07.15.17: check the (free, no-decompression) declared
