@@ -1,6 +1,6 @@
 # PicoReader
 
-PicoReader is an EPUB reader for the **Anbernic RG CubeXX-H** running
+PicoReader is an EPUB reader for the **Anbernic RG CubeXX-H and RG 34XX-SP** running
 **muOS**. It's built from scratch in Python with no external
 dependencies — no PIL/Pillow, no pip installs, nothing to set up. Just
 copy it on and start reading.
@@ -20,7 +20,7 @@ project — it's a deliberate design choice by the device itself, and
 part of why it was bought in the first place. It was picked for
 running PICO-8 games (which are natively square), with minimalism as
 the whole point. The ebook reader started as a smaller side idea on
-the same hardware and ended up becoming the main passion project.
+the same hardware and ended up becoming the main passion project. RG34XX-SP works natively as well due to the same 720 wide display.
 
 ## Screenshots
 
@@ -149,18 +149,23 @@ bars on the sides rather than stretching. Confirmed device groupings
 H/V), 720×480 (RG34XX family), 720×720 (RGCubeXX — primary target),
 1024×768 (TrimUI Brick), 1280×720 (TrimUI Smart Pro).
 
-**Honest status:** this has been verified through headless simulation
-(real SDL2, no exceptions, correct scale factors confirmed via SDL's
-own API, across all resolutions above) but has **not** been confirmed
-on real non-CubeXX hardware — the author only owns a CubeXX-H. The
-approach follows a standard, well-documented SDL2 pattern
+**Device status:**
+
+| Device | Status |
+|---|---|
+| RG CubeXX-H (720×720) | **Confirmed working** — primary dev/target device |
+| RG34XX-SP (720×480) | **Confirmed working** — boots, button mapping, and 720×480 canvas rendering all verified on real hardware |
+| All other listed resolutions | Verified through headless simulation only (real SDL2, no exceptions, correct scale factors confirmed via SDL's own API) — **not yet confirmed on real hardware** |
+
+The scaling approach follows a standard, well-documented SDL2 pattern
 (`SDL_RenderSetLogicalSize`) and avoids a specific real-world bug found
 in another muOS app during this work (non-uniform X/Y scaling that
-stretches the UI instead of preserving aspect ratio), but "should
-work" is not the same claim as "confirmed working." The CubeXX-H path
-itself is completely unaffected by this change (separate code branch,
-zero risk of regression there). If you test this on another device and
-it looks right — or doesn't — please open an issue or PR.
+stretches the UI instead of preserving aspect ratio), but for the
+devices not yet confirmed, "should work" is not the same claim as
+"confirmed working." The CubeXX-H path itself is completely unaffected
+by this change (separate code branch, zero risk of regression there).
+If you test this on another device and it looks right — or doesn't —
+please open an issue or PR.
 
 ## Building the `.muxapp` yourself
 
@@ -222,4 +227,5 @@ me.
 
 - [DejaVu Fonts](https://dejavu-fonts.github.io/) — public domain
   changes over a Bitstream Vera base, permissively licensed
+- Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-Hly licensed
 - Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-H
