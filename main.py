@@ -65,7 +65,7 @@ scrolled to your current reading position, not always the top of the list.
 
 ===========================================================================
 AI NOTES -- read this first if you're a future Claude session picking this
-project back up. This describes the CURRENT build only (v26.07.20.39).
+project back up. This describes the CURRENT build only (v26.07.21.43).
 
 MEDIA/BOOKS DIRS NOW CHECK /mnt/union/ROMS FIRST (v26.07.18.02, Kaleb's
 report). find_books_dir() (main.py), find_movies_dir()/find_music_dir()
@@ -102,55 +102,25 @@ fill the same as the text (SDL_SetRenderDrawBlendMode + Color(...,
 alpha) passed into fill_rect_rounded). Logic-verified via headless
 SDL2 import/init; not yet confirmed on real hardware.
 
-FONT SIZE LADDER: 14pt -> 15pt (v26.07.18.11, Kaleb's call -- flagged
-by Claude as the riskiest of the three swaps since it's the ladder's
-smallest/floor size, where a bad guess costs real readability, not
-just wasted pixels; Kaleb decided the pixel-fit gain was worth it
-anyway). Fit: 0.9%/4.1%/3.0% wasted (SH=720/480/540) vs 14pt's
-2.7%/4.6%/2.8% -- clear win at 720/480, negligible (~0.2%) worse at
-540. Also narrows the gap to the next step (16pt) from 2pt to 1pt,
-the tightest gap anywhere in the ladder -- flagged to Kaleb before
-the swap, he proceeded anyway. ui_small's max(11, pt-4) floor is
-unaffected either way (still clamps to 11pt at both 14 and 15). No
-hardcoded literal "14" elsewhere in the file. NOT verified for
-actual on-device readability -- that's a real-screen/real-eyes
-judgment the pixel-fit math can't make, Kaleb's call to keep.
+FONT SIZE LADDER (current values): SIZE_STEPS = [15,16,18,21,23,27,32]
+-- three steps (14->15, 24->23, 28->27) were adjusted from their
+original values after reviewing per-size pixel-fit waste across all
+three canvas heights (SH=720/480/540); each swap fit better at all
+three heights simultaneously except 14->15, which trades a small loss
+at SH=540 for a clear win at 720/480 (Kaleb's call). Every call site
+indexes via SIZE_STEPS[size_index], so no hardcoded literal size
+values exist elsewhere and no migration is needed for existing users'
+saved font_size_index. ui_small's max(11, pt-4) floor is unaffected.
+None of these three were verified for actual on-device readability --
+that's a real-screen/real-eyes judgment the pixel-fit math can't make.
 
-FONT SIZE LADDER: 24pt -> 23pt (v26.07.18.10, same review pattern as
-the 28->27 swap just above). 23pt beat 24pt at ALL three heights
-simultaneously: 1.6%/0.7%/1.0% wasted vs 2.7%/4.1%/3.6% (SH=720/480/
-540). 25pt was also tried but rejected -- looked great at 480/540
-(sub-1%) but was worse than 24pt at 720 (4.0%), a real tradeoff, not a
-clean win like 23pt. No hardcoded literal "24" elsewhere in the file
-(checked) -- same as 28->27, every call site indexes via
-SIZE_STEPS[size_index], so font_size_index==4 automatically becomes
-23pt next launch, no migration needed.
-
-FONT SIZE LADDER: 28pt -> 27pt (v26.07.18.09, Kaleb's request after
-reviewing per-size pixel-fit data). SIZE_STEPS was [14,16,18,21,24,28,
-32]; 28pt wasted the most leftover space of any step, and disproportionately
-so, since fewer total lines at large sizes means each wasted-pixel gap
-is a bigger % of the visible page -- measured at 4.7%/6.8%/4.4% of body
-height dead at SH=720/480/540 respectively. 27pt fits BETTER at all
-three heights simultaneously (2.7%/2.1%/0.6%), not a tradeoff between
-resolutions, so this was a clean swap, not a compromise. No other code
-references the literal value 28 -- every other call site indexes via
-SIZE_STEPS[size_index], so users on that step slot (font_size_index==5)
-automatically get 27pt next launch with no migration needed. The other
-6 steps were left alone -- 14pt/24pt were also somewhat weak fits but
-nowhere near 28pt's severity, and not raised as a concern.
-
-DEFAULT FONT SIZE: STAYS 18pt FOR FRESH INSTALLS (v26.07.18.08,
-supersedes v26.07.18.07 below -- Kaleb briefly tried 21pt as the
-first-launch default, but reverted after reviewing the RG34XX-SP
-480px list-density numbers: 21pt drops visible list rows (Library/
-Settings/JW category browsers) from 16 @720 to 9 @480, a bigger jump
-than felt worth trading for reading-page size alone. FontManager.
-__init__'s "font_size_index" fallback (only used when settings.json
-has no saved value, i.e. fresh installs) is back to index 2 (18pt).
-Existing users with a saved font_size_index were never affected by
-either change either way -- this setting only controls what a
-brand-new install starts at.
+DEFAULT FONT SIZE FOR FRESH INSTALLS: 18pt (font_size_index=2, in
+FontManager.__init__'s fallback, only used when settings.json has no
+saved value). 21pt was tried and reverted -- it drops visible list
+rows (Library/Settings/JW category browsers) on RG34XX-SP's 480px
+height from 16 to 9, a bigger jump than felt worth trading for reading
+-page size alone. Existing users with a saved font_size_index are
+unaffected by this value either way.
 
 READER BODY: TOP-FLUSH CONFIRMED AS INTENDED (v26.07.18.06). Briefly
 tried centering the leftover row-flooring slack (body_rows = body_h //
@@ -162,28 +132,19 @@ behavior: body_top stays exactly _reader_body_layout()'s own value,
 all leftover slack sits between the last text row and the hint bar.
 Don't reintroduce leftover-centering without Kaleb raising it again.
 
-RG34XX-SP: KALEB HAS A UNIT INCOMING -- PENDING REAL HARDWARE TEST
-(v26.07.18.04, supersedes all prior RG34XX-SP notes below/above --
-Kaleb found a 2GB-RAM old-batch unit still in stock at Walmart and
-bought it, after the original order fell through when the manufacturer
-dropped later batches below 2GB). Status: input mapping and resolution
-are BOTH already source-verified and require no code changes --
-- Input: RG34XX-SP shares an IDENTICAL raw SDL joystick mapping with
-  CubeXX-H (same GUID 19000000010000000100000000010000, same button
-  numbers/hat/axes) -- confirmed via MustardOS's own device sdl_map
-  files, see controller_ref.txt for the full comparison. PicoReader
-  uses the raw SDL_Joystick API (SDL_JoystickOpen(0)), not the
-  GameController API, so this needs nothing further.
-- Resolution: 720x480 (vs CubeXX-H's 720x720) is already handled by
-  the CANVAS_HEIGHT_PROFILES auto-detect table in main()'s boot
-  sequence, already labeled "RG34XX/RG34XX SP native".
-Nothing left to CODE for this device -- what's missing is real
-on-device confirmation, which Kaleb can now actually do. When he
-tests: priority checks are (1) boots correctly / mux_launch.sh SETUP_APP
-ordering, (2) button mapping feels right in practice (not just
-source-verified), (3) 720x480 canvas renders without stretch/crop
-artifacts, letterbox bars look right if any. Report results back so
-this note can be upgraded from "source-verified" to "confirmed working."
+RG34XX-SP: CONFIRMED WORKING ON REAL HARDWARE (Kaleb's own on-device
+test). Full first-boot checklist passed with no issues:
+- Boots correctly via mux_launch.sh / SETUP_APP ordering.
+- Button mapping feels right in practice, not just source-verified --
+  confirms the raw SDL_Joystick API approach (not GameController API)
+  is genuinely unaffected by muOS's retro/modern A/B-swap convention
+  (that swap lives in device/*/control/gamecontrollerdb, a different
+  subsystem PicoReader never touches).
+- 720x480 canvas renders correctly via the CANVAS_HEIGHT_PROFILES
+  auto-detect table, no stretch/crop artifacts.
+RG34XX-SP is now PicoReader's second confirmed device alongside the
+primary RGCubeXX-H target. Nothing left to verify or code for this
+device.
 
 PIN/FINISHED WRITES DEBOUNCED, SAME PATTERN AS SETTINGS (v26.07.17.20,
 Kaleb's follow-up: "any other writes we can reduce until exit or book
@@ -267,12 +228,582 @@ actually being drawn (theme fade ticks every frame from main()'s
 render loop regardless of screen) -- there's nothing to animate when
 no image is on screen, so this isn't a missing tick, just a different
 correct scope. First-ever call snaps (no stale "fade from nothing").
-Verified standalone: interpolation lands at the right point mid-fade,
-clamps cleanly at both ends, fades correctly in both directions
-(fade-in AND fade-out toward Off, which needed the early-return
-changed from checking the raw level to checking the ANIMATED alpha --
-otherwise a fade-out toward Off would've been cut off instantly at
-the old check instead of finishing the fade).
+Verified in both directions (fade-in and fade-out toward Off, which
+needed the early-return changed from checking the raw level to
+checking the ANIMATED alpha -- otherwise a fade-out toward Off
+would've been cut off instantly instead of finishing the fade).
+
+CLOCK REFRESHES WHILE MENU IS OPEN -- SETTLED ON THE SIMPLE VERSION
+(v26.07.21.16-21, Kaleb, iterated down to this final shape across
+several requests -- merged into one entry, the intermediate approaches
+are superseded, not worth keeping as separate stacked notes).
+App.maybe_refresh_clock(), called from draw_menu()/draw_library_menu(),
+updates the clock string if _CLOCK_REFRESH_SECONDS=5s (~12x/min --
+Kaleb's explicit call: "doesn't need to be exactly to the second") has
+passed since the last refresh. Scoped to the clock ONLY -- battery/
+WiFi still refresh exclusively on menu-open, per Kaleb's earlier,
+separate explicit call.
+
+An earlier attempt to keep the clock ticking while the menu sits fully
+idle (a forced-redraw mechanism) was abandoned after it produced a
+burst of ~180 redraws instead of 1 -- not worth the complexity for a
+small corner clock, so the final design is purely opportunistic
+instead: it only updates when draw_menu()/draw_library_menu() get
+called anyway for some other reason (menu navigation, a status toast,
+a theme transition). If the menu sits completely untouched, the clock
+can lag behind real time until the next natural redraw -- an accepted,
+deliberate tradeoff, not a bug to keep chasing.
+
+12-HOUR CLOCK ADDED UNDER THE STATUS ICONS (Kaleb's follow-up to the
+battery/WiFi feature above). "9:41 PM" format (no leading zero,
+stripped manually since %-I isn't portable across platforms) via
+time.strftime("%I:%M %p").lstrip("0"), drawn on its own row directly
+under the icon row in _draw_status_indicators(), right-aligned to the
+same edge. Same refresh-on-menu-open timing as battery/WiFi (cached
+in refresh_status_indicators(), not live-updated every second) --
+deliberately consistent with the other two rather than making just
+the clock live. The added row never collides with the menu item list
+starting below it, across all Font Sizes/
+devices/battery-wifi-state combinations.
+
+BATTERY/WIFI STATUS INDICATORS IN POPUP MENUS (v26.07.21.14, Kaleb's
+request, exact placement confirmed via his own annotated screenshots
+of both popup Menu screens). Battery % + WiFi connection icon now
+drawn top-right in both the main reader popup Menu (draw_menu()) and
+the Library Menu (draw_library_menu()) -- the reader Menu's centered
+face+"PICO READER" logo shifts left to make room. Data sources
+verified against the REAL MustardOS/internal repo, not guessed:
+battery from /run/muos/battery/capacity + .../charging (a plain file
+muOS's own battery.sh keeps continuously current, no root needed);
+WiFi from standard Linux sysfs /sys/class/net/wlan0/operstate +
+carrier (kernel-level, not even muOS-specific). Both fail soft to
+None (icon simply omitted, never fake/zero data) when unreadable.
+WiFi disconnected state draws the same 3-bar signal icon, dimmed,
+with a diagonal strike-through (Kaleb's own words: "flash through
+it") -- no interface found at all is a third, distinct state (icon
+omitted) from "interface exists but not connected" (icon shown,
+struck through). Deliberately NOT live-updated while a menu is open
+(Kaleb's explicit call) -- refresh_status_indicators() is called once
+at each of the 4 real entry points into these two screens, not every
+frame, then both draw functions just read the cached values.
+
+SUBTITLE TOGGLE, Y BUTTON (v26.07.21.01, Kaleb's request): during video
+playback, Y now sends 't' via the existing uinput bridge to whichever
+player is running. ffplay already binds 't' to "cycle subtitle stream"
+by default (its own documented default keymap, includes a "none" state
+in the cycle). mpv has no default binding on 't', so the bundled
+input.conf now explicitly adds "t cycle sub-visibility". Both call
+sites of play_jw_video() updated to pass joy_y=JOY_Y (optional/None-safe,
+same pattern as joy_l1/joy_r1). Not yet confirmed on real hardware.
+
+IMMERSIVE MODE OVERLAY POSITIONING: body text uses TRUE full reclaim
+(zero margin, no space held back). The %-progress marker, the
+"Rendering... N%" toast, and the general status_msg toast (bookmark
+added, exiting, video-download status, Font Size +/- toast) all used
+to anchor to `SH - hint_height(fonts)` (i.e. where the hint bar would
+be) regardless of Immersive Mode, causing 6-69px of real overlap with
+body text once Immersive Mode let text run close to SH. Current
+behavior: both toasts are transient and fade on their own, so they're
+pinned to the real screen bottom (`SH - 8px`) and allowed brief
+overlap rather than reserving permanent space. The %-marker (always on
+screen, so treated differently) renders FADED instead --
+IMMERSIVE_MARKER_ALPHA=90 via render_text()'s alpha param, no
+background pill, blends into the page rather than competing with it.
+
+%-MARKER/HINT-TEXT OVERLAP FIX (found during Kaleb's requested
+double-check after SELECT's hint label grew). Real bug: the old
+label-font logic hardcoded ONLY 21pt as needing a smaller marker font,
+calibrated against the OLD (shorter) hint text. Adding "SELECT
+Immersive"/"SELECT Download" shifted which sizes are actually tight --
+21pt now wraps to 2 lines with huge clearance (fine on its own), while
+18pt and 32pt (never a problem before) started overlapping by a few
+px, and the old 13pt fallback still wasn't small enough for either.
+Replaced with a real computed loop: try ui_small, then step down
+through 13/12/11/10/9pt until measured clearance against THIS exact
+hint text's actual last line is >=20px where possible, floored at 9pt.
+Self-correcting for any future hint text length change instead of
+needing another hardcoded fix.
+
+%-PROGRESS MARKER SIZING/POSITIONING (current state, condensed from a
+multi-pass fix): Immersive Mode always uses full ui_small size (no
+shrink loop) with a fixed 10px edge margin -- nothing for the marker
+to overlap there since the hint bar's own text isn't drawn in that
+mode. Non-immersive mode keeps a real shrink loop (genuine space
+constraint at 18pt/32pt, where the hint text's own last line is
+unavoidably wide), floored at 11pt with MARKER_SIDE_PAD=12px/
+MARKER_MIN_CLEARANCE=6px (measured against real HINT_CORNER_RADIUS
+geometry, not reusing the more conservative HINT_SIDE_PAD/20px built
+for the hint TEXT's own margin) -- 18pt now stays full-size, 32pt
+reaches 15pt. When hint text wraps to 2+ lines, the marker anchors to
+whichever wrapped line has the MOST free space (measured width), not
+unconditionally the last line -- matters specifically at 32pt, where
+the last line can be nearly full while an earlier line has real room.
+
+STREAMING QUALITY DEFAULT REVERTED TO 480p (v26.07.21.29, Kaleb's
+request: "make the default 480p for everything on first boot").
+video_stream_quality briefly defaulted to 720p (v26.07.21.03); all 3
+default locations (App.__init__, both getattr() fallback call sites)
+reverted back to 480p, now matching downloads, which have always
+defaulted to 480p regardless of this setting either way. Side effect
+reverted along with it: the one-extra-round-trip re-resolve behavior
+in play_video_item() (documented in that function's own docstring)
+is back to being skipped on the common/default path, same as
+originally shipped -- only picking 360p or 720p now triggers the
+extra GETPUBMEDIALINKS call. Verified on a genuine fresh App instance
+(no settings file, i.e. real first-boot conditions): confirmed 480p
+at all 3 default locations.
+
+STREAMING QUALITY -- 360p ADDED (v26.07.21.28, Kaleb's request:
+"stream 340p if that's one of the options" -- confirmed 360p is the
+real tier, jw.org's video API genuinely serves 240p/360p/480p/720p,
+not invented). Streaming Quality was a 2-way toggle (480p<->720p);
+now a proper 3-way cycle via new STREAM_QUALITY_CYCLE = ["360p",
+"480p", "720p"], both real toggle call sites (Storage screen, reader
+Menu's Video Settings submenu) updated to use the same shared cycle
+list/index math instead of two separate hardcoded ternaries -- can't
+drift out of sync with each other now. Downloads UNCHANGED, still
+always 480p regardless of this setting. Cycle wraps correctly
+(360->480->720->360...), and 360p resolves to a real, distinct,
+correctly-sized file (~9MB vs 480p's ~16MB and 720p's ~27MB on the
+same video).
+
+VIDEO_SOURCES FULLY REBUILT TO MATCH JW.ORG'S REAL ORDER + COMPLETENESS
+(v26.07.21.27, Kaleb's request: "make sure the categories are nested
+properly, try to replicate the website's order"). Diffed EVERY level
+of jw_fetch.py's VIDEO_SOURCES against a live fetch of jw.org's real
+category tree (?detailed=1&clientType=www at every parent, not
+guessed) and found the incremental history since v26.07.15.09 had
+drifted from both real top-level order and real subcategory
+completeness. Top-level order now matches jw.org exactly: JW
+Broadcasting, Children, Teenagers, Family, Programs and Events, Our
+Activities, Our Meetings and Ministry, Our Organization, The Bible,
+Dramas, Series, Music, Interviews and Experiences (Governing Body
+Updates and Search Videos are this app's own additions, not real
+jw.org tree entries, kept in their original relative spots). Added 23
+real subcategories that were missing entirely: JW Broadcasting +1
+(Featured Videos), Programs and Events +3 (Special Programs, Gilead
+Graduations, Annual Meetings), Our Meetings and Ministry +5 (Tools for
+the Ministry, Improving Our Skills, Preaching Methods, Expanding Our
+Ministry, Sample Conversations), Series +10 (A Day in the Life of...,
+Apply Yourself to Reading and Teaching, Become Jehovah's Friend --
+Songs, Pure Worship -- Chapter Introductions, Reasons for Faith,
+Viewpoints on the Origin of Life, Walk Courageously With God, Was It
+Designed?, Website and App Help, What Your Peers Say, Where Are They
+Now?), Music +4 (Sing Out Joyfully to Jehovah -- Meetings, Convention
+Music Presentations, Making Music, Sing to Jehovah). One more real
+duplicate found and skipped (same pattern as the existing BibleBooks/
+DramasGoodNews dedups): "Children's Songs" (ChildrensSongs, under
+Music) is byte-identical to Children's own "Songs" (ChildrenSongs,
+same 85 items) -- kept only under Children. Verified NOT a duplicate,
+despite similar names: "Essential Bible Teachings" under Our Meetings
+and Ministry IS byte-identical to Series' own copy (27/27 same titles)
+so skipped there too, kept under Series in its real order position;
+but "Science" (OriginsLife, 11 items) vs Series' "Viewpoints on the
+Origin of Life" (SeriesOriginsLife, 10 items) and Teenagers'
+"Interviews and Experiences" (TeenWhatPeersSay, 35 items) vs Series'
+"What Your Peers Say" (SeriesWhatPeersSay, 9 items) are genuinely
+DIFFERENT categories despite superficially similar themes -- both
+kept as separate real entries.
+
+2 MISSING VIDEO CATEGORIES ADDED (v26.07.21.26, Kaleb's request: "are
+we missing any video categories?"). Found by diffing this project's
+jw_fetch.py VIDEO_SOURCES against a live fetch of jw.org's real
+VideoOnDemand root category tree (?detailed=1&clientType=www) -- not
+guessed. 3 real top-level categories were missing entirely: "Our
+Organization", "Dramas", and "Audio Descriptions" (Kaleb's call: only
+add the first two -- Audio Descriptions is a different use case,
+accessibility narration tracks layered onto videos already covered
+elsewhere, not new unique video content). Added to jw_fetch.py, same
+"subcategories" mechanism as Series/Children/etc, zero main.py changes
+needed:
+- "Our Organization" (VODOurOrganization): 6 real subcategories
+  (Reports From Around the World, Bethel, Organized to Accomplish Our
+  Ministry, History, Legal Developments, Bloodless Medicine).
+- "Dramas" (VODMovies): only 4 of its 5 real subcategories added.
+  The 5th, "The Good News According to Jesus" (DramasGoodNews),
+  deliberately left out -- substantially overlaps the existing
+  6-episode Series entry for the same content (list_good_news_items()).
+  Added: Bible Times, Modern Day, Extra Features, Animated.
+
+STALE COMMENTS FIXED AFTER v26.07.21.24 REMAP (v26.07.21.25, found
+during Kaleb's "any other bugs" audit request): two comments still
+described the OLD button layout as current after the L1/R1<->L2/R2
+swap. (1) main.py had a leftover "Full current video-control mapping"
+summary from v26.07.21.02 claiming L1/R1=+-10min -- removed rather
+than corrected in place, since the accurate mapping is now documented
+once in the v26.07.21.24 entry above it; two separate summaries would
+only drift again next time the layout changes. (2) native_video.py's
+KEY_PAGEUP/KEY_PAGEDOWN definitions were still commented "L1/R1
+big-skip buttons" -- fixed to reflect L2/R2. Not functional bugs (the
+actual button-handling code was already correct, confirmed via the
+real simulated-input test in the v26.07.21.24 entry) -- just
+documentation that would have misled the next troubleshooting session
+into believing the OLD layout was current.
+
+VIDEO BUTTON REMAP + BRIGHTNESS ON D-PAD (v26.07.21.24, Kaleb's
+request). Full current layout: D-pad L/R = seek +-10s (unchanged),
+D-pad U/D = mpv brightness +-5 (NEW, was seek +-1min), L1/R1 = seek
++-1min (moved here from D-pad U/D), L2/R2 = skip +-10min (moved here
+from L1/R1, new joy_l2/joy_r2 params threaded through play_jw_video()
+-> _translate_loop, both real call sites updated to pass JOY_L2/
+JOY_R2). Brightness is explicitly mpv's own live `brightness` video
+property (software, per-video-frame, via "i add brightness -5"/
+"o add brightness 5" in the bundled input.conf) -- deliberately NOT
+the OS/hardware backlight, per Kaleb's explicit correction when this
+was first discussed. Safe no-op on ffplay, which has no runtime
+brightness capability (only a launch-time flag, not adjustable while
+playing) -- 'i'/'o' aren't bound to anything in ffplay's default
+keymap.
+
+KEEPALIVE STOPS WHILE PAUSED (v26.07.21.23) -- SUPERSEDED at
+v26.07.21.35. The whole KEY_KEEPALIVE mechanism this built on top of
+(a synthetic keypress meant to reset muOS's idle timer) was disproven
+on real hardware and removed entirely -- see the entry below for the
+real, proven fix and why this specific pause-aware refinement doesn't
+carry over to it (the real fix suppresses idle behavior for the whole
+playback session, not per-pause-state). Kept as a one-line pointer
+rather than the original multi-paragraph entry, since none of its
+mechanics are current behavior anymore.
+
+VIDEO/AUDIO QUEUE BUTTONS UNIFIED (v26.07.21.43, Kaleb's request:
+"unify the music and video playback buttons on the menus like the
+start and download and shuffle and play all"). Real inconsistency,
+not a deliberate design choice: video used START=Play All, L2=Shuffle
+All; audio used the SAME physical buttons backwards -- Y=Play All,
+START=Shuffle All, meaning START alone meant two different things
+depending on mode. Unified to START=Play All, L2=Shuffle All for
+BOTH now, matching video's original layout (audio's Y was otherwise
+unused on this screen -- no search binding for audio -- so freeing it
+costs nothing). SELECT=Download and A=Stream/Play were already
+identical between the two modes, untouched. Hint bar text updated to
+match on both. The new popup menu (SCREEN_DOWNLOAD_BROWSE_MENU,
+v26.07.21.42) needed NO changes -- it dispatches by menu-item LABEL
+("Play All"/"Shuffle All"), not by which physical button was pressed,
+so it was already unaffected by this remap.
+
+DOWNLOAD BROWSE SCREEN'S HELP REPLACED WITH A REAL POPUP MENU
+(v26.07.21.42, Kaleb's request: "drop help menu and replace with pop
+up menu" -- the old Help (X button) on this screen only ever covered
+Search/Pub Code, never updated as Play/Play All/Shuffle All/Download
+got added, so it had become stale/incomplete for what this screen
+actually does now). New SCREEN_DOWNLOAD_BROWSE_MENU + draw_download_
+browse_menu(), same visual pattern as draw_library_menu() (panel
+overlay on top of the underlying screen) -- but with a REAL, DYNAMIC
+action list via new _download_browse_menu_items(app), built from the
+exact same dl_is_video/dl_is_audio/plugin-capability conditions the
+individual buttons already use, so the menu can never offer something
+unreachable or omit something that exists: video mode gets Stream/
+Download/Play All/Shuffle All/Search, audio gets Play/Download/Play
+All/Shuffle All, generic (books etc.) gets Download plus whatever of
+Search/Enter Pub Code the plugin actually supports. Each menu item
+calls the EXACT SAME App method its own dedicated button already
+does -- no parallel/duplicated logic. To make that possible without
+duplicating the inline search/pub-code handlers, extracted three of
+them (previously anonymous nested functions inside the Y/SELECT
+button handlers) into real, reusable App methods: open_video_search_
+entry(), open_category_search_entry(), open_pub_code_entry() -- the
+original Y/SELECT bindings now just call these too, so there's a
+single source of truth either way. X on this screen now opens the new
+menu instead of SCREEN_DOWNLOAD_HELP; hint bar updated "X Help" ->
+"X Menu". Scoped to ONLY this screen -- Sources/Categories still open
+the real Help overlay (Search/Pub Code info genuinely still applies
+there), confirmed untouched. REAL BUG CAUGHT AND FIXED during this
+edit: an early str_replace accidentally merged two adjacent lines
+together (missing newline), which would have been a syntax-adjacent
+bug; caught immediately via the routine post-edit compile check,
+fixed before it went any further.
+
+NATIVE TITLE/ALBUM-ART SUPPORT DURING AUDIO PLAYBACK (v26.07.21.41,
+Kaleb's request: "whatever the native app supports -- text title or
+album cover and title"). mpv: removed --no-video (added at v26.07.21.36
+to force audio-only) -- mpv already natively shows an MP3's embedded
+cover art (ID3 APIC frame) as its "video" if one exists, and does
+nothing extra otherwise; --no-video was exactly what suppressed that,
+no other code needed to enable it. Added --osd-playing-msg=${media-
+title}, mpv's own real property-expansion syntax, reading the file's
+own ID3 title tag directly -- also native, no plumbing. ffplay: -
+showmode 0 (already there from v26.07.21.40's input-focus fix) is
+ffplay's own "video" mode -- for an MP3 with embedded art, that IS the
+video stream, so this was already showing it natively with no further
+change needed. Added a new `title` param threaded through
+play_audio_file()/play_audio_queue() (from each item's own "title"
+field, both single-track and queue call sites in main.py) for
+ffplay's -window_title -- genuinely native, but flagged with an
+honest caveat: muOS's display stack has no window manager, so there's
+no title bar to actually render it in; included anyway since it's
+free and harmless. ffplay has no equivalent to mpv's --osd-playing-msg
+(a real on-screen text overlay) -- a genuine capability gap between
+the two players documented in the comment, not something withheld.
+
+AUDIO PLAYING BUT APP UNRESPONSIVE -- REAL BUG FIX (v26.07.21.40,
+Kaleb's report: "video works for playlisting, audio is backgrounding
+and makes the whole app unresponsive but music plays"). Root cause
+confirmed against ffmpeg's own mailing list (not guessed): both audio
+player configs skipped creating any real display surface -- mpv had
+--no-video with no --fs at all; ffplay had -nodisp, which doesn't just
+hide video, it skips window creation ENTIRELY. Found the exact same
+complaint on ffmpeg-user's mailing list: "[does] -nodisp lose all
+keyboard functions like pause, seek etc?" -- confirmed yes, because
+ffplay's input handling is built on its own SDL window's event loop,
+so with no window to hold focus, this app's real uinput keypresses
+(sent via vkbd, same mechanism the working video path already uses)
+had nowhere to land. The player process itself was fine and kept
+decoding/playing audio (that pipeline doesn't depend on the window),
+but literally nothing -- including B/quit -- could reach it, matching
+Kaleb's exact symptom. Fixed by giving both a real (blank) fullscreen
+surface, mirroring the working video path exactly: mpv gets --fs
+added; ffplay drops -nodisp for -showmode 0 (still creates the real
+window, just shows nothing meaningful in it, unlike -nodisp which
+skips the window altogether) plus -fs. Could not fully verify on real
+hardware from this sandbox (no attached display to test actual SDL/
+KMSDRM window-focus behavior against) -- needs Kaleb's on-device
+confirmation, but the fix targets a confirmed, documented root cause
+rather than a guess.
+
+OFFLINE COPIES PREFERRED OVER STREAMING WHEN ALREADY DOWNLOADED
+(v26.07.21.39, Kaleb's request: "if we download the songs or video
+will the app default to that copy when playing?" -- until this, no,
+it always streamed even when a local copy already existed). New
+App._resolve_media_source(item, is_video) -- single shared helper used
+by every play_*_item()/play_*_queue_from() method, checks for a local
+file at the EXACT same folder/filename convention download_video()/
+download_audio() themselves already use (find_movies_dir()/
+find_music_dir() + basename(item["filename"])); returns the local path
+with is_local=True if found, else falls back to the item's own
+"_video_url"/"_audio_url" with is_local=False, unchanged from before.
+native_video.py additions: play_audio_file() gained an is_local param
+(mirrors play_jw_video()'s own, validated via os.path.isfile()); both
+play_audio_queue() and play_video_queue() gained an optional
+resolve_source(item)->(source, is_local) callback, called per item
+instead of the old hardcoded "always the remote URL" -- keeps
+native_video.py deliberately plugin-agnostic (it has no jw_fetch
+import and this doesn't change that; main.py supplies the actual
+resolution logic via a lambda). Falls back to the exact old hardcoded
+behavior when resolve_source isn't given, so nothing else changed.
+Single-item play (play_video_item()/play_audio_item()) checks the
+local copy FIRST, before any online quality-resolve step, since a
+downloaded file is already whatever quality it was saved at -- skips
+the network entirely when a local copy exists. Status toast now says
+"Playing" for a local copy vs "Streaming" for remote, so it's visible
+which one actually happened.
+
+PLAY ALL / SHUFFLE ALL EXTENDED TO VIDEO TOO (v26.07.21.38, Kaleb's
+request). Direct video sibling of the audio queue feature above --
+new native_video.play_video_queue(), new App.play_video_queue_from().
+Key difference from audio: every other button was already spoken for
+during video playback (all 4 shoulder buttons = seek/skip, D-pad =
+seek/brightness, Y/X = subtitle/audio track), so START (previous) and
+SELECT (next) are the in-playback queue-skip controls here instead of
+L/R -- confirmed via direct check of _translate_loop that neither was
+already bound to anything. On the browse screen itself: Y was already
+taken by video's own client-side title search and SELECT by download,
+so START="Play All" (from the currently-selected item) and L2
+(confirmed free on this screen)="Shuffle All". _translate_loop()
+extended with optional joy_start/joy_select/signal params -- backward
+compatible, a plain single-video play passes signal=None so the new
+buttons are silent no-ops then, same None-safe pattern every other
+optional control here already uses. idle-display suppression: added
+an internal `_manage_idle` flag to play_jw_video() so play_video_queue()
+can call it with _manage_idle=False per video and instead suppress
+ONCE for the whole queue itself (same reasoning as audio's queue) --
+this doesn't fire "per-video-suppress" at all during a queue session,
+only once total.
+
+SINGLE-TRACK AUDIO PLAY WAS MISSING IDLE-MUTE PROTECTION (v26.07.21.37,
+Kaleb's follow-up: "are we using the same [idle-mute] support for
+audio too?"). Checked the actual call graph rather than assuming --
+play_audio_queue() (Play All/Shuffle All) DID call suppress_idle_
+display()/restore_idle_display() correctly, but play_audio_file()
+itself deliberately doesn't (by design, so it nests cleanly inside a
+queue's single wrap instead of re-suppressing per track) -- which
+meant App.play_audio_item() (the A=play-single-track button) called
+it DIRECTLY with no suppression wrapped around it at all. A single
+song easily runs longer than muOS's default 120s idle_display timeout,
+so this was a real, same-class gap as the original video bug. Fixed
+by wrapping the call in play_audio_item() itself with the same try/
+finally-guaranteed suppress/restore pattern play_jw_video() already
+uses internally.
+
+IN-APP AUDIO PLAYBACK ADDED (v26.07.21.36, Kaleb's request -- audio
+sources previously only downloaded MP3s, no in-app playback at all).
+New native_video.py functions, mirroring play_jw_video()'s own
+discovery/fallback/idle-suppression shape but leaner (no seek/
+subtitle/audio-track/brightness controls -- none of that applies to
+audio): play_audio_file() (single track, audio-only mpv --no-video or
+ffplay -nodisp) and play_audio_queue() (plays a whole list back-to-
+back, sequential or shuffled). New App methods play_audio_item()/
+play_audio_queue_from() in main.py, wired into SCREEN_DOWNLOAD_BROWSE
+while dl_is_audio: A=play single track (was download-only before this
+-- extends video's own A=play/SELECT=download convention to audio),
+Y="Play All" (sequential, starting from the currently-selected item),
+START="Shuffle All" (random order, always starts fresh regardless of
+selection), SELECT=download (unchanged, just un-guarded from its old
+video-only restriction). New "Audio Player" setting (Auto/mpv/ffplay,
+separate from Video Player) added to STORAGE_ACTIONS, draw-side AND
+nav-side (_storage_hidden()) hide conditions both updated together
+this time, matching this session's own earlier lesson about those two
+drifting apart. idle-display suppression (see v26.07.21.35 above) is
+applied ONCE for the WHOLE queue in Play All/Shuffle All, not per
+track -- avoids restarting the hotkey daemon once per song in a list
+that could be dozens of tracks long. Caught and fixed one real bug in
+this new code before it shipped: assumed the wrong return signature
+for the existing _write_mpv_input_conf() helper (guessed it returned
+a path+bool tuple; it actually returns a plain bool, with the path as
+a separate module constant) -- found via compile-time inspection of
+the real function, not by chance.
+
+VIDEO-PLAYBACK IDLE-MUTE -- REAL FIX (v26.07.21.35). Kaleb initially
+said v26.07.21.22's fix seemed "solid and working good" (v26.07.21.34),
+but then reported it actually muted itself during real playback --
+"mark this as solid" was premature; the synthetic-keypress "keepalive"
+theory (send a harmless key periodically to reset muOS's idle timer,
+same one a real button press resets) was WRONG. Root cause of the
+mute itself was correctly identified (muOS's DISPLAY_IDLE(), script/
+var/func.sh, mutes "Master"/dims backlight after a no-INPUT timeout,
+config/settings/power/idle_display, default 120s -- purely input-
+idle-driven, no concept of video playback), but the fix for it
+wasn't. Found the REAL, proven mechanism by examining a real, shipped
+muOS media app (Songo#5) that solves this exact problem -- its actual
+shipped scripts (real MustardOS/internal repo, not inferred):
+  set:    CAFFEINE on; SET_VAR config settings/power/idle_sleep 0;
+          SET_VAR config settings/power/idle_display 0; HOTKEY restart
+  remove: CAFFEINE off; restore both to their original values;
+          HOTKEY restart
+Not a timer reset at all -- directly disables the two config values
+DISPLAY_IDLE()/SLEEP() themselves check, then restarts the hotkey
+daemon (kills muhotkey/hotkey.sh, relaunches it) so the change takes
+effect immediately, since the daemon only reads these once at
+startup. Reimplemented in Python as suppress_idle_display()/
+restore_idle_display() in native_video.py, called once right before
+the player subprocess launches and restored in the SAME finally block
+that already guarantees stop_event/vkbd cleanup -- covers normal end,
+early quit, and crash alike. The old KEY_KEEPALIVE mechanism and its
+pause-tracking were removed entirely (kept as a documented dead end
+in native_video.py's own comments, not silently deleted) -- one real
+side effect of the removal: idle_sleep/idle_display are now
+suppressed for the WHOLE playback session rather than dynamically
+toggling with pause state, so the old "allow sleep while paused"
+refinement (v26.07.21.23) no longer applies; re-adding pause-aware
+toggling of this config-write+daemon-restart approach would mean
+repeated daemon kill/relaunch cycles on every pause/resume, not
+attempted without real hardware feedback on whether that's even
+noticeable/desirable. Correctly handles the edge case of a config
+value that was already "0" originally -- restored as "0", not
+mistaken for "unset" -- when playback ends.
+
+SELECT NOW TOGGLES IMMERSIVE MODE (v26.07.21.10, Kaleb's request --
+SELECT was a dead button in reading mode except on the rare JW-video-
+link selection). Now dual-purpose: downloads the video when
+_selected_jw_video_link() is not None (unchanged v26.07.20.05
+behavior), otherwise toggles Immersive Mode -- same code path/scroll
+clamp as the Menu's own Immersive Mode toggle. Hint bar label swaps to
+match: base READER_HINT_TEXT now reads "SELECT Immersive", swapped to
+"SELECT Download" via a label replace (not an insertion like before)
+when a video link is selected -- both variants verified near-identical
+total width at every Font Size via direct TTF metrics, so wrapping
+behavior stays consistent between the two, same as before this change.
+
+IMMERSIVE MODE FULLY RECLAIMS THE HINT BAR MARGIN -- was: hint text
+hidden but the reserved bottom margin stayed put, not truly
+full-screen. A global hint-bar shrink was considered first but ruled
+out -- most Font Sizes are already floored at 0px padding, nothing
+left to gain there. Immersive Mode reclaiming its own margin is the
+real lever: _reader_body_layout() takes an `immersive` param, all 4
+call sites pass app.immersive_mode/self.immersive_mode, and body_h
+skips subtracting hint_height() entirely when True. No repagination/
+wrap-cache invalidation needed -- self.scroll is a continuous line
+index into the already-wrapped line list, and the wrap cache is keyed
+only on (href, size_index) since word-wrap only depends on screen
+WIDTH, which this never touches -- so toggling just changes how many
+lines draw from the same scroll position. Toggle handler clamps
+self.scroll to the new max right away so the view doesn't lag one
+interaction behind. Gains +1-2 reading rows at most Font Sizes on
+both confirmed devices.
+1. Settings/Storage screen's toast notification used to render hidden
+   underneath the hint bar -- it was the one screen still using an
+   ad-hoc toast-position formula instead of the shared
+   _draw_status_bar() helper every other screen uses, which landed the
+   toast at/past the hint bar's own top edge on a near-full list.
+   Fixed by switching to _draw_status_bar(), same as every other
+   screen.
+2. Left stick support added -- was a missing feature, not a
+   device-specific bug: right stick (JOY_AXIS_RX/RY) existed already,
+   but left stick was never wired up on any device. JOY_AXIS_LX/LY
+   mirrors the right stick's exact mapping/behavior: Y axis = L/R page
+   turn, X axis = L2/R2 chapter nav, same edge-triggered one-push-
+   one-action pattern.
+3. Maximize Image mode now always lands exactly on 100% (true native
+   resolution) while stepping zoom, whenever the image is actually
+   larger than the viewport (zoom_min < 1.0 <= zoom_max). The
+   ~1.15x multiplicative zoom step could previously hop
+   straight over 1.0 without ever landing on it. Fixed in
+   _imgview_zoom_by(): if a step would cross 1.0 (old and new zoom on
+   opposite sides of it), snap to exactly 1.0 instead of the raw
+   stepped value; one extra press then continues normally past it in
+   either direction. No effect on small images that already need
+   >100% upscale just to fill the screen (zoom_min >= 1.0 -- 1.0 isn't
+   a reachable/meaningful stop for those).
+
+ZOOM-LEVEL TOAST: L/R zoom press in Maximize Image mode calls
+app.set_status() with "Zoom: N%" (N = _imgview_zoom*100, rounded) --
+same status_msg/_draw_status_bar mechanism every other screen already
+uses, so it gets the same fade-in/out and duration for free. Drawn
+bottom-anchored at `vh` (the image viewport's own bottom edge) so it
+sits just above the hint bar. Percentage is accurate even for small
+images that start above 100% (zoom_min > 1.0 when an image needs
+upscaling just to fill the screen) -- shows real "N% of native
+resolution" throughout, not just within the zoomed-in band.
+
+MAX IMAGE ZOOM: 125% of native (IMGVIEW_MAX_ZOOM_OVER_NATIVE) -- was
+hard-capped at 1.0x native (1 image px = 1 screen px, to avoid upscale
+blur), raised because small text/diagrams in some book images were
+still hard to read even at native resolution. Both places that used
+to hardcode the 1.0 ceiling (_imgview_reset() and the thumb-to-full-
+res progressive-upgrade path in draw_image_view()) now read from this
+one shared constant instead, avoiding the two-places-drift bug class.
+Filtering is still nearest-neighbor (unchanged), so 125% still looks
+like a crisp zoom, not a smoothed upscale. Images that already need
+>125% upscale just to fill the screen are still governed by zoom_min
+instead (unchanged floor logic).
+
+FULL GHOST-ROW BUG-CLASS AUDIT (v26.07.21.04, prompted by Kaleb's
+Settings report -- checked every draw_* function for `continue`-based
+row hiding and every navigation block for a matching hidden-row skip).
+Found and fixed a THIRD instance: Library Menu's UP/DOWN had NO
+hidden-row check at all (not just incomplete) -- "Download Books" is
+hidden via `continue` in draw_library_menu() when DOWNLOAD_PLUGINS is
+empty, but nothing stopped the cursor landing on it. Fixed with the
+same _xxx_hidden()-mirrors-the-draw-loop pattern as _storage_hidden()/
+_menu_hidden(). Everything else audited clean: Theme Menu, Video
+Settings, Theme Select, all Download-flow screens, TOC, Bookmarks
+don't conditionally hide any rows, so there's nothing for nav to
+desync from. Main reader Menu and Storage were already correct/fixed.
+Lesson (now recorded 3x): any new conditional row-hide in a draw_*
+loop MUST get a matching entry in that screen's navigation-hidden
+check, or ship with NO hiding at all.
+
+DEFAULT STREAMING QUALITY -> 720p (v26.07.21.03, Kaleb's request):
+self.video_stream_quality now defaults to "720p" (was "480p") in all
+3 spots it's read (App.__init__ + 2 getattr() fallback call sites --
+grepped to confirm no others exist). Downloads are UNCHANGED, still
+default 480p (jw_fetch.py's PREFERRED_VIDEO_LABEL) -- this setting only
+ever affected streaming. Side effect worth knowing: browse-list items'
+cached _video_url is resolved at the download default (480p), so the
+existing re-resolve-if-quality-differs logic in play_video_item() now
+fires on the common/default path (720p) instead of being skipped on
+it -- one extra GETPUBMEDIALINKS call per browse-list play at the new
+default, falls back to the cached 480p URL on any failure. Search
+Videos playback unaffected either way (always resolves fresh).
+
+AUDIO TRACK CYCLE, X BUTTON (v26.07.21.02, Kaleb's request): same
+shared-key pattern as the Y/subtitle mapping above -- X sends 'a',
+ffplay's own default "cycle audio channel" key. mpv's own default
+audio-cycle key is '#', not 'a', so the bundled input.conf adds
+"a cycle audio" explicitly. joy_x=JOY_X added to both play_jw_video()
+call sites, both param-order-matched through _translate_loop. (Full
+current video-control mapping is documented once, in the v26.07.21.24
+entry above -- not repeated here to avoid two summaries drifting out
+of sync with each other the next time the layout changes.)
 
 POLICY NOTE, NO CODE CHANGE (v26.07.17.17, Kaleb's explicit request):
 APP_HELP_PARAGRAPHS (the in-app Help screen) stays BASICS ONLY --
@@ -284,17 +815,23 @@ this AI NOTES section or main.py's own changelog, which should keep
 documenting changes as usual.
 
 THREE FIXES FROM KALEB'S SCREENSHOT (v26.07.17.16):
-1. REAL BUG FIX: Storage screen had a blank, never-actually-selectable
-   gap between "Remove Ports Shortcut" and "Help" -- draw_storage()'s
-   row loop correctly SKIPPED drawing hidden rows (e.g. "Reinstall
-   Ports Shortcut", hidden unless someone opted out -- the normal
-   case), but still computed each row's Y position from the raw
-   STORAGE_ACTIONS index, which counted the skipped row's height
-   anyway. Fixed with `row_pos`, a counter that only advances for rows
-   actually drawn. Navigation (UP/DOWN) was never affected -- it
-   already correctly skips hidden rows via the separate _storage_hidden()
-   check -- this was purely a visual gap. Verified standalone (Python
-   simulation of the row loop) -- no gap now.
+1. Storage screen had a blank, never-actually-selectable gap between
+   "Remove Ports Shortcut" and "Help" -- draw_storage()'s row loop
+   correctly SKIPPED drawing hidden rows, but still computed each row's
+   Y position from the raw STORAGE_ACTIONS index, which counted the
+   skipped row's height anyway. Fixed with `row_pos`, a counter that
+   only advances for rows actually drawn. CORRECTION (v26.07.21.01,
+   Kaleb's real on-device report): the claim below that navigation was
+   "never affected" was WRONG -- _storage_hidden() (used by UP/DOWN) was
+   missing 2 of the 7 hide conditions draw_storage() actually uses
+   ("Remove/Reinstall Ports Shortcut"), so the cursor COULD land on a
+   hidden row -- invisible selection (no highlight box drawn at all),
+   plus the scroll window centering on that hidden index made a
+   neighboring row (often "Help") appear to jump mid-scroll. Fixed by
+   making _storage_hidden() mirror draw_storage()'s conditions exactly;
+   both lists now verified symmetric (7/7 match). Lesson: any future
+   conditional row-hide MUST be added to both places, or this exact bug
+   class recurs a third time.
 2. Help screen (SCREEN_HELP) and Credits/License (SCREEN_LICENSES) now
    support L/R to jump 10 lines, same convention as Chapters/Bookmarks'
    existing L/R jump-10 (see Controls docstring at top of file). Hint
@@ -324,9 +861,7 @@ re-applies the current theme immediately if Night Mode is already on,
 same "changes take effect right away" pattern as set_night_mode().
 Boot load order matters here too, same lesson as v26.07.17.13's fix --
 IMAGE_DIM_LEVEL is loaded BEFORE the boot apply_theme() call, not
-after. Verified standalone: strength now produces a real gradient
-(Default's bg/text/link measurably shift further at High than Low),
-contrast stays comfortably above both floors at every level.
+after.
 
 IMAGE DIMMING ADDED TO READER POPUP MENU (v26.07.17.14, Kaleb's
 request). Was Storage-only (Cycle Image Night Dimming); now also a flat
@@ -399,12 +934,8 @@ _night_mode_adjust_colors():
    switching to PROPORTIONAL deltas (R approaches white by 1.5% of
    headroom/step, G decays 1.5%/step, B decays 3.5%/step) -- scales
    with each channel's own value instead of a flat subtraction, so hue
-   survives. Re-verified: same purple test now lands at (38,10,22),
-   still clearly plum/purple; all 5 real THEMES entries re-checked too
-   (Default/Adventure shift and hold 9:1+ text contrast / 3:1+ link
-   contrast, the 3 warm presets still skip correctly).
-Still only verified standalone (Python simulation), not through the
-real App()/SDL path or on-device.
+   survives.
+Not yet run through the real App()/SDL path or on-device.
 
 NIGHT MODE ADDED (v26.07.17.10, Kaleb's request). New Reader popup Menu
 toggle ("Night Mode" row, NIGHT_MODE_ENABLED global + set_night_mode()),
@@ -444,11 +975,9 @@ Kaleb's request). Three changes, UNTESTED on real hardware:
    SDL_RenderCopy at both image draw sites (inline reader + Image
    Maximize Mode). Alpha levels (IMAGE_DIM_ALPHAS) are eyeballed, not
    measured against a real photo yet.
-Randomizer math was verified standalone (Python simulation, not in-app)
--- distribution looks right (bg ranges near-black to soft-tinted, text
-tracks target ratio). None of this has been run through the real
-App()/SDL headless harness or on-device yet -- next session should do
-both before calling this done.
+None of this has been run through the real App()/SDL headless harness
+or on-device yet -- next session should do both before calling this
+done.
 
 LIBRARY HINT BAR RECALIBRATED + VERIFIED AT EVERY FONT SIZE
 (v26.07.17.08, Kaleb's request to double-check the START Pin change).
@@ -458,15 +987,8 @@ history below) still had the OLD, shorter Library hint text -- adding
 "START Pin" in v26.07.17.07 made the actual lib_hint string longer
 without updating the calibration it's measured against, exactly the
 mismatch class v0.1.153 already documents. Fixed by updating the
-calibration string to match. Verified for real (not just by
-inspection): a headless SDL_VIDEODRIVER=dummy harness built a real
-FontManager with the actual bundled font, called _hint_layout() for
-both Library hint variants (with and without a downloader plugin) at
-all 7 SIZE_STEPS, and measured every wrapped line with real
-TTF_SizeUTF8. Result: zero line-width overflow, zero bar-height
-overflow, at every size -- 1 line at the 4 smallest steps, clean
-2-line wraps at the 3 largest, "START Pin" never split across a line
-break, and the reserved bar_h always matched what was actually drawn.
+calibration string to match -- zero line-width or bar-height overflow
+at any Font Size after the fix, in either Library hint variant.
 
 PIN MOVED FROM POPUP MENU TO HINT BAR (v26.07.17.07, Kaleb's request).
 Library hint bar (both variants) now reads "...Y Sort  START Pin...".
@@ -560,11 +1082,8 @@ changelog entries for a feature that's now simply absent.
 TOAST FADE-IN LENGTHENED TO MATCH THEME TRANSITION (v26.07.16.36,
 Kaleb's request). STATUS_FADE_IN_SECONDS 0.12 -> 0.18, matching
 _THEME_TRANS_DURATION exactly (the theme color fade Kaleb said feels
-right). Fade-OUT (0.25) untouched -- not part of this request.
-Verified via the same real-timing method as the .35 investigation:
-alpha now progresses 22->45->68->...->255 over ~180ms of real frame
-steps. Exit toast (forces alpha=255 unconditionally, see .34) is
-unaffected by this, confirmed separately.
+right). Fade-OUT (0.25) untouched -- not part of this request. Exit toast
+(forces alpha=255 unconditionally, see .34) is unaffected by this.
 
 SELECTION GLIDE WAS NEVER ACTUALLY GLIDING (v26.07.16.35, Kaleb's
 report: "I've never seen it move"). Confirmed real, not perception --
@@ -583,24 +1102,15 @@ from what was last recorded, that frame now ARMS the glide (resets
 the clock, forces _sel_anim_active=True, holds the highlight at its
 OLD position) instead of interpolating against stale elapsed time --
 the actual glide then plays out for real starting the NEXT frame.
-Verified two ways: (1) direct real-timing simulation (16ms steps,
-matching 60fps) shows the highlight now genuinely progressing
-12.9->21.7->27.6->...->40 over ~12 frames before converging and
-correctly going quiet again, instead of jumping straight to target;
-(2) confirmed across all 6 sampled list screens that share this one
-helper (Library, Menu, Chapters, Storage, Bookmarks, Theme Menu --
-same fix covers all of them, plus the download screens, since it's
-one shared function). Full 1260-check sweep re-run clean after the
-fix.
+Affects all list screens that share this one helper (Library, Menu,
+Chapters, Storage, Bookmarks, Theme Menu, plus the download screens).
+
 Also checked the status-toast fade Kaleb described as "almost
-unnoticeable" while investigating -- that one is NOT a bug. Verified
-via the same real-timing method: alpha genuinely progresses smoothly
-(34->68->103->...->255 over ~130ms at 60fps), converging almost
-exactly on the documented 120ms fade-in spec. It's legitimately just
-fast -- that duration was Kaleb's own original request (see SUBTLE
-ANIMATIONS entry) for a snappy, non-decorative feel. Left as-is;
-flagged for Kaleb to say if he'd like it lengthened, since that's a
-design preference, not a defect.
+unnoticeable" while investigating -- that one is NOT a bug. It's
+legitimately just fast -- that duration was Kaleb's own original
+request (see SUBTLE ANIMATIONS entry) for a snappy, non-decorative
+feel. Left as-is; flagged for Kaleb to say if he'd like it lengthened,
+since that's a design preference, not a defect.
 
 EXIT TOAST TEXT INVISIBLE + SPLASH VOLUME MATCHED TO BUTTONS
 (v26.07.16.34, Kaleb's reports). Two unrelated small fixes:
@@ -617,16 +1127,12 @@ large-page loading toast (search this file for "alpha forced to
 255"), but that fix predates "Exit App" existing as a second toast
 call site, which never got the same treatment. Fixed by redrawing the
 status bar again on top with alpha=255 forced, right before the
-blocking SDL_Delay -- verified via isolated pixel comparison: 642
-genuinely different pixels between the old alpha=0 and new alpha=255
-renders (the actual glyph shapes), not just inferred from the code.
+blocking SDL_Delay.
 (2) Boot-splash "PICO READER" typing sequence's 11 blips
 (_build_intro_theme()) were playing at volume=0.025 -- roughly 1/6 of
 "nav"'s 0.16, despite using the literal same 520->880 Hz bloop shape.
-Matched to 0.16. Verified via real peak-amplitude measurement on the
-generated PCM (not just eyeballing the parameter): nav now measures
-0.1232, splash 0.1228 -- effectively identical, both within the
-existing 0.11-0.18 button range from the v26.07.16.05 volume audit.
+Matched to 0.16, within the existing 0.11-0.18 button range from the
+v26.07.16.05 volume audit.
 
 CHAPTER-OPEN ANCHOR LOOKBACK NOW INCLUDES A NEARBY IMAGE
 (v26.07.16.33, Kaleb's report: "The magnificent possession" epub
@@ -648,11 +1154,8 @@ lines further back for a "[IMG]" placeholder line and extend scroll
 to include it if found. Strictly additive -- for any anchor with no
 image nearby (every Psalm, every Bible verse, plain-text headings)
 the scan finds nothing and behavior is byte-for-byte unchanged from
-before. Verified: "The magnificent possession" now lands with the
-image, caption, and title all visible together (scroll 32->31);
-re-ran the full 3-profile x 7-font-size x now-6-real-EPUBs sweep
-(added this book + "Youth" as ongoing regression coverage) -- 735
-checks, 0 errors.
+before. "The Magnificent Possession" and "Youth" were added to the
+ongoing regression EPUB set as coverage for this case.
 
 SETTINGS: HELP + CREDITS/LICENSE ADDED (v26.07.16.24-.32, Kaleb's
 request). Two new static-scroll-overlay rows on Settings, sharing one
@@ -679,10 +1182,8 @@ in the Reader and cycles sort order in the Library; B EXITS THE APP
 from the Library specifically, not just "back" -- all confirmed
 against handle_button()'s actual dispatch, not assumed (an earlier
 draft got X/Y and B wrong; caught and fixed during verification).
-Verified via a 525-check headless sweep: 3 canvas profiles x 7 font
-sizes x Kaleb's 4 real EPUBs (including the 4.5M-char NWT stress
-book), every screen exercised, 0 errors. Also found and fixed a real
-ImageLoader race while at it: request() seeds self._results[key]
+Also found and fixed a real
+ImageLoader race while auditing this: request() seeds self._results[key]
 before queuing, but a concurrent is_relevant() pop() for a different
 queued request on the same key could remove it before a later
 write landed, raising a bare KeyError. Fixed via
@@ -729,8 +1230,12 @@ fullscreen flag, no scaling) is kept as a special case OUTSIDE the
 table on purpose -- v0.1.148's original zero-regression-risk
 guarantee on the primary dev device, unchanged since before any of
 this profile work started.
-NOT YET CONFIRMED ON REAL HARDWARE for any profile in this session's
-work (.15 through .20). The .15-.19 iterations that led here (native
+CONFIRMED ON REAL HARDWARE for the 480 (3:2) profile, via RG34XX-SP
+(v26.07.21.07, Kaleb's on-device test -- 720x480 canvas rendered
+correctly, no stretch/crop artifacts). Still NOT YET confirmed for the
+540 (4:3) or TrimUI Smart Pro's 3:2-match path -- those remain
+source-verified-only until real hardware exists to test them. The
+.15-.19 iterations that led here (native
 RG34XX profile, two different 4:3 additions, and the 16:9-vs-3:2
 TrimUI Smart Pro decision) are fully superseded by this table and
 not reproduced separately -- their real content is already stated
@@ -747,9 +1252,7 @@ formula. An earlier two-phase version (flat 50-150ms for 1.0s, then
 quadratic to 2000ms, with COLD_WRAP_PHASE1_SECONDS/
 _PHASE1_END_SLICE_SECONDS constants) was tried and fully replaced --
 if either of those two names shows up anywhere, that's stale/
-historical, not live code. Verified byte-identical chunked-vs-direct
-wrap output on a real 400K-char slice of "Track Your Bible Reading"
-against this curve. NOT yet confirmed on real hardware for
+historical, not live code. NOT yet confirmed on real hardware for
 responsiveness feel.
 Two related investigations from the same session, negative results
 worth remembering so they're not re-tried: word-width cache reshaped
@@ -885,8 +1388,6 @@ NOT the mechanism that broke on the splash's full-screen fade). One
 call site (the forced single-frame toast drawn right before a blocking
 operation) deliberately keeps alpha=255 instead of fading, since a
 120ms fade-in would make it invisible for the one frame that matters.
-Verified via real pixel readback: rendered text has ~1.8x more visible
-ink at full alpha than at a faint mid-fade alpha.
 
 2. Library selection glide: new App._eased_toward() helper (time-based,
 not frame-counted, so it converges in the same wall-clock time
@@ -894,13 +1395,9 @@ regardless of redraw rate) -- the selection highlight now slides to
 its new row instead of jumping. Snaps instantly instead of gliding if
 the jump is large (>3 row heights, e.g. wrapping bottom-to-top of a
 long list) -- a slow sweep across the whole list would read as lag,
-not polish. Verified via real pixel readback across multiple actual
-draw_library() frames a few ms apart on the real wall clock -- the
-highlight's Y position is provably different frame-to-frame while
-converging, not landing at its final position after a single frame.
-Only wired into Library for now; the same _eased_toward() helper can
-extend to other list screens (Menu/Chapters/Bookmarks/Storage) later
-if wanted.
+not polish. Only wired into Library for now; the same _eased_toward()
+helper can extend to other list screens (Menu/Chapters/Bookmarks/
+Storage) later if wanted.
 
 3. Theme color transition ("like a color slider"/"colors moving across
 the wheel" -- Kaleb's own description): apply_theme() no longer sets
@@ -919,10 +1416,7 @@ active, same pattern as an active status toast. Deliberately NOT the
 same architecture as the reverted splash fade (see draw_splash()'s
 docstring) -- no alpha/blend modes, no second screen drawn underneath;
 just the same plain RGB values every draw call already uses, animated
-in place. Verified via real pixel readback: three actual rendered
-frames (pure old theme, pure new theme, mid-transition) all produce
-three genuinely different pixel values, confirming the interpolated
-color is actually reaching the screen, not just changing in memory.
+in place.
 
 INTRO THEME SWOOSH REMOVED (v26.07.16.06, Kaleb's request): the
 trailing 2s soft swoosh that followed the typing sequence is gone --
@@ -991,9 +1485,7 @@ EXIT-APP SOUND (v26.07.16.02, Kaleb's request): the "error" sound
 (quiet double "wonk" -- generated but previously unmapped to any
 button, see v26.07.16.01's notes) now plays via app.play_sound("error")
 at both places quit_requested gets set to True: SCREEN_LIBRARY's
-B-to-quit, and the reader popup Menu's "Exit App" choice. Verified on
-the real headless harness (real App(), real handle_button() dispatch)
-for both paths.
+B-to-quit, and the reader popup Menu's "Exit App" choice.
 
 SOUND EFFECTS (v26.07.16.01, Kaleb's request): pure-synth SDL2 audio, no
 asset files, no SDL2_mixer, no pip deps -- 5 short 16-bit PCM tones/
@@ -1027,12 +1519,6 @@ pattern) and Settings/Storage ("Toggle Sound Effects", mirrors Disk
 Cache/Images/Open Last Book). SoundEngine opens one SDL audio device in
 App.__init__ and silently no-ops (app.play_sound() becomes a no-op) if
 that fails for any reason -- never raises, never blocks the UI.
-Verified via the real headless harness (real App(), real
-handle_button() dispatch, real SDL audio device under
-SDL_AUDIODRIVER=dummy): every mapped button plays the right sound with
-zero exceptions, both toggle locations flip and persist
-app.sound_enabled correctly, and muting actually suppresses playback
-(not just the label).
 
 NOTE: everything up through v26.07.14.19 this session was actually built
 and delivered on July 15, 2026 -- the .07.14 date prefix was wrong the
@@ -1090,10 +1576,7 @@ Recurring lessons worth knowing up front:
   known limitation: checkpoints happen BETWEEN paragraphs, not within
   one -- a rare very-large single paragraph (confirmed up to ~1.3s on
   real device, scaled from dev-hardware profiling) can't be interrupted
-  mid-paragraph. Verified byte-identical to the old one-shot _wrap() on
-  every real extreme page across all three real test books, at every
-  Font Size, including deliberately-forced-to-pause-constantly stress
-  runs and mid-build page-abandonment tests.
+  mid-paragraph.
 - SECURITY (v26.07.15.16): audited for malicious-content risk (a bad
   EPUB or spoofed download response trying to harm the device). No
   eval/exec/subprocess anywhere in the codebase, so there's no code-
@@ -1106,10 +1589,7 @@ Recurring lessons worth knowing up front:
   download() functions (gutenberg_fetch.py, jw_fetch.py x2) now run the
   server-provided filename through os.path.basename() before joining
   with dest_dir, closing a path-traversal write risk if a download
-  response were ever spoofed/MITM'd. Both fixes verified against a real
-  downloaded Gutenberg EPUB (parses identically) and against synthetic
-  malicious inputs (entity bomb rejected cleanly, "../" filenames
-  contained to dest_dir). zipfile usage was already safe (reads via
+  response were ever spoofed/MITM'd. zipfile usage was already safe (reads via
   zip.open() into memory, never extracts to disk, so zip-slip doesn't
   apply); pickle usage was already safe (only ever deserializes the
   app's own previously-serialized wrap cache, never network/EPUB data).
@@ -1121,9 +1601,7 @@ Recurring lessons worth knowing up front:
   closes a zip decompression-bomb risk where a tiny compressed EPUB
   entry could expand to hundreds of MB/GB and exhaust the device's 1GB
   RAM. 64MB leaves generous headroom over the largest known real page
-  (~4.5M chars, well under 10MB). Verified: blocks a synthetic 200MB
-  bomb (203KB compressed) before any decompression happens; a real
-  downloaded book still reads all pages identically. get_page() raises
+  (~4.5M chars, well under 10MB). get_page() raises
   ValueError same as its existing parse-failure path, and every call
   site already wraps get_page() in a broad except (KeyError/ValueError
   or Exception) -- checked all 9 call sites in main.py, none needed
@@ -1199,11 +1677,6 @@ Recurring lessons worth knowing up front:
   Restoring re-applies THEME_INDEX afterward (apply_theme()'s existing
   clamp handles a currently-applied custom theme whose index no longer
   resolves the same way post-restore).
-  Verified headless end-to-end: randomize -> cancel -> re-randomize ->
-  save -> simulated-reboot-reload -> Theme+ cycle wraps correctly ->
-  fill all 3 custom slots -> 4th save evicts the oldest (not append-
-  without-bound) -> backup -> wipe in-memory list -> restore recovers
-  all 3 by name, all passing.
   THERAPEUTIC HUES (v26.07.15.21): generate_random_theme()'s hue
   selection reworked at Kaleb's request to reflect his other project,
   Cava Solace (cava-manager.sh's audio visualizer therapeutic
@@ -1221,9 +1694,7 @@ Recurring lessons worth knowing up front:
   bar and used as the pre-filled default when the text-entry naming
   screen opens (still fully editable/overridable, same as before).
   warning is deliberately left a fixed muted red regardless of family --
-  an alert color, not part of the calming intent. Re-verified contrast
-  compliance across 500 seeds (0 failures) and confirmed all 8 combos
-  are reachable.
+  an alert color, not part of the calming intent.
   BG/FOOTER TINT (v26.07.15.22): bg/panel/hint_bg/menu_sel_bg (every
   dark "chrome" surface -- background AND the footer/hint bar) now
   share ONE saturation value (sat_bg, capped at 0.18) instead of each
@@ -1248,10 +1719,7 @@ Recurring lessons worth knowing up front:
   was_showing_draft BEFORE the restore call (comparing THEME_INDEX
   against len(all_themes())-1) and, if true, re-resolving to
   len(all_themes())-1 AFTER the restore instead of the stale absolute
-  index. Verified: draft-active case now survives restore correctly in
-  both the "list grows" and "list shrinks" directions, and confirmed
-  the fix doesn't disturb the pre-existing fixed-theme-active case
-  (index untouched, as before). Also audited during this same pass:
+  index. Also audited during this same pass:
   render_text_cached()'s cache key includes the actual color RGB
   values (not a theme index), so no stale-color-rendering risk exists
   there even without explicit invalidation; every real apply_theme()
@@ -1292,12 +1760,7 @@ Recurring lessons worth knowing up front:
   first, exactly like draw_menu()/draw_library_menu() already do), NOT
   a full-screen takeover like draw_storage() -- a full-screen menu
   would hide the very thing Regenerate/Randomize need to preview
-  against (real reading content behind the panel). Verified via pixel
-  readback that the backdrop actually shows through the overlay's
-  edges, plus a full real-button-press walkthrough: open Themes... ->
-  Randomize+save -> cycle to it -> Regenerate (locks target, re-roll
-  twice) -> Save Regenerated (replaces in place, count unchanged) ->
-  Regenerate/Save both correctly no-op when tried out of context.
+  against (real reading content behind the panel).
   REAL BUG FOUND AND FIXED (v26.07.15.25): draw_theme_menu() and
   draw_bookmarks() had been accidentally MERGED into one function by
   an earlier str_replace edit this same session that deleted the
@@ -1314,16 +1777,7 @@ Recurring lessons worth knowing up front:
   have crashed the instant Bookmarks was opened for real, a path this
   session's test suites never happened to exercise). Fixed by
   restoring the missing "def draw_bookmarks(renderer, app):" line,
-  splitting the two functions back apart. Verified via a full
-  structural audit of the file (Python ast module, every top-level
-  function AND every App method's line-length, sorted descending) to
-  confirm no other similarly-sized accidental merge existed elsewhere
-  from this session's many edits -- nothing else stood out as an
-  outlier. Re-rendered both screens independently afterward (pixel-
-  readback confirming draw_bookmarks shows COL_BG alone, and
-  draw_theme_menu's panel now actually shows COL_PANEL where the
-  overlay should be) and re-ran the complete regression suite built
-  this session, all still passing. Lesson for future sessions: when a
+  splitting the two functions back apart. Lesson for future sessions: when a
   str_replace's old_str spans a function boundary (a blank-line-then-
   "def other_function(...)" pattern), the replacement's new_str MUST
   preserve that boundary line explicitly -- it's easy to drop while
@@ -1349,16 +1803,7 @@ Recurring lessons worth knowing up front:
   genuine inter-line gap + sub_h) and centering THAT block within the
   row's slack -- title and subtitle now both derive their y from the
   same block_top, so they can't desync again regardless of row_h's own
-  future tuning. Verified two ways: (1) a naive pixel-diff-against-
-  background band scan, which initially gave a false "still broken"
-  reading -- traced to the scan accidentally including the SELECTED
-  row's highlight-color background (COL_MENU_SEL_BG, not COL_BG) as
-  part of the diff, merging that one row's bands artificially; redone
-  with no row selected, confirming clean separated title/subtitle
-  bands with real positive-pixel gaps (6-23px depending on Font Size)
-  at all 7 SIZE_STEPS, for both a JW Videos dataset (matching Kaleb's
-  actual photo) and a Gutenberg-style title+author dataset. (2)
-  Rendered screenshots reproducing the exact scenario from the photo.
+  future tuning.
   THEME NAME SHOWN 3x, FIXED (v26.07.15.27, Kaleb's report): the
   Themes submenu's "Theme +" and "Theme -" rows each appended
   "(current_name)" to their own label, so the active theme's name
@@ -1374,9 +1819,6 @@ Recurring lessons worth knowing up front:
   ("nothing pending") were left untouched -- those show information
   the toast doesn't (the LOCKED regenerate target, and whether
   anything is pending to save), so they aren't the same redundancy.
-  Verified via pixel inspection that the new subtitle line and the
-  item rows below it stay cleanly separated (no overlap) at both
-  default and largest Font Size.
   DELETE THEME (v26.07.15.28, Kaleb's request): new "Delete Theme" row
   in the Themes submenu, two-press confirm (same pattern as Delete
   Book/Clear All Finished -- arms on first A, executes on second;
@@ -1396,10 +1838,7 @@ Recurring lessons worth knowing up front:
   own save flow, or Storage's backup/restore, which isn't even
   reachable from inside this submenu without leaving it via Back
   first). Falls back to the Default theme (index 0) after deleting,
-  rather than guessing a "next" theme. Verified via real button-press
-  driven tests: no-op on a fixed theme, arm+UP-disarms, arm+confirm
-  actually deletes the right one and leaves the other saved themes
-  untouched, and a no-op while viewing an unsaved draft.
+  rather than guessing a "next" theme.
   DEFAULT THEME PROTECTION HARDENED (v26.07.15.29, Kaleb's request:
   "make sure no default themes can be deleted by accident just in
   case"): delete_theme() already couldn't touch THEMES (the 5 fixed
@@ -1413,15 +1852,7 @@ Recurring lessons worth knowing up front:
   is never mutated ANYWHERE (defined once as a plain list literal,
   read-only for the rest of the program) -- every actual
   append/delete/reassignment in the codebase targets CUSTOM_THEMES
-  specifically. Verified with 3 deliberate attack-style tests rather
-  than just trusting the logic: (1) calling delete_theme() directly on
-  all 5 fixed themes, bypassing the menu/confirm flow entirely; (2)
-  force-setting the armed-confirm flag directly and pressing A while
-  on each fixed theme; (3) the normal flow, confirming Delete Theme
-  never even ARMS while viewing a fixed theme. All 5 fixed themes
-  survived all 3 attempts; a real saved custom theme could still be
-  deleted normally afterward, confirming the hardening didn't break
-  the actual feature.
+  specifically.
   MINOR HARDENING (v26.07.15.30): both "Themes..." entry points
   (Library Menu and Reader Menu) now also reset _theme_delete_armed to
   False the moment the submenu opens, not just on every exit path.
@@ -1449,15 +1880,6 @@ Recurring lessons worth knowing up front:
   all) -- previously undiscoverable unless you already knew to look.
   (5) "Reset to Default" -- one-press jump back to the Default theme
   from anywhere, instead of cycling however many presses away it is.
-  Verified via real button-press-driven tests: Select Theme jumps to
-  and correctly previews/confirms a specific saved theme, and its B-
-  cancel correctly reverts; Rename Theme changes only the name (colors
-  byte-identical) and safely no-ops on a fixed theme; Reset to Default
-  jumps straight back from any other theme. Re-ran the full default-
-  theme-deletion-protection suite afterward (all 3 attack scenarios)
-  to confirm the menu restructure didn't reopen that hole. Re-verified
-  no overlap between the two new subtitle lines and the item list at
-  all 7 Font Size steps (pixel band scan, not just eyeballing).
 
 FFPLAY INVOCATION (v26.07.20.13, Kaleb's request -- optimization +
 cleanup pass over native_video.py's play_jw_video()). Current state:
@@ -1867,10 +2289,6 @@ line from the original mpv-switch commit that was still functionally
 correct but confusing to read (the auto/mpv branch's own
 find_ffplay()-if-missing fallback now lives inside that branch
 directly, instead of as a stray top-level line after the if/else).
-Verified with real dry-run tests covering all 3 preference values
-plus both fallback-when-preferred-is-missing scenarios (explicit
-ffplay-but-missing correctly falls back to mpv; explicit mpv-but-
-missing correctly falls back to ffplay) -- all pass.
 
 GHOST-GAP BUG CHECK -- FOUND AND FIXED TWO REAL INSTANCES (v26.07.20.39,
 Kaleb's request to verify no visual bug like the historical
@@ -2381,33 +2799,22 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def find_books_dir():
-    """v0.1.102: SD1/SD2-aware location for muOS's shared 'Book Reader'
-    content folder -- same principle/candidates as jw_fetch.py's
-    find_movies_dir() for ROMS/movies. muos.dev documents "Book Reader"
-    as an existing muOS system (https://muos.dev/systems/misc/bookreader,
-    currently served by the third-party mReader core) with its own
-    ROMS/Book Reader content folder. Sharing that folder -- rather than
-    keeping books inside PicoReader's own app directory -- is what would
-    let PicoReader register as an alternative core for the SAME system
-    later, and just generally puts books where the rest of muOS's
-    content already lives. Checks both real muOS mount points and
-    returns the first that exists; falls back to creating the SD1 path
-    if neither exists yet, so a fresh setup still works.
+    """SD1/SD2-aware location for muOS's shared 'Book Reader' content
+    folder -- same principle/candidates as jw_fetch.py's
+    find_movies_dir()/find_music_dir(). muos.dev documents "Book Reader"
+    as an existing muOS system (served by the third-party mReader core)
+    with its own ROMS/Book Reader content folder; sharing it rather
+    than PicoReader's own app dir puts books where muOS's other content
+    lives and would let PicoReader register as an alt core for that
+    system later. Checks /mnt/union (muOS's universal SD1+SD2 merged
+    mount, checked first), then /mnt/sdcard, then /mnt/mmc; falls back
+    to creating the /mnt/union path if none exist yet.
 
-    Kaleb confirmed OK losing existing bookmarks/reading-progress for
-    this move (personal library, testing device only) -- so unlike
-    find_movies_dir() there's no old-location migration here, just a
-    straight switch. If that ever matters for someone else's setup:
-    bookmarks are keyed by the book's full file path (see
-    load_bookmarks/save_bookmarks), so moving this folder orphans any
-    progress recorded under the old path -- worth a real migration step
-    (rewrite matching bookmarks.json keys) rather than silent data loss
-    if a future move needs to preserve reading history.
-    v26.07.18.02: /mnt/union/ROMS/... added as first candidate -- it's
-    muOS's actual universal shared ROMS mount (SD1+SD2 merged view),
-    confirmed earlier for the Ports launcher (_ports_launcher_path())
-    and just applied here + to jw_fetch.py's find_movies_dir()/
-    find_music_dir() for the same reason (Kaleb's report)."""
+    No old-location migration on a folder change -- bookmarks are keyed
+    by full file path (see load_bookmarks/save_bookmarks), so moving
+    this folder orphans progress recorded under the old path. Fine for
+    this personal/testing setup; worth a real migration step (rewrite
+    matching bookmarks.json keys) if that ever needs to be preserved."""
     candidates = [
         "/mnt/union/ROMS/Book Reader",
         "/mnt/sdcard/ROMS/Book Reader",
@@ -2527,64 +2934,37 @@ WARM_LOAD_MIN_CHUNK_LINES = 500
 # multi-minute build without adding meaningful overhead.
 READER_BUILD_RENDER_THROTTLE = 5.0
 
-# COLD_WRAP_RESPONSIVE_SECONDS (fixed-window slice-widening) is
-# SUPERSEDED by COLD_WRAP_RAMP_SECONDS as of v26.07.14.03 -- the old
-# version only stayed responsive for the first few seconds of the WHOLE
-# build and couldn't recover after that regardless of later input. Left
-# defined but unread, same as this project's other superseded constants.
+# COLD_WRAP_RESPONSIVE_SECONDS (old fixed-window slice-widening) is
+# superseded by the COLD_WRAP_RAMP_SECONDS curve below and unread --
+# left defined for reference only.
 COLD_WRAP_RESPONSIVE_SECONDS = 4.0
 
-# Adaptive cold-wrap slice size (v26.07.14.03, extended to warm-load/
-# prerender in v26.07.14.04): seconds of genuine idle (no real button
-# press) it takes the per-slice time budget to ramp from
-# COLD_WRAP_INITIAL_SLICE_SECONDS up to COLD_WRAP_FALLBACK_SLICE_SECONDS.
-# Resets to 0 the instant any real input happens, no matter how deep
-# into the build -- so responsiveness recovers on touch, not just during
-# a fixed opening window. Both foreground cold-wrap and the background
-# prerender queue call the same ramp formula (cold_wrap_slice_budget()
-# below), keyed off app._last_input_time.
+# Adaptive cold-wrap slice size: seconds of genuine idle (no real
+# button press) it takes the per-slice time budget to ramp from
+# COLD_WRAP_INITIAL_SLICE_SECONDS up to COLD_WRAP_FALLBACK_SLICE_SECONDS,
+# via a single smooth quadratic curve (budget(t) = INITIAL +
+# (t/RAMP_SECONDS)**2 * (FALLBACK - INITIAL), clamped to t <=
+# RAMP_SECONDS -- see cold_wrap_slice_budget() below). Resets to 0 the
+# instant any real input happens, no matter how deep into the build, so
+# responsiveness recovers on touch rather than only during a fixed
+# opening window. Both foreground cold-wrap and the background
+# prerender queue share this same formula, keyed off app._last_input_time.
 COLD_WRAP_RAMP_SECONDS = 4.0
 
-# v26.07.16.13 (Kaleb's request): the v26.07.16.11 two-phase ramp
-# (flat linear 50->150ms for the first 1.0s, THEN a separate quadratic
-# 150->2000ms for the remaining 3.0s -- two formulas joined at a hard
-# breakpoint) is replaced here with a SINGLE smooth quadratic curve
-# spanning the whole COLD_WRAP_RAMP_SECONDS window, no breakpoint at
-# all. Kaleb wanted the curve to look like the parabola reference image
-# throughout -- not two straight-ish pieces stitched together at a
-# marker.
-# Formula (see cold_wrap_slice_budget() below): budget(t) =
-# INITIAL + (t/RAMP_SECONDS)**2 * (FALLBACK - INITIAL), clamped to
-# t <= RAMP_SECONDS. Still slow-near-the-start/steep-near-the-end (same
-# "half parabola" shape as before), just ONE continuous curve computing
-# that shape instead of two pieces.
-# v26.07.16.14 (Kaleb's request, confirmed this curve SHAPE is good):
-# starting slice raised from 90ms to 100ms -- shape/formula unchanged,
-# just the floor. Sample points at 100ms: t=0s->100ms, t=1.0s->~219ms,
-# t=2.0s->~575ms, t=3.0s->~1169ms, t=4.0s->2000ms. Still resets to
-# COLD_WRAP_INITIAL_SLICE_SECONDS the instant real input happens, same
-# as always.
-# v26.07.17.09 CONFIRMED ON REAL HARDWARE (Kaleb's report): first
-# actual on-device test of this ramp, cold-loading Enjoy Life Forever's
-# "Track Your Bible Reading" page (~4.5M chars, the app's known worst
-# case). ~54s total, matching the ~45-50s prior benchmark within normal
-# variance. Kaleb confirmed the ramp "worked" -- also confirmed the
-# button-press sound effect plays reliably on presses made DURING the
-# wait, giving audible feedback that a press registered even while the
-# wrap itself is still running. Both were previously verified only in
-# headless tests/reasoning, never on the actual device until now.
+# Sample points at INITIAL=100ms: t=0s->100ms, t=1.0s->~219ms,
+# t=2.0s->~575ms, t=3.0s->~1169ms, t=4.0s->2000ms (FALLBACK).
+# CONFIRMED ON REAL HARDWARE (Kaleb, cold-loading Enjoy Life Forever's
+# "Track Your Bible Reading", ~4.5M chars, the app's known worst case):
+# ~54s total; button-press sound reliably plays for presses made during
+# the wait, giving audible confirmation a press registered mid-build.
 COLD_WRAP_INITIAL_SLICE_SECONDS = 0.100
-# Slice size once the ramp is fully idle-warmed: bigger slices meant
+# Slice size once the ramp is fully idle-warmed -- bigger slices give
 # real on-device speed gains, but fully unbounded (one shot to finish)
-# froze all input for the back half of a build -- this keeps a finite
-# checkpoint interval. CONFIRMED on real device (Track Your Bible
-# Reading, cold wrap, back when the ramp was linear): ~51s idle/no
-# input vs ~52s with active button presses throughout -- the ~1s cost
-# of staying responsive is negligible, so 2.0s remains the right
-# fallback ceiling; reshaping the ramp's SHAPE only changes how slice
-# size gets there, not the ceiling itself, so this on-device number
-# should still hold -- worth reconfirming on real hardware regardless,
-# per this project's usual verify-before-ship discipline.
+# would freeze all input for the back half of a build; this keeps a
+# finite checkpoint interval. CONFIRMED on real device (Track Your
+# Bible Reading): ~51s idle/no input vs ~52s with active button presses
+# throughout -- the ~1s responsiveness cost is negligible, so 2.0s is
+# the right fallback ceiling.
 COLD_WRAP_FALLBACK_SLICE_SECONDS = 2.0
 
 
@@ -4102,9 +4482,11 @@ JOY_R2 = _sdl_map.get("righttrigger", 14)
 # by construction, not device-specific code: _load_sdl_axis_map() mirrors
 # _load_sdl_map() above but parses the "a<N>" (axis) entries instead of
 # the "b<N>" (button) ones from the SAME sdl_map file. On a device with
-# no physical right stick (e.g. RG34XX-SP per controller_ref.txt), the
-# axis index still resolves fine but its value simply never moves --
-# safe no-op, no device-detection branch needed anywhere in this code.
+# no physical right stick (e.g. RG34XX-H or RG28XX-H per the ground-
+# truth device table above -- NOT RG34XX-SP, which does have a right
+# stick, confirmed both by controller_ref.txt and Kaleb's real-hardware
+# test), the axis index still resolves fine but its value simply never
+# moves -- safe no-op, no device-detection branch needed anywhere here.
 def _load_sdl_axis_map():
     paths = [
         "/opt/muos/device/current/config/board/sdl_map",
@@ -4135,6 +4517,17 @@ def _load_sdl_axis_map():
 _sdl_axis_map = _load_sdl_axis_map()
 JOY_AXIS_RX = _sdl_axis_map.get("rightx", 2)  # confirmed a2 on CubeXX-H/RG34XX-SP
 JOY_AXIS_RY = _sdl_axis_map.get("righty", 3)  # confirmed a3 on CubeXX-H/RG34XX-SP
+# v26.07.21.08 (Kaleb's request, following his RG34XX-SP report that
+# right stick works but left doesn't): the "still-open left-stick
+# idea" mentioned in the deadzone comment below was never actually
+# built -- only right stick (JOY_AXIS_RX/RY) was wired into the event
+# loop. This wasn't a bug on RG34XX-SP specifically, the left stick
+# simply did nothing on ANY device, CubeXX-H included. Now built,
+# mirroring the right stick's own mapping/behavior exactly (same
+# edge-triggered, one-push-one-action pattern, see the axis-motion
+# handler's own comment for the full behavior).
+JOY_AXIS_LX = _sdl_axis_map.get("leftx", 0)  # confirmed a0 on CubeXX-H/RG34XX-SP
+JOY_AXIS_LY = _sdl_axis_map.get("lefty", 1)  # confirmed a1 on CubeXX-H/RG34XX-SP
 # SDL's signed 16-bit axis range is -32768..32767; 8000 is comfortably
 # past normal stick drift/jitter (typically well under 3000 at rest)
 # while still triggering on a light, deliberate push -- same reasoning
@@ -4411,6 +4804,66 @@ def log_render_issue(book_path, file_path, detail):
             f.write(f"[{ts}] {book_name} :: {file_path} -- {detail}\n")
     except Exception:
         pass
+
+
+# ============================================================
+# System status (battery/WiFi) -- popup Menu indicators
+# ============================================================
+# v26.07.21.14 (Kaleb's request): battery % and WiFi connection status
+# shown in the top-right corner of both popup Menu screens (the main
+# reader Menu and the Library Menu). Paths verified against the REAL
+# MustardOS/internal repo (github.com/MustardOS/internal, pulled via
+# codeload.github.com), not guessed:
+# - Battery: muOS itself continuously maintains a plain, always-current
+#   file at /run/muos/battery/capacity (0-100) and .../battery/charging
+#   (1/0) -- see script/system/battery.sh's own BATT_CAP/BATT_CHG vars.
+#   Same file muOS's own battery scripts read; no root needed, just a
+#   plain read().
+# - WiFi: standard Linux kernel sysfs (not even muOS-specific) --
+#   /sys/class/net/wlan0/operstate ("up"/"down") and .../carrier (1/0).
+# Both fail soft (return None) if the paths don't exist -- e.g. when
+# testing off-device -- so the indicators simply don't draw rather than
+# crash or show fake data.
+_WIFI_IFACE_CANDIDATES = ("wlan0", "wlan1")
+
+
+def _read_battery_status():
+    """Returns (percent:int|None, charging:bool|None)."""
+    percent = None
+    charging = None
+    try:
+        with open("/run/muos/battery/capacity", "r") as f:
+            percent = int(f.read().strip())
+    except (OSError, ValueError):
+        pass
+    try:
+        with open("/run/muos/battery/charging", "r") as f:
+            charging = f.read().strip() == "1"
+    except (OSError, ValueError):
+        pass
+    return percent, charging
+
+
+def _read_wifi_status():
+    """Returns True/False/None (None = no wifi interface found at all,
+    e.g. off-device testing -- distinct from False, which means a real
+    interface exists but isn't currently connected)."""
+    for iface in _WIFI_IFACE_CANDIDATES:
+        base = f"/sys/class/net/{iface}"
+        if not os.path.isdir(base):
+            continue
+        try:
+            with open(f"{base}/operstate", "r") as f:
+                state = f.read().strip()
+            try:
+                with open(f"{base}/carrier", "r") as f:
+                    carrier = f.read().strip()
+            except OSError:
+                carrier = None
+            return state == "up" and carrier != "0"
+        except OSError:
+            return False
+    return None
 
 
 # ============================================================
@@ -5591,6 +6044,14 @@ def fill_rect(renderer, x, y, w, h, color):
     SDL.SDL_RenderFillRect(renderer, ctypes.byref(r))
 
 
+def draw_line(renderer, x1, y1, x2, y2, color):
+    """v26.07.21.14: thin single-pixel line, added for the new battery/
+    WiFi status icons (battery outline, WiFi disconnected strike-
+    through) -- nothing in this file needed a raw line before this."""
+    SDL.SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a)
+    SDL.SDL_RenderDrawLine(renderer, x1, y1, x2, y2)
+
+
 CORNER_RADIUS = _sx(6)  # "slight curved edges" per Kaleb's request -- small on
                          # purpose, meant to soften corners without looking
                          # like a bubbly/rounded design language change.
@@ -5693,6 +6154,23 @@ HINT_SIDE_PAD = HINT_CORNER_RADIUS + _sx(4)  # v0.1.137: hint bar's text
                         # where the actual clamped radius is smaller than
                         # this) but guarantees text can never sit under
                         # the curve at ANY Font Size.
+
+# v26.07.21.31 (Kaleb's request: "don't waste space, especially at
+# 32pt" -- the %-marker was reusing HINT_SIDE_PAD, sized for the full
+# hint text's own worst-case corner clearance, but the marker sits
+# several px above the true bottom edge (not right at y=0), where the
+# actual curve geometry insets far less: verified via real circle math
+# against HINT_CORNER_RADIUS, only ~1-8px at the marker's real height,
+# not the full 32px HINT_SIDE_PAD reserves. A dedicated, smaller
+# margin for the marker specifically (hint TEXT's own margin is
+# UNCHANGED, still HINT_SIDE_PAD -- this only affects the marker).
+MARKER_SIDE_PAD = _sx(12)
+# How much clearance the marker's shrink-loop (non-immersive mode)
+# targets before it stops stepping down in font size -- was 20px
+# (an arbitrary "comfortable" buffer); reduced since Kaleb's explicit
+# ask was to stop wasting space, and even 6px is still a real,
+# positive, non-overlapping gap, not zero.
+MARKER_MIN_CLEARANCE = _sx(6)
 
 WRAP_SAFETY_MARGIN = _sx(16)  # v0.1.134: _wrap()'s greedy line-packer
                         # decides whether a word fits by SUMMING each
@@ -6195,8 +6673,22 @@ SCREEN_DOWNLOAD_BROWSE = "download_browse"    # browse/download from the
 SCREEN_DOWNLOAD_HELP = "download_help"  # v0.1.155: static help overlay
                         # explaining Search vs. manual pub-code entry --
                         # Kaleb: "this code thing is confusing". Opened
-                        # with X from Sources/Categories/Browse, returns
-                        # to whichever of those opened it.
+                        # with X from Sources/Categories -- v26.07.21.42
+                        # (Kaleb's request): no longer opened from Browse,
+                        # see SCREEN_DOWNLOAD_BROWSE_MENU below for why.
+SCREEN_DOWNLOAD_BROWSE_MENU = "download_browse_menu"  # v26.07.21.42
+                        # (Kaleb's request: "drop help menu and replace
+                        # with pop up menu"). Was: X on SCREEN_DOWNLOAD_
+                        # BROWSE opened the static Search/Pub-Code-only
+                        # Help overlay above -- stale/incomplete once
+                        # this screen grew Play/Play All/Shuffle All/
+                        # Download. Now X opens a real popup menu (same
+                        # visual pattern as draw_menu()) listing whatever
+                        # actions actually apply to the CURRENT item/mode
+                        # (video/audio/generic), each one calling the
+                        # exact same App method its own dedicated button
+                        # already does -- see draw_download_browse_menu()
+                        # for the dynamic item list.
 SCREEN_LIBRARY_MENU = "library_menu"          # X on Library (was START
                                                # before v26.07.12.05) --
                                                # sort shortcuts + Download
@@ -6325,6 +6817,14 @@ MENU_ITEMS = ["Chapters", "Bookmarks", "Font Size +", "Font Size -",
               "Settings", "Library", "Exit App"]
 
 VIDEO_SETTINGS_ITEMS = ["Video Fill Screen", "Streaming Quality", "Video Player", "Back"]
+# v26.07.21.28 (Kaleb's request): "360p" added as a real, valid quality
+# tier -- jw.org's own video API actually serves 240p/360p/480p/720p
+# (see VIDEO_LABEL_FALLBACK's own comment), so this isn't inventing
+# anything, just exposing a resolution the API already supports.
+# Ascending order for an intuitive "step up/down" feel when cycling.
+# Downloads are UNCHANGED, still always 480p regardless of this
+# setting -- same as before.
+STREAM_QUALITY_CYCLE = ["360p", "480p", "720p"]
 
 # v26.07.17.09: night-reading image dimming (Kaleb's request) -- a flat
 # semi-transparent overlay drawn over images so bright photos don't blow
@@ -6342,6 +6842,7 @@ STORAGE_ACTIONS = ["Clear Image Cache", "Clear Cache for Finished Books",
                     "Toggle Disk Cache (RAM-only mode)", "Toggle Images (text-only mode)",
                     "Toggle Open Last Book on Launch", "Toggle Sound Effects",
                     "Toggle Video Fill Screen", "Streaming Quality", "Video Player",
+                    "Audio Player",
                     "Cycle Image Night Dimming",
                     "Pre-render Book Images", "Remove Ports Shortcut",
                     "Reinstall Ports Shortcut", "Help", "Credits / License", "Back"]
@@ -6507,6 +7008,8 @@ class App:
         self.dl_help_scroll = 0      # v0.1.155: scroll offset on the help
                                       # overlay, in case it overflows the
                                       # screen at large Font Size.
+        self.download_browse_menu_index = 0  # v26.07.21.42: selection on
+                                      # SCREEN_DOWNLOAD_BROWSE_MENU.
 
         # v26.07.16.24: Settings > Credits / License and Settings > Help --
         # same static-scroll-overlay pattern as dl_help above (return
@@ -6594,11 +7097,14 @@ class App:
         # letterbox bars over exact aspect ratio. See native_video.py's
         # play_jw_video() docstring for what each mode actually does.
         self.video_fill_screen = load_settings().get("video_fill_screen", False)
-        # v26.07.20.08: streaming quality -- "480p" (default, matches
-        # what downloads always use) or "720p". Downloads are NEVER
-        # affected by this -- see play_video_item()/download_video_link()
-        # call sites' own comments for exactly where this is and isn't
-        # threaded through.
+        # v26.07.20.08: streaming quality -- "360p"/"480p"/"720p" (see
+        # STREAM_QUALITY_CYCLE). Default is 480p -- briefly changed to
+        # 720p at v26.07.21.03, reverted back to 480p at v26.07.21.29
+        # (Kaleb's request: "make the default 480p for everything on
+        # first boot"), matching downloads, which have always defaulted
+        # to 480p and are NEVER affected by this setting either way --
+        # see play_video_item()/download_video_link() call sites' own
+        # comments for exactly where this is and isn't threaded through.
         self.video_stream_quality = load_settings().get("video_stream_quality", "480p")
         # v26.07.20.38 (Kaleb's request): "Auto" (default -- mpv
         # preferred, ffplay fallback if mpv isn't found, same as
@@ -6613,6 +7119,14 @@ class App:
         # device, same tolerant philosophy as every other player-
         # discovery path in this app.
         self.video_player_pref = load_settings().get("video_player_pref", "auto")
+        # v26.07.21.36 (Kaleb's request): same manual mpv/ffplay override
+        # for audio playback -- separate setting from video_player_pref
+        # since Kaleb may reasonably want a different player for each
+        # (e.g. mpv for video's OSD progress bar, ffplay for audio's
+        # lighter footprint during a long song queue). Same tolerant
+        # fallback behavior as video -- see
+        # native_video.play_audio_file()'s own player_pref param.
+        self.audio_player_pref = load_settings().get("audio_player_pref", "auto")
         # v26.07.20.32 (Kaleb's request, following his own on-device
         # testing that ruled out images as the cause): REPLACES the old
         # _video_streaming_active flag entirely. Previous design ran
@@ -6641,6 +7155,13 @@ class App:
         self._pending_link_video = None
         self._axis_rx_dir = 0
         self._axis_ry_dir = 0
+        # v26.07.21.08 (Kaleb's real-hardware report on RG34XX-SP:
+        # right stick works, left stick doesn't -- because left stick
+        # was never actually wired up, only right stick was built. See
+        # JOY_AXIS_LX/LY's own comment for why. Same edge-triggered
+        # per-axis direction-latch pattern as the right stick.
+        self._axis_lx_dir = 0
+        self._axis_ly_dir = 0
         # v0.1.123: "Open Last Book on Launch" (Kaleb's request, built on
         # top of the existing Continue Reading feature) -- defaults OFF
         # since it changes what screen greets you on startup, unlike the
@@ -6680,6 +7201,18 @@ class App:
         # toggles above. X still opens the Menu even with the bar hidden
         # -- only the on-screen TEXT disappears, not the button mapping.
         self.immersive_mode = load_settings().get("immersive_mode", False)
+        # v26.07.21.14 (Kaleb's request): battery %/charging + WiFi
+        # status shown in the popup Menu screens' top-right corner.
+        # Deliberately NOT live-updated every frame while the menu is
+        # open (Kaleb's explicit call) -- refreshed once via
+        # refresh_status_indicators() at each of that screen's own
+        # entry points instead, kept here so both draw_menu() and
+        # draw_library_menu() read the exact same cached values.
+        self._status_battery_pct = None
+        self._status_battery_charging = None
+        self._status_wifi_connected = None
+        self._status_time_str = None
+        self._status_clock_refreshed_at = 0.0
         # v26.07.12.14: self.disk_cache_enabled above stays the person's
         # RAW saved preference (untouched, still round-trips correctly
         # through save_settings() for anyone on the mini_jpeg fallback --
@@ -7705,6 +8238,84 @@ class App:
 
         threading.Thread(target=_do_download, daemon=True).start()
 
+    def open_video_search_entry(self):
+        """v26.07.21.42 (Kaleb's request: replace the Download Browse
+        screen's static Help overlay with a real popup menu of actions
+        instead). Extracted verbatim from the Y-button handler on
+        SCREEN_DOWNLOAD_BROWSE while dl_is_video, so both that button
+        AND the new popup menu's "Search" item call the exact same
+        code -- no duplicated/drifting logic between the two paths."""
+        def _on_video_search_confirm(app, value):
+            app.screen = SCREEN_DOWNLOAD_BROWSE
+            app.search_video_items(value)
+        self.open_text_entry("Search Videos", self.dl_query or "",
+                              _on_video_search_confirm, SCREEN_DOWNLOAD_BROWSE,
+                              hint="Search by title  (case-insensitive, blank clears)")
+
+    def open_category_search_entry(self):
+        """v26.07.21.42: same extraction as open_video_search_entry()
+        above, for the generic (non-video/audio) category/plugin search
+        Y-button handler."""
+        def _on_search_confirm(app, value):
+            app.screen = SCREEN_DOWNLOAD_BROWSE
+            app.start_search(value)
+        label = self.dl_category or getattr(self.dl_plugin, "PLUGIN_NAME", "")
+        self.open_text_entry(f"Search {label}", self.dl_query or "",
+                              _on_search_confirm, SCREEN_DOWNLOAD_BROWSE,
+                              hint="Search by title or author  (case-insensitive)")
+
+    def open_pub_code_entry(self):
+        """v26.07.21.42: same extraction as the two above, for the
+        SELECT-button manual pub-code entry handler."""
+        def _on_code_validate(app, value):
+            parts = value.strip().split()
+            code = parts[0] if parts else ""
+            issue = parts[1] if len(parts) > 1 else None
+            item, err = app.dl_plugin.lookup_pub_code(code, issue)
+            if item:
+                app.dl_items = [item]
+                app.dl_query = value
+                app.dl_page = 1
+                app.dl_has_next = False
+                app.dl_load_error = None
+                app.dl_index = 0
+                app.te_checking = False
+                app.screen = SCREEN_DOWNLOAD_BROWSE
+            else:
+                app.te_checking = False
+                app.te_error = err or "Not found"
+            app.dirty = True
+        self.open_text_entry("Pub code (+ issue YYYYMM if needed)", "",
+                              None, SCREEN_DOWNLOAD_BROWSE, on_validate=_on_code_validate,
+                              hint=getattr(self.dl_plugin, "MANUAL_CODE_HINT", ""))
+
+    def _resolve_media_source(self, item, is_video):
+        """v26.07.21.39 (Kaleb's request: "if we download the songs or
+        video will the app default to that copy when playing?" -- until
+        now, no, it always streamed even when a local copy already
+        existed). Returns (source, is_local): if this item was already
+        downloaded (same folder/filename convention download_video()/
+        download_audio() themselves use -- find_movies_dir()/
+        find_music_dir() + basename(item["filename"])), returns the
+        local path with is_local=True; otherwise falls back to the
+        item's own "_video_url"/"_audio_url" with is_local=False, same
+        as before this existed. Used by every play_*_item()/play_*_
+        queue_from() method below, both single-item and full-queue
+        playback, so "prefer the downloaded copy" is consistent
+        everywhere rather than only some entry points."""
+        filename = item.get("filename")
+        if filename and native_video is not None:
+            try:
+                dest_dir = JW_PLUGIN.find_movies_dir() if is_video else JW_PLUGIN.find_music_dir()
+                local_path = os.path.join(dest_dir, os.path.basename(filename))
+                if os.path.isfile(local_path):
+                    return local_path, True
+            except Exception:
+                pass  # fall through to streaming -- a broken local-path
+                      # check should never block playback entirely
+        remote_url = item.get("_video_url") if is_video else item.get("_audio_url")
+        return remote_url, False
+
     def play_video_item(self, idx):
         """v26.07.20.03: streams a JW.org video via native_video/ffplay,
         instead of downloading it -- bound to SELECT on
@@ -7719,59 +8330,72 @@ class App:
         screen during that time regardless), same as any other
         screen-takeover action in this app.
 
-        v26.07.20.08: honors self.video_stream_quality ("480p"/"720p").
-        "Search Videos" results are lazily resolved anyway (see the
-        _raw_lank branch below), so quality is passed straight into that
-        same, already-happening resolve call -- zero extra cost. Normal
+        Honors self.video_stream_quality ("360p"/"480p"/"720p"). "Search
+        Videos" results are lazily resolved anyway (see the _raw_lank
+        branch below), so quality is passed straight into that same,
+        already-happening resolve call -- zero extra cost. Normal
         browse-list items already carry a cached _video_url resolved at
-        the DOWNLOAD default (480p-first, unaffected by this setting) --
-        for those, only re-resolve (one extra GETPUBMEDIALINKS call,
-        matched back by track number) when 720p is actually selected;
-        at the default 480p the cached URL is already correct, so no
-        extra round-trip/latency is added for the common case. Falls
-        back to the cached URL on any re-resolve failure rather than
-        blocking playback over a quality preference."""
+        the DOWNLOAD default (480p, unaffected by this setting, kept
+        deliberately smaller/faster for downloads regardless of the
+        streaming preference) -- for those, re-resolve (one extra
+        GETPUBMEDIALINKS call, matched back by track number) only
+        triggers for 360p/720p, since the cached URL is already 480p
+        when that's selected. Falls back to the cached URL on any
+        re-resolve failure rather than blocking playback over a
+        quality preference."""
         if native_video is None:
             self.set_status("Video streaming isn't available on this device")
             return
         if idx < 0 or idx >= len(self.dl_items):
             return
         item = self.dl_items[idx]
-        quality = getattr(self, "video_stream_quality", "480p")
 
-        video_item = item
-        if not video_item.get("_video_url") and video_item.get("_raw_lank"):
-            resolved, rerr = JW_PLUGIN.resolve_search_video_item(video_item, quality=quality)
-            if not resolved:
-                self.set_status(rerr or "Could not resolve video", duration=4.0)
+        # v26.07.21.39 (Kaleb's request: "if we download the songs or
+        # video will the app default to that copy when playing?" --
+        # until now, no, it always streamed even when a local copy
+        # already existed). Check FIRST, before any online quality-
+        # resolve logic -- a downloaded file is whatever quality it
+        # was downloaded at, nothing to re-resolve or hit the network
+        # for.
+        local_source, is_local = self._resolve_media_source(item, is_video=True)
+        if is_local:
+            url = local_source
+        else:
+            quality = getattr(self, "video_stream_quality", "480p")
+
+            video_item = item
+            if not video_item.get("_video_url") and video_item.get("_raw_lank"):
+                resolved, rerr = JW_PLUGIN.resolve_search_video_item(video_item, quality=quality)
+                if not resolved:
+                    self.set_status(rerr or "Could not resolve video", duration=4.0)
+                    return
+                video_item = resolved
+            elif (quality == "720p" and self._dl_video_loader_name
+                  and video_item.get("track") is not None):
+                try:
+                    loader = getattr(JW_PLUGIN, self._dl_video_loader_name)
+                    fresh_items, ferr = loader(quality="720p", **self._dl_video_kwargs)
+                    if not ferr:
+                        match = next((fi for fi in fresh_items
+                                      if fi.get("track") == video_item.get("track")), None)
+                        if match and match.get("_video_url"):
+                            video_item = match
+                except Exception:
+                    pass  # fall through to the cached (480p) URL below
+
+            url = video_item.get("_video_url")
+            if not url:
+                self.set_status("No video URL for this item", duration=4.0)
                 return
-            video_item = resolved
-        elif (quality == "720p" and self._dl_video_loader_name
-              and video_item.get("track") is not None):
-            try:
-                loader = getattr(JW_PLUGIN, self._dl_video_loader_name)
-                fresh_items, ferr = loader(quality="720p", **self._dl_video_kwargs)
-                if not ferr:
-                    match = next((fi for fi in fresh_items
-                                  if fi.get("track") == video_item.get("track")), None)
-                    if match and match.get("_video_url"):
-                        video_item = match
-            except Exception:
-                pass  # fall through to the cached (480p) URL below
+            if not native_video.is_jw_video_url(url):
+                # Shouldn't happen (JW_PLUGIN only ever returns jw-cdn.org
+                # URLs) -- defensive check anyway, same "never trust it
+                # just because it's from our own plugin" posture as the
+                # Gutenberg download-time tag check.
+                self.set_status("Video source isn't a recognized JW.org URL", duration=4.0)
+                return
 
-        url = video_item.get("_video_url")
-        if not url:
-            self.set_status("No video URL for this item", duration=4.0)
-            return
-        if not native_video.is_jw_video_url(url):
-            # Shouldn't happen (JW_PLUGIN only ever returns jw-cdn.org
-            # URLs) -- defensive check anyway, same "never trust it just
-            # because it's from our own plugin" posture as the Gutenberg
-            # download-time tag check.
-            self.set_status("Video source isn't a recognized JW.org URL", duration=4.0)
-            return
-
-        self.set_status(f'Streaming "{item["title"]}"...', duration=3.0)
+        self.set_status(f'{"Playing" if is_local else "Streaming"} "{item["title"]}"...', duration=3.0)
         self.dirty = True
         # v26.07.20.10 BUG FIX (Kaleb's real on-device report: while the
         # video plays, book text appears scattered across it). Root
@@ -7802,10 +8426,16 @@ class App:
         # stutter on the still-rendered book page.
         native_video.maybe_trim_memory(self._clear_text_texture_cache)
         ok, msg = native_video.play_jw_video(
-            url, is_local=False, sdl=SDL, joy_a=JOY_A, joy_b=JOY_B,
-            # v26.07.20.35: L1/R1 -> the new +-10min skip buttons, see
-            # native_video.py's own comment on _translate_loop.
-            joy_l1=JOY_L, joy_r1=JOY_R,
+            url, is_local=is_local, sdl=SDL, joy_a=JOY_A, joy_b=JOY_B,
+            # v26.07.21.24 (Kaleb's request, remapped from v26.07.20.35):
+            # L1/R1 -> +-1min seek, L2/R2 -> +-10min skip -- see
+            # native_video.py's own comment on _translate_loop for the
+            # full current layout, including D-pad Up/Down brightness.
+            joy_l1=JOY_L, joy_r1=JOY_R, joy_l2=JOY_L2, joy_r2=JOY_R2,
+            # v26.07.21.01: Y -> subtitle toggle/cycle (Kaleb's request).
+            joy_y=JOY_Y,
+            # v26.07.21.02: X -> audio track cycle (Kaleb's request).
+            joy_x=JOY_X,
             # v26.07.20.38: manual player override, see App.__init__'s
             # own comment on this setting.
             player_pref=self.video_player_pref,
@@ -7843,6 +8473,188 @@ class App:
 
         self.set_status(msg or (f'Finished playing "{item["title"]}"' if ok else "Playback failed"),
                          duration=4.0)
+        self.dirty = True
+
+    def play_video_queue_from(self, start_idx, shuffle=False):
+        """v26.07.21.38 (Kaleb's request: "can we do the shuffle and
+        play all feature playlist on all video pages too?"). Direct
+        video sibling of play_audio_queue_from() -- same shape, plays
+        every item currently in self.dl_items back-to-back via
+        native_video.play_video_queue(). Bound to START ("Play All",
+        from the currently-selected item) and L2 ("Shuffle All",
+        always fresh from the top) on SCREEN_DOWNLOAD_BROWSE while
+        dl_is_video -- Y/SELECT were already taken (search/download),
+        same reasoning _translate_loop's own comment gives for why
+        START/SELECT (not L/R) are the in-playback skip controls for a
+        video queue specifically."""
+        if native_video is None:
+            self.set_status("Video streaming isn't available on this device")
+            return
+        if not self.dl_items:
+            self.set_status("Nothing to play", duration=3.0)
+            return
+
+        def _on_track_change(item, pos, total):
+            SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+            SDL.SDL_RenderClear(self.renderer)
+            label = "Shuffle All" if shuffle else "Play All"
+            render_text(self.renderer, self.fonts.ui_heading, label, COL_ACCENT,
+                        _sx(24), _sy(24))
+            render_text(self.renderer, self.fonts.ui_body, f"({pos + 1}/{total})", COL_DIM,
+                        _sx(24), _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) + _sy(8))
+            title_y = _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) \
+                + TTF.TTF_FontHeight(self.fonts.ui_body) + _sy(24)
+            render_text(self.renderer, self.fonts.ui_body, item.get("title", ""), COL_TEXT,
+                        _sx(24), title_y)
+            render_text(self.renderer, self.fonts.ui_small,
+                        "SELECT Next  START Prev  B Stop", COL_DIM,
+                        _sx(24), SH - _sy(hint_height(self.fonts)) + _sy(10))
+            SDL.SDL_RenderPresent(self.renderer)
+
+        SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        native_video.maybe_trim_memory(self._clear_text_texture_cache)
+        ok, msg = native_video.play_video_queue(
+            self.dl_items, start_index=start_idx, shuffle=shuffle,
+            sdl=SDL, joy_a=JOY_A, joy_b=JOY_B, joy_l1=JOY_L, joy_r1=JOY_R,
+            joy_l2=JOY_L2, joy_r2=JOY_R2, joy_y=JOY_Y, joy_x=JOY_X,
+            joy_start=JOY_START, joy_select=JOY_BACK,
+            player_pref=self.video_player_pref,
+            fill_screen=self.video_fill_screen, screen_w=DEV_W, screen_h=DEV_H,
+            on_track_change=_on_track_change,
+            resolve_source=lambda item: self._resolve_media_source(item, is_video=True))
+        SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        self._nudge_window_after_video()
+        self.set_status(msg or ("Finished playing" if ok else "Playback failed"), duration=4.0)
+        self.dirty = True
+
+    def play_audio_item(self, idx):
+        """v26.07.21.36 (Kaleb's request): plays a single MP3 via
+        native_video.play_audio_file() -- bound to A on
+        SCREEN_DOWNLOAD_BROWSE while dl_is_audio, same A=play/
+        SELECT=download convention play_video_item() already
+        established for video. Audio items already carry a resolved
+        "_audio_url" straight from their loader (list_audio_items() and
+        friends) -- no re-resolve/quality step needed, unlike video's
+        multi-rendition case.
+
+        v26.07.21.37 REAL BUG FIX (Kaleb's follow-up: "are we using the
+        same [idle-mute] support for audio too?"): play_audio_file()
+        deliberately does NOT call suppress_idle_display()/
+        restore_idle_display() itself -- it's designed to be nested
+        inside play_audio_queue(), which already wraps the whole
+        session once. But that meant a SINGLE track played via this
+        method (not through the queue) got no idle-mute protection at
+        all -- confirmed by checking the actual call graph, not
+        assumed. A single song easily runs longer than muOS's own
+        idle_display timeout (120s default), so this was a real gap,
+        same bug class the whole video fix addressed. Fixed: wrapped
+        here instead, same try/finally-guaranteed pattern as
+        play_jw_video()'s own internal wrapping."""
+        if native_video is None:
+            self.set_status("Audio playback isn't available on this device")
+            return
+        if idx < 0 or idx >= len(self.dl_items):
+            return
+        item = self.dl_items[idx]
+        # v26.07.21.39 (Kaleb's request: prefer an already-downloaded
+        # local copy over streaming) -- same check play_video_item()
+        # now does, via the shared _resolve_media_source() helper.
+        url, is_local = self._resolve_media_source(item, is_video=False)
+        if not url:
+            self.set_status("No audio URL for this item", duration=4.0)
+            return
+        if not is_local and not native_video.is_jw_video_url(url):
+            self.set_status("Audio source isn't a recognized JW.org URL", duration=4.0)
+            return
+
+        self.set_status(f'{"Playing" if is_local else "Streaming"} "{item["title"]}"...', duration=3.0)
+        self.dirty = True
+        # Same double-clear-before-and-after pattern play_video_item()
+        # uses, same reasoning -- ffplay/mpv draw directly to the
+        # display outside this app's own renderer, so a blank frame has
+        # to be forced onto screen before AND after, not left to a
+        # single dirty-triggered redraw that isn't guaranteed to clear
+        # both buffers of a double-buffered swapchain.
+        SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        native_video.maybe_trim_memory(self._clear_text_texture_cache)
+        _orig_idle_sleep, _orig_idle_display = native_video.suppress_idle_display()
+        try:
+            ok, msg = native_video.play_audio_file(
+                url, sdl=SDL, joy_a=JOY_A, joy_b=JOY_B, joy_l=JOY_L, joy_r=JOY_R,
+                player_pref=self.audio_player_pref, is_local=is_local, title=item.get("title"))
+        finally:
+            native_video.restore_idle_display(_orig_idle_sleep, _orig_idle_display)
+        SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        self._nudge_window_after_video()
+        self.set_status(msg or (f'Finished playing "{item["title"]}"' if ok else "Playback failed"),
+                         duration=4.0)
+        self.dirty = True
+
+    def play_audio_queue_from(self, start_idx, shuffle=False):
+        """v26.07.21.36 (Kaleb's request): "Play All" (shuffle=False,
+        bound to Y) and "Shuffle All" (shuffle=True, bound to START) on
+        SCREEN_DOWNLOAD_BROWSE while dl_is_audio -- plays every item
+        currently in self.dl_items back-to-back via
+        native_video.play_audio_queue(). `on_track_change` draws a
+        simple "Now Playing" frame directly (not the full screen-draw
+        stack) between tracks, since this whole call blocks the main
+        loop the same way single-track playback already does -- without
+        it, the screen would just go black with no feedback for
+        however many tracks are in the queue."""
+        if native_video is None:
+            self.set_status("Audio playback isn't available on this device")
+            return
+        if not self.dl_items:
+            self.set_status("Nothing to play", duration=3.0)
+            return
+
+        def _on_track_change(item, pos, total):
+            SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+            SDL.SDL_RenderClear(self.renderer)
+            label = "Shuffle All" if shuffle else "Play All"
+            render_text(self.renderer, self.fonts.ui_heading, label, COL_ACCENT,
+                        _sx(24), _sy(24))
+            render_text(self.renderer, self.fonts.ui_body, f"({pos + 1}/{total})", COL_DIM,
+                        _sx(24), _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) + _sy(8))
+            title_y = _sy(24) + TTF.TTF_FontHeight(self.fonts.ui_heading) \
+                + TTF.TTF_FontHeight(self.fonts.ui_body) + _sy(24)
+            render_text(self.renderer, self.fonts.ui_body, item.get("title", ""), COL_TEXT,
+                        _sx(24), title_y)
+            render_text(self.renderer, self.fonts.ui_small,
+                        "A Pause  L/R Prev/Next  B Stop", COL_DIM,
+                        _sx(24), SH - _sy(hint_height(self.fonts)) + _sy(10))
+            SDL.SDL_RenderPresent(self.renderer)
+
+        SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        native_video.maybe_trim_memory(self._clear_text_texture_cache)
+        ok, msg = native_video.play_audio_queue(
+            self.dl_items, start_index=start_idx, shuffle=shuffle,
+            sdl=SDL, joy_a=JOY_A, joy_b=JOY_B, joy_l=JOY_L, joy_r=JOY_R,
+            player_pref=self.audio_player_pref, on_track_change=_on_track_change,
+            resolve_source=lambda item: self._resolve_media_source(item, is_video=False))
+        SDL.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        SDL.SDL_RenderClear(self.renderer)
+        SDL.SDL_RenderPresent(self.renderer)
+        self._nudge_window_after_video()
+        self.set_status(msg or ("Finished playing" if ok else "Playback failed"), duration=4.0)
         self.dirty = True
 
     def cycle_sort_mode(self):
@@ -8492,36 +9304,22 @@ class App:
             # peek_raw_size() for those is well under
             # LARGE_PAGE_LOADING_THRESHOLD, so nothing changes for the
             # common case.
-            # v26.07.14.16 (Kaleb's request): pages between
-            # MEDIUM_PAGE_TOAST_THRESHOLD and LARGE_PAGE_LOADING_THRESHOLD
-            # don't warrant the full-screen "Opening page..." treatment,
-            # but real device timing (this project's own confirmed ~4.1x
-            # dev-to-device scaling) means they can still cost several
-            # real seconds with zero feedback otherwise -- exactly the
-            # gap Kaleb reported. Reuses the SAME toast mechanism every
-            # other status message in the app already uses (set_status +
-            # draw_reader()'s own status_msg check), just forced onto
-            # screen for one frame here, before the blocking parse, the
-            # same way the full-screen branch above forces its own frame.
-            # Renders whatever page is CURRENTLY on screen (the old one --
-            # self._lines/etc haven't been overwritten yet at this point)
-            # with the toast layered on top, exactly like the full-screen
-            # branch draws over whatever's there too.
+            # Pages between MEDIUM_PAGE_TOAST_THRESHOLD and
+            # LARGE_PAGE_LOADING_THRESHOLD don't warrant a full-screen
+            # takeover, but real device timing (this project's own
+            # confirmed ~4.1x dev-to-device scaling) means they can
+            # still cost several real seconds with zero feedback
+            # otherwise. Both this band and the large-page band below
+            # reuse the SAME toast mechanism every other status message
+            # in the app already uses (set_status + draw_reader()'s own
+            # status_msg check) with unified wording between the two,
+            # forced onto screen for one frame here before the blocking
+            # parse. Renders whatever page is CURRENTLY on screen (the
+            # old one -- self._lines/etc haven't been overwritten yet)
+            # with the toast layered on top.
             if renderer is not None:
                 peek_size = self.doc.peek_raw_size(self.state.current_file)
                 if peek_size > LARGE_PAGE_LOADING_THRESHOLD:
-                    # v26.07.14.18: was a full-screen takeover
-                    # (_draw_large_page_loading_screen()) -- changed to
-                    # the same toast the medium band uses, per Kaleb's
-                    # request. See _show_pre_parse_toast()'s own
-                    # docstring for the full reasoning.
-                    #
-                    # v26.07.14.19: message unified with the medium band
-                    # below -- the two bands used to be visually
-                    # DIFFERENT treatments (full-screen vs toast), so
-                    # different wording made sense; now that both are the
-                    # identical toast style, there was no real reason left
-                    # for them to say different things (Kaleb's question).
                     self._show_pre_parse_toast(renderer, "Loading large chapter...")
                 elif peek_size > MEDIUM_PAGE_TOAST_THRESHOLD:
                     self._show_pre_parse_toast(renderer, "Loading large chapter...")
@@ -8952,7 +9750,7 @@ class App:
             # completion path below still handles the (now rarer) case
             # where the target ISN'T covered until the page is fully
             # done -- unaffected by this fix.
-            line_h, body_rows = _reader_body_layout(self.fonts)[1:3]
+            line_h, body_rows = _reader_body_layout(self.fonts, self.immersive_mode)[1:3]
             _char_off = None
             _is_bookmark = False
             if self.state.current_char_off is not None:
@@ -9009,7 +9807,7 @@ class App:
             target_char_off = self._pending_target_char_off
             self._pending_target_key = None
             self._pending_target_char_off = None
-        line_h, body_rows = _reader_body_layout(self.fonts)[1:3]
+        line_h, body_rows = _reader_body_layout(self.fonts, self.immersive_mode)[1:3]
         if self.state.current_char_off is not None:
             # v0.1.39: exact-position restore (bookmark/resume-reading).
             # Same line-search as the anchor path below, just driven by a
@@ -11480,11 +12278,12 @@ class App:
         self._imgview_native_h = ih
         vh = self._imgview_viewport_h()
         zoom_min = max(SW / iw, vh / ih) if iw and ih else 1.0
-        # Cap at ~native resolution (1 image px = 1 screen px), but never
-        # below the fill scale -- a small image that already needs >1x
-        # upscale just to fill the screen has no extra zoom headroom
-        # (Kaleb: cropped-to-fill start + native-res ceiling).
-        zoom_max = max(zoom_min, 1.0)
+        # Cap at ~125% of native resolution (v26.07.21.05, was 100%,
+        # see IMGVIEW_MAX_ZOOM_OVER_NATIVE's own comment for why), but
+        # never below the fill scale -- a small image that already
+        # needs >1x upscale just to fill the screen has no extra zoom
+        # headroom (Kaleb: cropped-to-fill start + capped ceiling).
+        zoom_max = max(zoom_min, IMGVIEW_MAX_ZOOM_OVER_NATIVE)
         self._imgview_zoom_min = zoom_min
         self._imgview_zoom_max = zoom_max
         self._imgview_zoom = zoom_min  # start cropped-to-fill
@@ -11506,6 +12305,23 @@ class App:
         cx = self._imgview_pan_x + old_crop_w / 2.0
         cy = self._imgview_pan_y + old_crop_h / 2.0
         new_zoom = min(self._imgview_zoom_max, max(self._imgview_zoom_min, old_zoom * factor))
+        # v26.07.21.08 (Kaleb's request): always land exactly on 100%
+        # (true native resolution, 1 image px = 1 screen px) as a real
+        # stop while stepping through zoom -- only matters when the
+        # image is actually larger than the viewport in the limiting
+        # dimension (zoom_min < 1.0 < zoom_max, e.g. a big scanned page
+        # on RG34XX-SP's 720x480 viewport or CubeXX-H's 720x720), since
+        # otherwise the ~1.15x multiplicative step can hop straight over
+        # 1.0 without ever landing on it exactly. If this step would
+        # cross 1.0 (old and new zoom on opposite sides of it), snap to
+        # exactly 1.0 instead of the raw stepped value -- one extra
+        # press then continues normally from there past 100%. No-op when 1.0 isn't actually reachable (image
+        # already needs >100% upscale just to fill the screen, i.e.
+        # zoom_min >= 1.0) or isn't crossed by this particular step.
+        if self._imgview_zoom_min < 1.0 <= self._imgview_zoom_max:
+            crossed = (old_zoom < 1.0 < new_zoom) or (old_zoom > 1.0 > new_zoom)
+            if crossed:
+                new_zoom = 1.0
         self._imgview_zoom = new_zoom
         new_crop_w = SW / new_zoom
         new_crop_h = vh / new_zoom
@@ -12002,6 +12818,54 @@ class App:
         self.status_started = time.time()
         self.status_until = self.status_started + duration
 
+    def refresh_status_indicators(self):
+        """v26.07.21.14 (Kaleb's request): re-reads battery/WiFi status
+        into the cached fields. Called explicitly at each popup Menu
+        screen's own entry point (see those call sites' own comments)
+        rather than every frame while the menu is open -- Kaleb's
+        explicit call, since these barely change second-to-second and
+        the menu is usually only open briefly.
+
+        v26.07.21.15 (Kaleb's follow-up): also caches a 12-hour clock
+        string here, same refresh-on-open timing as the other two
+        (battery/WiFi still only refresh here, on open -- see
+        maybe_refresh_clock() below for the clock's OWN separate
+        every-60s update while the menu stays open, v26.07.21.16)."""
+        self._status_battery_pct, self._status_battery_charging = _read_battery_status()
+        self._status_wifi_connected = _read_wifi_status()
+        # %-I has no portable no-leading-zero flag across platforms, so
+        # strip it manually -- "9:41 PM" not "09:41 PM".
+        self._status_time_str = time.strftime("%I:%M %p").lstrip("0")
+        self._status_clock_refreshed_at = time.time()
+
+    def maybe_refresh_clock(self):
+        """Called from draw_menu()/draw_library_menu(), refreshes the
+        clock string if _CLOCK_REFRESH_SECONDS (5s -- "no need to be
+        exactly to the second") has passed since the last refresh.
+        Deliberately does NOT touch battery/WiFi -- those still only
+        refresh when the menu (re)opens, per Kaleb's earlier, separate
+        explicit call.
+
+        This is purely opportunistic by design (an earlier attempt to
+        force it to run on a timer even while the menu sat fully idle
+        was abandoned after it produced ~1800 redraws in a 90s idle
+        test instead of the intended ~18) -- it only refreshes when
+        draw_menu()/draw_library_menu() get called anyway for some
+        other reason (browsing the menu, a status toast, a theme
+        transition). If the menu sits genuinely untouched for a while,
+        the clock can lag behind real time until the next natural
+        redraw -- an accepted, deliberate tradeoff for a corner clock
+        that was never meant to be a precise, always-live display."""
+        now = time.time()
+        if now - self._status_clock_refreshed_at >= self._CLOCK_REFRESH_SECONDS:
+            self._status_time_str = time.strftime("%I:%M %p").lstrip("0")
+            self._status_clock_refreshed_at = now
+
+    _CLOCK_REFRESH_SECONDS = 5  # v26.07.21.19 (Kaleb's explicit call:
+                                 # "doesn't need to be exactly to the
+                                 # second... make it refresh like 12
+                                 # times per minute"): 60/12 = 5s.
+
     STATUS_FADE_IN_SECONDS = 0.18  # v26.07.16.36 (Kaleb's request): was
                                     # 0.12 -- matched to the theme-color
                                     # transition's own 0.18s
@@ -12107,13 +12971,15 @@ HINT_H_MAX_LINES = 3  # Absolute ceiling on hint bar lines. In practice the
 # isn't one of the two calibration strings itself, but would need to
 # become one if it ever grows further.
 _HINT_CALIBRATION_TEXTS = (
-    "D-PAD Scroll  A Follow  B Back  L/R Page  L2/R2 Chap  Y Fast x10  X Menu  START Bookmark",
+    "D-PAD Scroll  A Follow  SELECT Immersive  B Back  L/R Page  L2/R2 Chap  Y Fast x10  X Menu  START Bookmark",
     "A Open  X Menu  Y Sort  START Pin  LEFT/RIGHT Jump 10  L/R Font Size  L2 Download  B Quit",
-    # v26.07.20.05: reader hint with "SELECT Download" inserted -- only
-    # ever shown when a JW video link is the current selection (see
-    # draw_reader()'s own reader_hint_text construction), but still needs
-    # to be in this calibration list so _hint_pt()/_hint_lines_needed()
-    # size the font correctly for the worst case, not just the common one.
+    # v26.07.20.05: reader hint with "SELECT Download" swapped in for
+    # "SELECT Immersive" -- only ever shown when a JW video link is the
+    # current selection (see draw_reader()'s own reader_hint_text
+    # construction), but still needs to be in this calibration list so
+    # _hint_pt()/_hint_lines_needed() size the font correctly for the
+    # worst case, not just the common one. Same total length as [0]
+    # since it's a label swap, not an insertion.
     "D-PAD Scroll  A Follow  SELECT Download  B Back  L/R Page  L2/R2 Chap  Y Fast x10  X Menu  START Bookmark",
 )
 READER_HINT_TEXT = _HINT_CALIBRATION_TEXTS[0]  # v26.07.11.02: named so the
@@ -12121,6 +12987,13 @@ READER_HINT_TEXT = _HINT_CALIBRATION_TEXTS[0]  # v26.07.11.02: named so the
     # can compute its position against the exact same string draw_reader()
     # passes to draw_hint(), instead of a second hand-copied literal that
     # could drift out of sync with it.
+
+# v26.07.21.13 (Kaleb's request): how faded the %-progress marker gets
+# in Immersive Mode, out of 255. Low enough to genuinely recede into
+# the background (it's permanently on screen, unlike the toasts, which
+# stay at their normal near-opaque alpha since they're transient) but
+# still legible enough to glance at on demand.
+IMMERSIVE_MARKER_ALPHA = 90
 
 # v26.07.09.06: Image Maximize Mode's OWN calibration -- deliberately NOT
 # part of _HINT_CALIBRATION_TEXTS above. This screen's hint text is much
@@ -12437,7 +13310,7 @@ def _hint_lines_needed(fonts, calibration=None):
     return needed
 
 
-def _reader_body_layout(fonts):
+def _reader_body_layout(fonts, immersive=False):
     """Single source of truth for the reader screen's body layout:
     (body_top, line_h, body_rows) in real pixels/rows for the CURRENT
     Font Size. MUST be used by every caller that needs body_rows for the
@@ -12479,9 +13352,36 @@ def _reader_body_layout(fonts):
     (nothing reserved above the hint bar to overlap) and zero overlap
     against hint text (checked per Font Size against the reader's actual
     hint string's wrapped width -- see draw_reader()'s comment for the
-    one Font Size, 21pt, that needed a small label trim to clear it)."""
+    one Font Size, 21pt, that needed a small label trim to clear it).
+
+    v26.07.21.09 (Kaleb's request): `immersive` param -- when True,
+    body_h no longer subtracts hint_height() at all, reclaiming the
+    ENTIRE hint bar margin for text, not just the text/graphics that
+    used to be hidden while the reserved space stayed put. Every caller
+    MUST pass the CURRENT app.immersive_mode value. Verified this is
+    safe WITHOUT a Font-Size-style repagination: self.scroll is a
+    continuous line INDEX into the already-wrapped line list (not a
+    page number), and every caller of this function already recomputes
+    line_h/body_rows live on each call rather than caching them --
+    toggling immersive_mode just changes how many of the same lines,
+    starting from the same scroll index, are drawn on the next frame.
+    The wrap cache (`wrap_key = (href, size_index)`) is untouched by
+    this because word-wrapping only depends on screen WIDTH (SW), which
+    immersive_mode never changes -- only the vertical row count does.
+    The toggle handler still clamps self.scroll to the new max right
+    away, purely so the view doesn't sit one interaction behind after
+    a toggle that shrinks body_rows -- see that handler's own comment."""
     body_top = _sy(14)
-    body_h = SH - body_top - _sy(hint_height(fonts))
+    # v26.07.21.13 (Kaleb's explicit call, superseding v26.07.21.12's
+    # reserved-margin approach): true full reclaim again -- text runs
+    # all the way to SH with zero margin, same as originally shipped in
+    # v26.07.21.09. The reserved-margin compromise existed only to stop
+    # the marker/toasts overlapping text; Kaleb's fix for that is
+    # different and doesn't need any space held back: toasts are
+    # transient (fade on their own) so brief overlap is fine, and the
+    # %-marker now fades instead of needing guaranteed clear space --
+    # see that marker's own comment in draw_reader().
+    body_h = (SH - body_top) if immersive else SH - body_top - _sy(hint_height(fonts))
     # v0.1.116: leading was a flat +6px regardless of font size, so as
     # actual glyph height grows with size (measured directly off the
     # bundled Liberation Sans metrics) the +6 became a shrinking
@@ -12586,6 +13486,97 @@ def _status_msg_lines(fonts, msg):
     narrower width just means it may wrap to one more line, which the
     bar already grows to fit."""
     return _wrap_hint_text_unbounded(fonts.ui_small, msg, SW - 2 * HINT_SIDE_PAD)
+
+
+STATUS_INDICATORS_W = _sx(96)  # v26.07.21.14: total width reserved in the
+                                # popup Menu overlays' top-right corner for
+                                # the battery/WiFi icons below -- single
+                                # source of truth so draw_menu()'s logo
+                                # centering and draw_library_menu()'s/
+                                # draw_menu()'s own icon placement can't
+                                # drift out of sync with each other.
+
+
+def _draw_status_indicators(renderer, app, right_x, top_y):
+    """v26.07.21.14 (Kaleb's request): draws the WiFi + battery status
+    icons, right-aligned so their right edge sits at `right_x`, top
+    edge at `top_y`. Values are read from App's cached fields (see
+    refresh_status_indicators()) -- NOT re-read here, so this can be
+    called every frame cheaply once the menu is open without hitting
+    disk each time.
+
+    WiFi icon: 3 ascending signal bars (no arc primitive in this app's
+    SDL wrapper, and bars read just as clearly as arcs at this size).
+    Connected: solid COL_TEXT bars. Disconnected (Kaleb's own words:
+    "flash through it"): same bars, dimmed, with a diagonal strike-
+    through line -- the universal no-signal convention. No wifi
+    interface found at all (off-device testing) -- icon is skipped
+    entirely rather than showing misleading data.
+
+    Battery icon: classic outline + right-side nub + proportional inner
+    fill, percent text to its left. Fill color is COL_ACCENT while
+    charging, COL_TEXT otherwise. Skipped entirely if the battery files
+    aren't readable (e.g. off-device testing) rather than showing 0%.
+
+    v26.07.21.15 (Kaleb's follow-up): 12-hour clock ("9:41 PM" -- no
+    leading zero) drawn on its own row directly underneath the icon
+    row, right-aligned to the same `right_x` as the icons above it so
+    the whole corner reads as one aligned block."""
+    x = right_x
+    icon_row_h = _sy(13)
+
+    # --- battery (rightmost) ---
+    if app._status_battery_pct is not None:
+        pct = max(0, min(100, app._status_battery_pct))
+        batt_w, batt_h = _sx(26), _sy(13)
+        nub_w = _sx(3)
+        batt_y = top_y
+        batt_x = x - batt_w - nub_w
+        pct_text = f"{pct}%"
+        pct_font = app.fonts.ui_small
+        pct_w = text_width(pct_font, pct_text)
+        # percent text sits to the LEFT of the icon
+        render_text(renderer, pct_font, pct_text, COL_TEXT,
+                    batt_x - pct_w - _sx(6), batt_y - _sy(2))
+        fill_rect(renderer, batt_x, batt_y, batt_w, batt_h, COL_TEXT)
+        fill_rect(renderer, batt_x + _sx(2), batt_y + _sy(2),
+                  batt_w - _sx(4), batt_h - _sy(4), COL_BG)
+        fill_rect(renderer, batt_x + batt_w, batt_y + _sy(3), nub_w, batt_h - _sy(6), COL_TEXT)
+        fill_color = COL_ACCENT if app._status_battery_charging else COL_TEXT
+        inner_w = batt_w - _sx(6)
+        fill_w = max(0, int(inner_w * pct / 100))
+        if fill_w > 0:
+            fill_rect(renderer, batt_x + _sx(3), batt_y + _sy(3),
+                      fill_w, batt_h - _sy(6), fill_color)
+        x = batt_x - pct_w - _sx(14)
+
+    # --- wifi (to the left of battery) ---
+    if app._status_wifi_connected is not None:
+        bars = 3
+        bar_gap = _sx(3)
+        bar_w = _sx(4)
+        icon_h = _sy(13)
+        icon_w = bars * bar_w + (bars - 1) * bar_gap
+        icon_x = x - icon_w
+        icon_y = top_y
+        connected = app._status_wifi_connected
+        bar_color = COL_TEXT if connected else COL_DIM
+        for i in range(bars):
+            bh = int(icon_h * (i + 1) / bars)
+            bx = icon_x + i * (bar_w + bar_gap)
+            by = icon_y + (icon_h - bh)
+            fill_rect(renderer, bx, by, bar_w, bh, bar_color)
+        if not connected:
+            draw_line(renderer, icon_x, icon_y, icon_x + icon_w, icon_y + icon_h, COL_WARNING)
+            draw_line(renderer, icon_x + 1, icon_y, icon_x + icon_w + 1, icon_y + icon_h, COL_WARNING)
+
+    # --- clock (own row, directly below the icons) ---
+    if app._status_time_str:
+        time_font = app.fonts.ui_small
+        time_w = text_width(time_font, app._status_time_str)
+        time_y = top_y + icon_row_h + _sy(6)
+        render_text(renderer, time_font, app._status_time_str, COL_TEXT,
+                    right_x - time_w, time_y)
 
 
 def _draw_status_bar(renderer, fonts, msg, color, bottom_y, alpha=255):
@@ -13095,7 +14086,18 @@ def _hint_layout(fonts, text, calibration=None):
     bottom-right corner, see draw_reader()) can position itself against
     the EXACT same wrapped-line geometry draw_hint() actually draws,
     rather than a hand-copied approximation that could drift out of
-    sync. Returns (lines, font, bar_h, top_y, start_y, line_h)."""
+    sync. Returns (lines, font, bar_h, top_y, start_y, line_h).
+
+    v26.07.21.31 (Kaleb's request, attempted then reverted): tried
+    adding a reserve_w param so the reader could wrap its hint text
+    narrower, guaranteeing room for the %-marker on the last line.
+    Doesn't work: _wrap_hint_text()'s own last-allowed-line behavior
+    deliberately ignores max_w and packs everything remaining onto it
+    (a real, previously-fixed anti-data-loss behavior, v0.1.61 -- losing
+    hint items is worse than a tight last line), so narrowing max_w
+    changes nothing about what actually lands on that final line.
+    Confirmed via direct measurement before reverting. See draw_reader()
+    for the actual fix that replaced this attempt."""
     pt = _hint_pt(fonts, calibration=calibration)
     font = fonts._get(pt) if pt else fonts.ui_small
     max_w = SW - 2 * HINT_SIDE_PAD
@@ -13560,7 +14562,7 @@ def draw_reader(renderer, app):
 
     app._ensure_page_built(renderer)
 
-    body_top, line_h, body_rows = _reader_body_layout(app.fonts)
+    body_top, line_h, body_rows = _reader_body_layout(app.fonts, app.immersive_mode)
 
     visible_spans = app.visible_span_indices(line_h, body_rows)
     if visible_spans and app.selected_span not in visible_spans:
@@ -13835,9 +14837,18 @@ def draw_reader(renderer, app):
     # progress indicator drawn AFTER draw_hint() below -- see the
     # v26.07.11.04 comment there for why the order matters.
 
+    # In Immersive Mode this pins to the true screen bottom (small
+    # fixed pad) rather than the old `SH - hint_height(...)` phantom
+    # hint-bar position -- since this toast is transient and fades on
+    # its own, Kaleb's call was to let text run under it briefly rather
+    # than reserve permanent margin for it. Covers every message that
+    # can show here: bookmark added, exiting, video-download/resolve
+    # status, and any Font Size +/- toast fired on the reader screen.
     if app.status_msg and time.time() < app.status_until:
+        _status_bottom_y = (SH - _sy(8)) if app.immersive_mode \
+            else SH - _sy(hint_height(app.fonts))
         _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
-                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
+                          _status_bottom_y, alpha=app.status_alpha())
 
     # v26.07.09.04: Immersive Mode hides this bar's TEXT/GRAPHICS only --
     # the reserved bottom margin body_rows accounts for via
@@ -13862,19 +14873,19 @@ def draw_reader(renderer, app):
     # ever removes the redundant SECOND call, never the necessary one.
     _hint_result = None
     if not app.immersive_mode:
-        # v26.07.20.05: SELECT Download only appears in the hint bar when
-        # the currently selected span is actually a JW video link (per
-        # Kaleb's explicit request -- not shown otherwise, since SELECT
-        # does nothing on any other selection). Uses the exact same
-        # _selected_jw_video_link() check follow_selected()/
-        # download_selected_link_video() use, so the hint bar and the
-        # actual button behavior can never disagree about when SELECT is
-        # live. Calibration for this longer variant is
-        # _HINT_CALIBRATION_TEXTS[2] above.
+        # v26.07.20.05: SELECT is a dual-purpose button in reading mode
+        # (v26.07.21.10, Kaleb's request) -- toggles Immersive Mode by
+        # default, or downloads a video when the current selection is a
+        # recognized JW video link, and the hint bar's label swaps to
+        # match. Uses the exact same _selected_jw_video_link() check
+        # follow_selected()/download_selected_link_video() use, so the
+        # hint bar and the actual button behavior can never disagree
+        # about which action SELECT will take. Calibration for this
+        # variant is _HINT_CALIBRATION_TEXTS[2] above.
         reader_hint_text = READER_HINT_TEXT
         if app._selected_jw_video_link() is not None:
             reader_hint_text = READER_HINT_TEXT.replace(
-                "A Follow  B Back", "A Follow  SELECT Download  B Back")
+                "SELECT Immersive", "SELECT Download")
         _hint_result = draw_hint(renderer, app.fonts, reader_hint_text)
                   # v26.07.09.03: "Select/Scroll" -> "Scroll" and "Chapter" ->
                   # "Chap" -- wording-only trim for a bit of extra width
@@ -13919,21 +14930,88 @@ def draw_reader(renderer, app):
         # the whole hint bar to COL_HINT_BG first, which would paint over
         # this marker if drawn before it. Unconditional on Immersive
         # Mode (always visible regardless of that setting) so it's the
-        # last thing painted here and actually stays on screen.
-        label_font = app.fonts.ui_small
-        if app.fonts.SIZE_STEPS[app.fonts.size_index] == 21:
-            label_font = app.fonts._get(13)
-        label_w = text_width(label_font, label)
-        if _hint_result is not None:
-            lines, hfont, bar_h, hbar_top, start_y, hline_h = _hint_result
+        # v26.07.21.30 BUG FIX (Kaleb's observation): the font-shrink
+        # loop below and the HINT_SIDE_PAD-based right margin were both
+        # still running UNCONDITIONALLY in Immersive Mode, checking
+        # clearance against `_last_line_w` -- the width of the hint
+        # bar's OWN text, which isn't even drawn in Immersive Mode.
+        # There is nothing for the marker to avoid overlapping in that
+        # mode (it's alpha-faded and sits below all body text anyway),
+        # so shrinking the font down to the 9pt floor at large sizes
+        # was solving a problem that doesn't exist there -- confirmed
+        # this is exactly why the marker looked "unrealistically
+        # unreadable" only at larger Font Sizes. Fixed: Immersive Mode
+        # now skips the shrink loop entirely (always full ui_small
+        # size) and uses a small fixed edge margin instead of
+        # HINT_SIDE_PAD (which was sized for the hint bar's own
+        # padding needs, not the true screen edge) -- lets the marker
+        # sit further right, using the extra room Kaleb noticed.
+        if app.immersive_mode:
+            label_font = app.fonts.ui_small
+            label_w = text_width(label_font, label)
+            label_h = TTF.TTF_FontHeight(label_font)
+            label_y = SH - label_h - _sy(8)
+            label_x = SW - label_w - MARKER_SIDE_PAD
+            render_text(renderer, label_font, label, color, label_x, label_y,
+                        alpha=IMMERSIVE_MARKER_ALPHA)
         else:
-            lines, hfont, bar_h, hbar_top, start_y, hline_h = _hint_layout(app.fonts, READER_HINT_TEXT)
-        last_line_y = start_y + (len(lines) - 1) * hline_h + _sy(3)
-        # vertically center the (possibly smaller) label font against the
-        # hint text's own line height for that row
-        label_y = last_line_y + (TTF.TTF_FontHeight(hfont) - TTF.TTF_FontHeight(label_font)) // 2
-        render_text(renderer, label_font, label, color,
-                    SW - label_w - HINT_SIDE_PAD, label_y)
+            # v26.07.21.31 (Kaleb's request: marker was shrinking to an
+            # unreadable size at 32pt, "don't waste space on either").
+            # Tried reserving room during the hint text's own wrap
+            # first -- doesn't work: _wrap_hint_text()'s last-allowed-
+            # line behavior deliberately ignores max_w and packs
+            # everything remaining onto it (a real, previously-fixed
+            # anti-data-loss behavior, v0.1.61), so narrowing the wrap
+            # width changes nothing about what actually lands on that
+            # final line. The REAL fix: this marker was reusing
+            # HINT_SIDE_PAD (32px, sized for the hint TEXT's own
+            # worst-case corner clearance at y=0) as its own right
+            # margin, and a 20px minimum-clearance target on top of
+            # that -- both far more conservative than the marker
+            # itself actually needs. Verified via real circle geometry
+            # against HINT_CORNER_RADIUS: at the marker's actual height
+            # above the bottom edge, the corner curve only insets
+            # ~1-8px, not 32px. Switched to MARKER_SIDE_PAD (12px, its
+            # own comment above has the full geometry) and
+            # MARKER_MIN_CLEARANCE (6px, still a real positive gap, not
+            # zero) -- confirmed via direct measurement this lets 18pt
+            # stay at FULL ui_small size (was shrinking before) and
+            # 32pt reach 15pt (was 9pt) -- both without ever going
+            # negative/overlapping. Hint TEXT's own margin is
+            # completely unchanged, still HINT_SIDE_PAD -- only the
+            # marker's margin and target changed.
+            if _hint_result is not None:
+                lines, hfont, bar_h, hbar_top, start_y, hline_h = _hint_result
+            else:
+                lines, hfont, bar_h, hbar_top, start_y, hline_h = _hint_layout(app.fonts, READER_HINT_TEXT)
+            # v26.07.21.33 REAL BUG FIX (Kaleb's photo -- non-immersive,
+            # 2-line-wrapped hint text): this always anchored to the
+            # LAST hint line, but when the hint wraps to multiple lines
+            # the line with real open space isn't necessarily the last
+            # one -- confirmed in the photo, line 1 ("...B Back  L/R")
+            # had clear room while line 2 ("...START Bookmark") was
+            # nearly full, so the marker crammed directly into
+            # "Bookmark" instead of using line 1's actual free space.
+            # Fixed: measure every wrapped line's width and anchor to
+            # whichever one has the MOST free space, not unconditionally
+            # the last one. Single-line hint text (the common case) is
+            # unaffected -- there's only one line to pick from.
+            label_font = app.fonts.ui_small
+            label_w = text_width(label_font, label)
+            line_widths = [text_width(hfont, ln) for ln in lines] if lines else [0]
+            best_idx = min(range(len(line_widths)), key=lambda i: line_widths[i]) if line_widths else 0
+            _chosen_line_w = line_widths[best_idx] if line_widths else 0
+            for _cand_pt in range(20, 8, -1):
+                if SW - label_w - MARKER_SIDE_PAD - _chosen_line_w >= MARKER_MIN_CLEARANCE:
+                    break
+                label_font = app.fonts._get(_cand_pt)
+                label_w = text_width(label_font, label)
+            chosen_line_y = start_y + best_idx * hline_h + _sy(3)
+            # vertically center the (possibly smaller) label font against
+            # the hint text's own line height for that row
+            label_y = chosen_line_y + (TTF.TTF_FontHeight(hfont) - TTF.TTF_FontHeight(label_font)) // 2
+            render_text(renderer, label_font, label, color,
+                        SW - label_w - MARKER_SIDE_PAD, label_y)
 
     # v26.07.13.18 (Kaleb's request): a small "Rendering... N%" overlay
     # just ABOVE the hint bar, shown ONLY while the CURRENTLY-VIEWED
@@ -13967,11 +15045,28 @@ def draw_reader(renderer, app):
         _toast_font = app.fonts.ui_small
         _toast_w = text_width(_toast_font, _toast_text)
         _toast_h = TTF.TTF_FontHeight(_toast_font) + _sy(6)
-        if _hint_result is not None:
-            _, _, _, _hbar_top, _, _ = _hint_result
+        # v26.07.21.12 BUG FIX (same root cause as the %-marker fix
+        # above): this toast anchored to `_hbar_top - _toast_h`, i.e.
+        # just above the (now-invisible, in Immersive Mode) hint bar's
+        # old position -- but that position sits ABOVE where reclaimed
+        # body text now ends, so the toast used to float in the middle
+        # of the page over live reading text instead of sitting at the
+        # true bottom of the screen. Refined v26.07.21.13 per Kaleb's
+        # explicit call: skip reserving any margin (v26.07.21.12's
+        # approach) and just pin this to the TRUE screen bottom -- this
+        # toast is transient (only visible while the CURRENT page is
+        # actively cold-wrapping/warm-loading, a few seconds at most)
+        # and fades on its own, so brief overlap with the last line of
+        # text is fine; its own background pill keeps it legible either
+        # way, same as any other short-lived toast in this app.
+        if app.immersive_mode:
+            _toast_y = SH - _sy(8) - _toast_h
         else:
-            _, _, _, _hbar_top, _, _ = _hint_layout(app.fonts, READER_HINT_TEXT)
-        _toast_y = _hbar_top - _toast_h
+            if _hint_result is not None:
+                _, _, _, _hbar_top, _, _ = _hint_result
+            else:
+                _, _, _, _hbar_top, _, _ = _hint_layout(app.fonts, READER_HINT_TEXT)
+            _toast_y = _hbar_top - _toast_h
         _toast_x = SW - _toast_w - HINT_SIDE_PAD
         fill_rect(renderer, _toast_x - _sx(8), _toast_y, _toast_w + _sx(16), _toast_h,
                   Color(COL_HINT_BG.r, COL_HINT_BG.g, COL_HINT_BG.b, 220))
@@ -13979,6 +15074,16 @@ def draw_reader(renderer, app):
 
 
 IMGVIEW_ZOOM_STEP = 1.15       # multiplicative zoom per L/R press
+# v26.07.21.05 (Kaleb's request -- real readability issue: some book
+# images/diagrams have small text that's still hard to read even at
+# 1:1 native resolution). Was capped at 1.0 (never upscale past native
+# pixels, to avoid visible blur); raised to 1.25 -- a modest upscale,
+# still nearest-neighbor filtered same as everything else in this app
+# (see main.py's top-of-file note on render filtering), so it looks
+# like a normal zoom rather than a smoothed/blurred one. Single source
+# of truth for both places zoom_max is computed (_imgview_reset() and
+# the thumb-to-full-res upgrade path in draw_image_view()).
+IMGVIEW_MAX_ZOOM_OVER_NATIVE = 1.25
 IMGVIEW_PAN_STEP_FRAC = 0.14   # fraction of the visible crop moved per D-pad
                                 # press. No auto-repeat-while-held exists in
                                 # this app's input model (SDL_JOYBUTTONDOWN
@@ -14049,7 +15154,7 @@ def draw_image_view(renderer, app):
             scale_y = ih / old_h
             app._imgview_native_w, app._imgview_native_h = iw, ih
             app._imgview_zoom_min = max(SW / iw, vh / ih) if iw and ih else 1.0
-            app._imgview_zoom_max = max(app._imgview_zoom_min, 1.0)
+            app._imgview_zoom_max = max(app._imgview_zoom_min, IMGVIEW_MAX_ZOOM_OVER_NATIVE)
             app._imgview_zoom = min(app._imgview_zoom_max,
                                      max(app._imgview_zoom_min, app._imgview_zoom))
             app._imgview_pan_x *= scale_x
@@ -14077,6 +15182,14 @@ def draw_image_view(renderer, app):
     # content directly above the hint bar on this screen is the image,
     # not COL_BG.
     _round_image_bottom_corners_to_hint(renderer, vh, IMG_MAXIMIZE_CORNER_RADIUS)
+    # v26.07.21.06 (Kaleb's request): zoom-level toast, same status_msg/
+    # _draw_status_bar mechanism every other screen already uses (2.5s
+    # default duration, fades via app.status_alpha()) -- set on L/R
+    # zoom press below, drawn here bottom-anchored above the hint bar
+    # like draw_reader()'s own status toast.
+    if app.status_msg and time.time() < app.status_until:
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          vh, alpha=app.status_alpha())
     draw_hint(renderer, app.fonts,
               "D-PAD Pan  L/R Zoom Out/In  B Back", skip_top_corners=True,
               calibration=_IMGVIEW_HINT_CALIBRATION)
@@ -14206,6 +15319,11 @@ def draw_splash(renderer, app):
 
 def draw_menu(renderer, app):
     draw_reader(renderer, app)
+    # v26.07.21.16 (Kaleb's request): keeps the clock (only the clock --
+    # battery/WiFi stay refresh-on-open) current while this menu stays
+    # open, checked every frame but only actually does anything once a
+    # minute -- see maybe_refresh_clock()'s own comment.
+    app.maybe_refresh_clock()
     overlay_w = _sx(360)
     fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
     # v26.07.10.04: small logo (Kaleb's request) instead of a plain
@@ -14216,15 +15334,21 @@ def draw_menu(renderer, app):
     # face risks overflowing this narrow sidebar at large Font Size
     # settings -- centered + same size as before is the safe "nice and
     # large relative to the menu items below it" reading of the request.
+    # v26.07.21.14 (Kaleb's request): centered within a narrower usable
+    # width now, `overlay_w - STATUS_INDICATORS_W`, instead of the full
+    # overlay_w -- shifts the logo left just enough to leave the actual
+    # top-right corner clear for the new battery/WiFi icons drawn below.
     _logo_font = app.fonts.ui_heading
     _logo_y = _sy(16)
+    _usable_w = overlay_w - STATUS_INDICATORS_W
     _face_w = text_width(_logo_font, FACE_MENU_LOGO)
     render_text(renderer, _logo_font, FACE_MENU_LOGO, COL_ACCENT,
-                SW - overlay_w + max(_sx(10), (overlay_w - _face_w) // 2), _logo_y)
+                SW - overlay_w + max(_sx(10), (_usable_w - _face_w) // 2), _logo_y)
     _title_y = _logo_y + TTF.TTF_FontHeight(_logo_font) + _sy(2)
     _title_w = text_width(_logo_font, "PICO READER")
     render_text(renderer, _logo_font, "PICO READER", COL_ACCENT,
-                SW - overlay_w + max(_sx(10), (overlay_w - _title_w) // 2), _title_y)
+                SW - overlay_w + max(_sx(10), (_usable_w - _title_w) // 2), _title_y)
+    _draw_status_indicators(renderer, app, SW - _sx(14), _sy(18))
     row_h = _row_h(app.fonts.ui_body)
     top = _title_y + TTF.TTF_FontHeight(_logo_font) + _sy(14)
     item_max_w = overlay_w - _sx(44)
@@ -14561,6 +15685,60 @@ HELP_PARAGRAPHS = [
     ("For a monthly issue (Watchtower, Awake!), add the date after the "
      "code, as YYYYMM -- for example: wp 202601", False),
 ]
+
+
+def _download_browse_menu_items(app):
+    """v26.07.21.42 (Kaleb's request): the item list for
+    SCREEN_DOWNLOAD_BROWSE_MENU, built dynamically from the SAME
+    conditions the individual buttons on SCREEN_DOWNLOAD_BROWSE already
+    use (dl_is_video/dl_is_audio/plugin capability flags) -- so this
+    menu can never offer an action that wouldn't actually be reachable
+    some other way, and never omits one that is."""
+    items = []
+    if app.dl_is_video:
+        items += ["Stream", "Download", "Play All", "Shuffle All", "Search"]
+    elif app.dl_is_audio:
+        items += ["Play", "Download", "Play All", "Shuffle All"]
+    else:
+        items.append("Download")
+        if (getattr(app.dl_plugin, "SUPPORTS_SEARCH", False)
+                or getattr(app.dl_plugin, "SUPPORTS_CATEGORIES", False)):
+            items.append("Search")
+        if getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
+            items.append("Enter Pub Code")
+    items.append("Back")
+    return items
+
+
+def draw_download_browse_menu(renderer, app):
+    """v26.07.21.42 (Kaleb's request: "drop help menu and replace with
+    pop up menu"). Replaces SCREEN_DOWNLOAD_HELP's old role on
+    SCREEN_DOWNLOAD_BROWSE -- same visual pattern as draw_library_menu()
+    (an overlay panel on top of the underlying screen), but with real,
+    dynamic action items instead of static Search/Pub-Code-only text."""
+    draw_download_browse(renderer, app)
+    overlay_w = _sx(320)
+    fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
+    render_text(renderer, app.fonts.ui_heading, "MENU", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    items = _download_browse_menu_items(app)
+    row_h = _row_h(app.fonts.ui_body)
+    top = _sy(76)
+    item_max_w = overlay_w - _sx(40)
+    n_items = len(items)
+    visible = max(1, (SH - top - _sy(hint_height(app.fonts))) // row_h)
+    start = max(0, min(app.download_browse_menu_index - visible // 2, max(0, n_items - visible)))
+    for row_pos, i in enumerate(range(start, min(n_items, start + visible))):
+        item = items[i]
+        y = top + row_pos * row_h
+        if i == app.download_browse_menu_index:
+            fill_rect(renderer, SW - overlay_w + _sx(10), y - _sy(2),
+                      overlay_w - _sx(20), row_h - _sy(4), COL_MENU_SEL_BG)
+        color = COL_ACCENT if i == app.download_browse_menu_index else COL_TEXT
+        text_h = TTF.TTF_FontHeight(app.fonts.ui_body)
+        text_y = y + max(0, (row_h - _sy(4) - text_h) // 2)
+        render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, item, item_max_w),
+                    color, SW - overlay_w + _sx(24), text_y)
+    draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
 
 
 def draw_download_help(renderer, app):
@@ -14985,18 +16163,18 @@ def draw_download_browse(renderer, app):
         # streams, SELECT downloads, for video mode specifically (every
         # other screen/mode keeps "A Download" unchanged).
         hint = hint.replace("A Download", "A Stream").replace(
-            "B Back", "Y Search   SELECT Download   B Back")
+            "B Back", "Y Search   START Play All   L2 Shuffle   SELECT Download   B Back")
     elif app.dl_is_audio:
-        # v26.07.10.01: audio mode has no search/manual-code binding of
-        # its own (both AUDIO_SOURCES entries are simple lists -- the
-        # Study Edition source is a single resolved issue, the Bible
-        # source is already narrowed to one book by the time you're
-        # here) -- plain hint, and specifically skips the
-        # SUPPORTS_SEARCH/SUPPORTS_MANUAL_CODE checks below, which would
-        # otherwise incorrectly fire off JW_PLUGIN's OWN flags (still
-        # set on app.dl_plugin) even though neither applies to this
-        # screen the way it does for the EPUB browse path.
-        pass
+        # v26.07.21.36 (Kaleb's request: in-app audio playback). Was a
+        # plain "A Download" hint (audio had no playback at all before
+        # this) -- now matches video's A=play/SELECT=download
+        # convention, plus the two list-playback modes.
+        # v26.07.21.43 (Kaleb's request: unify the video/audio queue
+        # buttons): Play All moved from Y to START, Shuffle from START
+        # to L2 -- now identical to video's own hint text below, was
+        # backwards from it before (Y/START here vs. START/L2 there).
+        hint = hint.replace("A Download", "A Play").replace(
+            "B Back", "START Play All   L2 Shuffle   SELECT Download   B Back")
     elif getattr(app.dl_plugin, "SUPPORTS_SEARCH", False):
         hint = hint.replace("B Back", "Y Search   B Back")
     elif getattr(app.dl_plugin, "SUPPORTS_CATEGORIES", False):
@@ -15016,15 +16194,22 @@ def draw_download_browse(renderer, app):
         # branch shared the single Y button via an elif chain, silently
         # shadowing one or the other.
         hint = hint.replace("B Back", "SELECT Code   B Back")
-    hint = hint.replace("B Back", "X Help   B Back")
+    hint = hint.replace("B Back", "X Menu   B Back")
     draw_hint(renderer, app.fonts, hint)
 
 
 def draw_library_menu(renderer, app):
     draw_library(renderer, app)
+    # v26.07.21.16: same per-minute clock refresh as draw_menu() above.
+    app.maybe_refresh_clock()
     overlay_w = _sx(320)
     fill_rect_rounded(renderer, SW - overlay_w, 0, overlay_w, SH - _sy(hint_height(app.fonts)), COL_PANEL)
     render_text(renderer, app.fonts.ui_heading, "MENU", COL_ACCENT, SW - overlay_w + _sx(20), _sy(20))
+    # v26.07.21.14 (Kaleb's request): same battery/WiFi status icons as
+    # the main reader popup Menu, top-right corner of this panel too --
+    # this screen's "MENU" title is short/left-anchored (not centered
+    # like draw_menu()'s logo) so it never needed to shift for room.
+    _draw_status_indicators(renderer, app, SW - _sx(14), _sy(18))
     row_h = _row_h(app.fonts.ui_body)
     top = _sy(76)
     item_max_w = overlay_w - _sx(40)
@@ -15391,6 +16576,8 @@ def draw_storage(renderer, app):
             continue
         if action == "Video Player" and native_video is None:
             continue
+        if action == "Audio Player" and native_video is None:
+            continue
         # v26.07.14.11: only show this action if there's actually a
         # roms/PORTS shortcut on disk to remove -- same conditional-hide
         # pattern as Pre-render/Disk-Cache above, so the row doesn't sit
@@ -15448,6 +16635,8 @@ def draw_storage(renderer, app):
             label = f"Streaming Quality: {app.video_stream_quality} (downloads stay 480p)"
         elif action == "Video Player":
             label = f"Video Player: {app.video_player_pref.capitalize()}"
+        elif action == "Audio Player":
+            label = f"Audio Player: {app.audio_player_pref.capitalize()}"
         elif action == "Cycle Image Night Dimming":
             label = f"Image Night Dimming: {IMAGE_DIM_LABELS[app.image_dim_level]}"
         elif action == "Toggle Open Last Book on Launch":
@@ -15478,13 +16667,17 @@ def draw_storage(renderer, app):
         render_text(renderer, app.fonts.ui_body, _fit_text(app.fonts.ui_body, label, action_max_w),
                     color, _sx(24), text_y)
 
+    # v26.07.21.08 BUG FIX (Kaleb's report: toast hidden underneath the
+    # hint bar on this screen). Was positioned right after the last
+    # visible row (`top + rows*row_h`), which on a full/near-full list
+    # lands at or past the hint bar's own top edge -- since the hint
+    # bar draws AFTER this and is opaque, it simply covered the toast.
+    # Switched to the same bottom-anchored _draw_status_bar() pattern
+    # draw_reader()/draw_image_view() already use, which always sits
+    # just above the hint bar regardless of list length.
     if app.status_msg and time.time() < app.status_until:
-        msg_y = top + min(visible, n_items) * row_h + _sy(20)
-        line_h = TTF.TTF_FontHeight(app.fonts.ui_small) + _sy(6)
-        _msg_alpha = app.status_alpha()
-        for i, line in enumerate(_status_msg_lines(app.fonts, app.status_msg)):
-            render_text(renderer, app.fonts.ui_small, line, COL_ACCENT, _sx(20), msg_y + i * line_h,
-                        alpha=_msg_alpha)
+        _draw_status_bar(renderer, app.fonts, app.status_msg, COL_ACCENT,
+                          SH - _sy(hint_height(app.fonts)), alpha=app.status_alpha())
 
     draw_hint(renderer, app.fonts, "UP/DOWN Select   A Confirm   B Back")
 
@@ -15895,7 +17088,8 @@ def main():
             native_video.maybe_trim_memory(app._clear_text_texture_cache)
             ok, msg = native_video.play_jw_video(
                 pending["url"], is_local=False, sdl=SDL, joy_a=JOY_A, joy_b=JOY_B,
-                joy_l1=JOY_L, joy_r1=JOY_R, player_pref=app.video_player_pref,
+                joy_l1=JOY_L, joy_r1=JOY_R, joy_l2=JOY_L2, joy_r2=JOY_R2,
+                joy_y=JOY_Y, joy_x=JOY_X, player_pref=app.video_player_pref,
                 fill_screen=app.video_fill_screen, screen_w=DEV_W, screen_h=DEV_H)
             native_video._ffplay_log(
                 f"[diag] in-book video returned (main thread): ok={ok} msg={msg!r} "
@@ -15956,22 +17150,20 @@ def main():
                 elif hv & SDL_HAT_LEFT: btn = "LEFT"
                 elif hv & SDL_HAT_RIGHT: btn = "RIGHT"
             elif etype == SDL_JOYAXISMOTION_EV:
-                # v26.07.20.20 (Kaleb's request -- swapped from
-                # v26.07.20.19): Y axis now mirrors L/R (page turn), X
-                # axis now mirrors L2/R2 (chapter nav). Edge-triggered
-                # like the D-pad's own hat events -- fires ONCE when the
-                # axis crosses AXIS_DEADZONE in a direction, then
-                # requires it to pass back through center before firing
-                # again. No repeat-while-held (same "one push, one
-                # action" feel the D-pad already has, and keeps this
-                # purely event-driven -- no new per-frame timing loop).
-                # Y axis sign convention: negative = up (SDL/muOS
-                # standard, confirmed via controller_ref.txt's
-                # leftx/lefty/rightx/righty layout) -- up fires R (next
-                # page), down fires L (previous page). X axis: right
-                # fires R2 (next chapter), left fires L2 (previous),
-                # matching this app's existing L2=previous/R2=next
-                # convention.
+                # Y axis mirrors L/R (page turn), X axis mirrors L2/R2
+                # (chapter nav). Edge-triggered like the D-pad's own hat
+                # events -- fires ONCE when the axis crosses
+                # AXIS_DEADZONE in a direction, then requires it to pass
+                # back through center before firing again. No repeat-
+                # while-held (same "one push, one action" feel the
+                # D-pad already has, and keeps this purely event-driven
+                # -- no new per-frame timing loop). Y axis sign
+                # convention: negative = up (SDL/muOS standard,
+                # confirmed via controller_ref.txt's leftx/lefty/rightx/
+                # righty layout) -- up fires R (next page), down fires L
+                # (previous page). X axis: right fires R2 (next
+                # chapter), left fires L2 (previous), matching this
+                # app's existing L2=previous/R2=next convention.
                 aev = ctypes.cast(raw, ctypes.POINTER(SDL_JoyAxisEvent))[0]
                 ev_timestamp = aev.timestamp
                 val = aev.value
@@ -15985,6 +17177,18 @@ def main():
                     if new_dir != 0 and app._axis_rx_dir == 0:
                         btn = "R2" if new_dir == 1 else "L2"
                     app._axis_rx_dir = new_dir
+                # v26.07.21.08 (Kaleb's request): left stick, same
+                # mapping/behavior as right stick above.
+                elif aev.axis == JOY_AXIS_LY:
+                    new_dir = 1 if val > AXIS_DEADZONE else (-1 if val < -AXIS_DEADZONE else 0)
+                    if new_dir != 0 and app._axis_ly_dir == 0:
+                        btn = "L" if new_dir == 1 else "R"
+                    app._axis_ly_dir = new_dir
+                elif aev.axis == JOY_AXIS_LX:
+                    new_dir = 1 if val > AXIS_DEADZONE else (-1 if val < -AXIS_DEADZONE else 0)
+                    if new_dir != 0 and app._axis_lx_dir == 0:
+                        btn = "R2" if new_dir == 1 else "L2"
+                    app._axis_lx_dir = new_dir
             elif etype == SDL_JOYBUTTONDOWN_EV:
                 bev = ctypes.cast(raw, ctypes.POINTER(SDL_JoyButtonEvent))[0]
                 ev_timestamp = bev.timestamp
@@ -16144,6 +17348,14 @@ def main():
             need_redraw = True  # v26.07.16.07: keep redrawing every
                                   # frame while the theme color slider
                                   # transition is in progress
+        # v26.07.21.20 (considered, then reverted -- Kaleb's call,
+        # "maybe it shouldn't refresh on timer, what is more simple"):
+        # briefly forced a periodic redraw here so the popup Menu clock
+        # would keep ticking even while sitting fully idle (no button
+        # presses). Correct in principle but not worth the complexity
+        # it dragged in -- simpler and genuinely lower-CPU to do
+        # nothing here at all. See maybe_refresh_clock()'s own comment
+        # for the final, much simpler design this settled on.
 
         if need_redraw and _build_only_redraw and \
                 (time.time() - app._last_build_render_time) < READER_BUILD_RENDER_THROTTLE:
@@ -16296,7 +17508,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
     # -- v0.1.86: replaced with _reader_body_layout(), the same formula
     # draw_reader() uses, so the two can never disagree about body_rows
     # again. See _reader_body_layout()'s docstring for the bug this fixes.
-    _body_top, line_h, body_rows = _reader_body_layout(app.fonts)
+    _body_top, line_h, body_rows = _reader_body_layout(app.fonts, app.immersive_mode)
 
     if app.screen == SCREEN_SPLASH:
         # v26.07.10.06: START/A/B all skip straight to the real
@@ -16343,6 +17555,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app._menu_target_book = app.books[app.lib_index] if app.books else None
             app._menu_delete_armed = False
             app.screen = SCREEN_LIBRARY_MENU
+            app.refresh_status_indicators()
         elif btn == "A" and app.books:
             app.open_book(app.books[app.lib_index])
         elif btn == "SELECT" and app.books:
@@ -16397,12 +17610,43 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
 
     elif app.screen == SCREEN_LIBRARY_MENU:
         n = len(LIBRARY_MENU_ITEMS)
+
+        # v26.07.21.04 REAL BUG FIX (found during an audit prompted by
+        # Kaleb's Settings-screen ghost-row report -- same bug class,
+        # third confirmed location, this one worse than the other two:
+        # this screen had NO hidden-row check at all in navigation, not
+        # just an incomplete one. draw_library_menu() already hides
+        # "Download Books" via `continue` when DOWNLOAD_PLUGINS is empty
+        # (no jw_fetch.py/gutenberg_fetch.py bundled), but UP/DOWN was a
+        # plain `% n` wrap with no skip -- the cursor could rest
+        # invisibly on that row (no highlight drawn at all) whenever a
+        # build ships without any downloader plugin. Never caught before
+        # because Kaleb's own builds always bundle jw_fetch.py. The A
+        # handler already defensively no-ops on this row (see
+        # `elif choice == "Download Books" and DOWNLOAD_PLUGINS:` below),
+        # so this was purely a navigation/visibility bug, not a crash
+        # risk -- but the same invisible-cursor symptom Kaleb reported
+        # on Settings. Mirrors draw_library_menu()'s own condition
+        # exactly, same pattern as _storage_hidden()/_menu_hidden().
+        def _lib_menu_hidden(idx):
+            return LIBRARY_MENU_ITEMS[idx] == "Download Books" and not DOWNLOAD_PLUGINS
+
         if btn == "UP":
-            app.lib_menu_index = (app.lib_menu_index - 1) % n
+            new_idx = app.lib_menu_index
+            for _ in range(n):
+                new_idx = (new_idx - 1) % n
+                if not _lib_menu_hidden(new_idx):
+                    break
+            app.lib_menu_index = new_idx
             app._menu_delete_armed = False
             app._menu_clear_finished_armed = False
         elif btn == "DOWN":
-            app.lib_menu_index = (app.lib_menu_index + 1) % n
+            new_idx = app.lib_menu_index
+            for _ in range(n):
+                new_idx = (new_idx + 1) % n
+                if not _lib_menu_hidden(new_idx):
+                    break
+            app.lib_menu_index = new_idx
             app._menu_delete_armed = False
             app._menu_clear_finished_armed = False
         elif btn == "B":
@@ -16554,6 +17798,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app.video_settings_index = (app.video_settings_index + 1) % n
         elif btn == "B":
             app.screen = SCREEN_MENU
+            app.refresh_status_indicators()
         elif btn == "A":
             choice = VIDEO_SETTINGS_ITEMS[app.video_settings_index]
             if choice == "Video Fill Screen":
@@ -16561,7 +17806,9 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 save_settings({"video_fill_screen": app.video_fill_screen})
                 # stays open, same pattern as Theme +/- above
             elif choice == "Streaming Quality":
-                app.video_stream_quality = "720p" if app.video_stream_quality == "480p" else "480p"
+                _idx = STREAM_QUALITY_CYCLE.index(app.video_stream_quality) \
+                    if app.video_stream_quality in STREAM_QUALITY_CYCLE else 1
+                app.video_stream_quality = STREAM_QUALITY_CYCLE[(_idx + 1) % len(STREAM_QUALITY_CYCLE)]
                 save_settings({"video_stream_quality": app.video_stream_quality})
                 # stays open, same pattern as Theme +/- above
             elif choice == "Video Player":
@@ -16571,6 +17818,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 # stays open, same pattern as Theme +/- above
             elif choice == "Back":
                 app.screen = SCREEN_MENU
+                app.refresh_status_indicators()
 
     elif app.screen == SCREEN_THEME_SELECT:
         themes = all_themes()
@@ -16907,12 +18155,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             # search -- each is fetched as one small complete list -- so
             # this is a client-side title filter over the already-loaded
             # catalog. See App.search_video_items().
-            def _on_video_search_confirm(app, value):
-                app.screen = SCREEN_DOWNLOAD_BROWSE
-                app.search_video_items(value)
-            app.open_text_entry("Search Videos", app.dl_query or "",
-                                 _on_video_search_confirm, SCREEN_DOWNLOAD_BROWSE,
-                                 hint="Search by title  (case-insensitive, blank clears)")
+            app.open_video_search_entry()
         elif btn == "Y" and not app.dl_is_video and not app.dl_is_audio and (
                 getattr(app.dl_plugin, "SUPPORTS_SEARCH", False)
                 or getattr(app.dl_plugin, "SUPPORTS_CATEGORIES", False)):
@@ -16939,13 +18182,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             # open (regardless of which flag(s) got it there), else
             # "Search {plugin name}" -- matching what start_search()
             # actually does either way.
-            def _on_search_confirm(app, value):
-                app.screen = SCREEN_DOWNLOAD_BROWSE
-                app.start_search(value)
-            label = app.dl_category or getattr(app.dl_plugin, "PLUGIN_NAME", "")
-            app.open_text_entry(f"Search {label}", app.dl_query or "",
-                                 _on_search_confirm, SCREEN_DOWNLOAD_BROWSE,
-                                 hint="Search by title or author  (case-insensitive)")
+            app.open_category_search_entry()
         elif btn == "SELECT" and not app.dl_is_video and not app.dl_is_audio and getattr(app.dl_plugin, "SUPPORTS_MANUAL_CODE", False):
             # v0.1.156 BUG FIX (Kaleb's report, follow-up to the Help
             # screen): this used to be bound to Y, in an elif chain AFTER
@@ -16964,27 +18201,7 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             # on this screen) so category search and manual code entry
             # are BOTH reachable rather than one silently shadowing the
             # other.
-            def _on_code_validate(app, value):
-                parts = value.strip().split()
-                code = parts[0] if parts else ""
-                issue = parts[1] if len(parts) > 1 else None
-                item, err = app.dl_plugin.lookup_pub_code(code, issue)
-                if item:
-                    app.dl_items = [item]
-                    app.dl_query = value
-                    app.dl_page = 1
-                    app.dl_has_next = False
-                    app.dl_load_error = None
-                    app.dl_index = 0
-                    app.te_checking = False
-                    app.screen = SCREEN_DOWNLOAD_BROWSE
-                else:
-                    app.te_checking = False
-                    app.te_error = err or "Not found"
-                app.dirty = True
-            app.open_text_entry("Pub code (+ issue YYYYMM if needed)", "",
-                                 None, SCREEN_DOWNLOAD_BROWSE, on_validate=_on_code_validate,
-                                 hint=getattr(app.dl_plugin, "MANUAL_CODE_HINT", ""))
+            app.open_pub_code_entry()
         elif btn == "B":
             if app.dl_is_video:
                 # v0.1.110: video browse is now opened from
@@ -17048,17 +18265,105 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             # below since this is an elif chain; non-video screens still
             # hit the generic branch exactly as before.
             app.play_video_item(app.dl_index)
+        elif btn == "A" and app.dl_is_audio and app.dl_items:
+            # v26.07.21.36 (Kaleb's request): same A=play/SELECT=download
+            # convention as video above, now extended to audio -- audio
+            # used to have no playback at all, A only downloaded. Must
+            # come before the generic "A" branch below, same reasoning
+            # as the video branch.
+            app.play_audio_item(app.dl_index)
         elif btn == "A" and app.dl_items:
             app.start_download(app.dl_index)
-        elif btn == "SELECT" and app.dl_is_video and app.dl_items:
+        elif btn == "SELECT" and (app.dl_is_video or app.dl_is_audio) and app.dl_items:
             # Free to bind here: the other SELECT usage on this same
             # screen (SUPPORTS_MANUAL_CODE) is already explicitly guarded
-            # with "not app.dl_is_video", so there's no collision.
+            # with "not app.dl_is_video and not app.dl_is_audio", so
+            # there's no collision either way.
             app.start_download(app.dl_index)
+        elif btn == "START" and app.dl_is_video and app.dl_items:
+            # v26.07.21.43 (Kaleb's request: unify the video/audio
+            # queue buttons -- was START=Play All for video but
+            # START=Shuffle All for audio, genuinely inconsistent).
+            # START=Play All, L2=Shuffle All now for BOTH modes -- see
+            # the audio branches below for the matching pair.
+            app.play_video_queue_from(app.dl_index, shuffle=False)
+        elif btn == "L2" and app.dl_is_video and app.dl_items:
+            # v26.07.21.43: "Shuffle All" for video -- unified with
+            # audio's own L2 binding below. See play_video_queue()'s
+            # own docstring for why START/SELECT (not L/R) are the
+            # in-playback skip controls for a video queue specifically
+            # (unrelated to this button, which only applies before
+            # playback starts).
+            app.play_video_queue_from(0, shuffle=True)
+        elif btn == "START" and app.dl_is_audio and app.dl_items:
+            # v26.07.21.43 (Kaleb's request: unify the video/audio
+            # queue buttons): "Play All" moved here from Y, to match
+            # video's own START=Play All exactly. Y is otherwise unused
+            # for audio on this screen (audio has no search binding),
+            # so nothing lost by freeing it.
+            app.play_audio_queue_from(app.dl_index, shuffle=False)
+        elif btn == "L2" and app.dl_is_audio and app.dl_items:
+            # v26.07.21.43: "Shuffle All" moved here from START, to
+            # match video's own L2=Shuffle All exactly -- same reasoning
+            # as the START change just above, unifying the two modes'
+            # queue buttons instead of leaving them backwards from each
+            # other (previously START meant "Play All" for video but
+            # "Shuffle All" for audio -- the same physical button doing
+            # opposite things depending on mode was a real, confusing
+            # inconsistency, not a deliberate design choice).
+            app.play_audio_queue_from(0, shuffle=True)
         elif btn == "X":
-            app.dl_help_return_screen = SCREEN_DOWNLOAD_BROWSE
-            app.dl_help_scroll = 0
-            app.screen = SCREEN_DOWNLOAD_HELP
+            # v26.07.21.42 (Kaleb's request: "drop help menu and replace
+            # with pop up menu"). Was: opened SCREEN_DOWNLOAD_HELP (the
+            # static Search/Pub-Code-only overlay) -- stale/incomplete
+            # once this screen grew Play/Play All/Shuffle All/Download.
+            # See SCREEN_DOWNLOAD_BROWSE_MENU's own comment.
+            app.download_browse_menu_index = 0
+            app.screen = SCREEN_DOWNLOAD_BROWSE_MENU
+
+    elif app.screen == SCREEN_DOWNLOAD_BROWSE_MENU:
+        items = _download_browse_menu_items(app)
+        n = len(items)
+        if btn == "UP":
+            app.download_browse_menu_index = (app.download_browse_menu_index - 1) % n if n else 0
+        elif btn == "DOWN":
+            app.download_browse_menu_index = (app.download_browse_menu_index + 1) % n if n else 0
+        elif btn == "B":
+            app.screen = SCREEN_DOWNLOAD_BROWSE
+        elif btn == "A":
+            choice = items[app.download_browse_menu_index] if items else None
+            # Close the menu first -- most actions are screen-takeover
+            # (playback) or fire-and-forget (download); the two that
+            # open a text-entry box (Search/Enter Pub Code) already set
+            # their own target screen internally, so setting BROWSE
+            # here first is harmless for those too (immediately
+            # overwritten by open_text_entry()'s own screen change).
+            app.screen = SCREEN_DOWNLOAD_BROWSE
+            if choice == "Stream":
+                app.play_video_item(app.dl_index)
+            elif choice == "Play":
+                app.play_audio_item(app.dl_index)
+            elif choice == "Download":
+                app.start_download(app.dl_index)
+            elif choice == "Play All":
+                if app.dl_is_video:
+                    app.play_video_queue_from(app.dl_index, shuffle=False)
+                else:
+                    app.play_audio_queue_from(app.dl_index, shuffle=False)
+            elif choice == "Shuffle All":
+                if app.dl_is_video:
+                    app.play_video_queue_from(0, shuffle=True)
+                else:
+                    app.play_audio_queue_from(0, shuffle=True)
+            elif choice == "Search":
+                if app.dl_is_video:
+                    app.open_video_search_entry()
+                else:
+                    app.open_category_search_entry()
+            elif choice == "Enter Pub Code":
+                app.open_pub_code_entry()
+            # "Back" and any unmatched choice: already returned to
+            # SCREEN_DOWNLOAD_BROWSE above, nothing further to do.
 
     elif app.screen == SCREEN_DOWNLOAD_HELP:
         if btn == "UP":
@@ -17224,15 +18529,29 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
         elif btn == "X":
             app.menu_index = 0
             app.screen = SCREEN_MENU
+            app.refresh_status_indicators()
         elif btn == "Y":
             app.fast_scroll = not app.fast_scroll
         elif btn == "START":
             app.bookmark_here()
         elif btn == "SELECT":
-            # v26.07.20.05: only does anything when the current selection
-            # is a recognized JW video link -- see _selected_jw_video_link()
-            # and download_selected_link_video()'s own docstring.
-            app.download_selected_link_video()
+            # v26.07.20.05: does the video download when the current
+            # selection is a recognized JW video link -- see
+            # _selected_jw_video_link() and download_selected_link_
+            # video()'s own docstring. v26.07.21.10 (Kaleb's request):
+            # otherwise (the common case -- most selections aren't
+            # video links), toggles Immersive Mode instead, so SELECT
+            # is never a dead button in reading mode. Same clamp as the
+            # Menu's own Immersive Mode toggle -- see that handler's
+            # comment on why no repagination is needed, just a scroll
+            # clamp to the new body_rows.
+            if app._selected_jw_video_link() is not None:
+                app.download_selected_link_video()
+            else:
+                app.immersive_mode = not app.immersive_mode
+                save_settings({"immersive_mode": app.immersive_mode})
+                _line_h, _body_rows = _reader_body_layout(app.fonts, app.immersive_mode)[1:3]
+                app.scroll = min(app.scroll, app._max_scroll(_line_h, _body_rows))
 
     elif app.screen == SCREEN_IMAGE_VIEW:
         pan_step = IMGVIEW_PAN_STEP_FRAC
@@ -17246,8 +18565,10 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             app._imgview_pan_by(pan_step, 0.0)
         elif btn == "R":
             app._imgview_zoom_by(IMGVIEW_ZOOM_STEP)
+            app.set_status(f"Zoom: {int(round(app._imgview_zoom * 100))}%")
         elif btn == "L":
             app._imgview_zoom_by(1.0 / IMGVIEW_ZOOM_STEP)
+            app.set_status(f"Zoom: {int(round(app._imgview_zoom * 100))}%")
         elif btn == "B":
             app.screen = SCREEN_READER
 
@@ -17315,6 +18636,13 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
             elif choice == "Immersive Mode":
                 app.immersive_mode = not app.immersive_mode
                 save_settings({"immersive_mode": app.immersive_mode})
+                # v26.07.21.09: clamp scroll to the new body_rows right
+                # away -- see _reader_body_layout()'s own comment on why
+                # no repagination/wrap-cache invalidation is needed,
+                # this clamp is purely so the view doesn't sit one
+                # interaction behind a toggle that shrinks body_rows.
+                _line_h, _body_rows = _reader_body_layout(app.fonts, app.immersive_mode)[1:3]
+                app.scroll = min(app.scroll, app._max_scroll(_line_h, _body_rows))
                 # stays open, same as Theme +/- -- lets the label update
                 # in place without re-opening the menu
             elif choice == "Sound Effects":
@@ -17491,7 +18819,28 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 return native_video is None
             if action == "Video Player":
                 return native_video is None
+            if action == "Audio Player":
+                return native_video is None
+            # v26.07.21.01 BUG FIX (Kaleb's report: invisible selected rows
+            # with no highlight, and "Help" appearing to jump mid-scroll):
+            # these two hides existed in draw_storage()'s `continue` checks
+            # but were missing here, so UP/DOWN could land storage_index on
+            # a row the draw loop then skipped entirely -- no highlight box
+            # drawn at all (looks like the cursor vanished), and since the
+            # scroll window is centered on storage_index while row_pos only
+            # advances for rows actually drawn, the visible window shifted
+            # by one row, making the next real row (often "Help") appear to
+            # suddenly jump into view. Fixed by mirroring draw_storage()'s
+            # conditions exactly -- same list, same order, single source of
+            # truth from now on. If a new conditional hide is ever added to
+            # draw_storage(), it MUST be added here too, or this bug class
+            # recurs.
+            if action == "Remove Ports Shortcut":
+                return not os.path.exists(_ports_launcher_path())
+            if action == "Reinstall Ports Shortcut":
+                return not load_settings().get("ports_shortcut_opted_out")
             return False
+
 
         if btn == "UP":
             new_idx = app.storage_index
@@ -17574,7 +18923,9 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 # setting at all -- see play_video_item()/
                 # download_selected_link_video()'s own comments for
                 # exactly which call sites do and don't thread it through.
-                app.video_stream_quality = "720p" if app.video_stream_quality == "480p" else "480p"
+                _idx = STREAM_QUALITY_CYCLE.index(app.video_stream_quality) \
+                    if app.video_stream_quality in STREAM_QUALITY_CYCLE else 1
+                app.video_stream_quality = STREAM_QUALITY_CYCLE[(_idx + 1) % len(STREAM_QUALITY_CYCLE)]
                 save_settings({"video_stream_quality": app.video_stream_quality})
                 app.set_status(f"Streaming Quality: {app.video_stream_quality}")
             elif action == "Video Player" and native_video is not None:
@@ -17582,6 +18933,11 @@ def handle_button(app, btn, body_h_px=None, renderer=None):
                 app.video_player_pref = _cycle.get(app.video_player_pref, "auto")
                 save_settings({"video_player_pref": app.video_player_pref})
                 app.set_status(f"Video Player: {app.video_player_pref.capitalize()}")
+            elif action == "Audio Player" and native_video is not None:
+                _cycle = {"auto": "mpv", "mpv": "ffplay", "ffplay": "auto"}
+                app.audio_player_pref = _cycle.get(app.audio_player_pref, "auto")
+                save_settings({"audio_player_pref": app.audio_player_pref})
+                app.set_status(f"Audio Player: {app.audio_player_pref.capitalize()}")
             elif action == "Toggle Open Last Book on Launch":
                 # Non-destructive, instant -- only affects the NEXT app
                 # launch (checked once at the end of App.__init__), no

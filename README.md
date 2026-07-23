@@ -1,6 +1,6 @@
 # PicoReader
 
-PicoReader is an EPUB reader for the **Anbernic RG CubeXX-H and RG 34XX-SP** running
+PicoReader is an EPUB reader for the **Anbernic RG CubeXX-H** running
 **muOS**. It's built from scratch in Python with no external
 dependencies — no PIL/Pillow, no pip installs, nothing to set up. Just
 copy it on and start reading.
@@ -20,7 +20,7 @@ project — it's a deliberate design choice by the device itself, and
 part of why it was bought in the first place. It was picked for
 running PICO-8 games (which are natively square), with minimalism as
 the whole point. The ebook reader started as a smaller side idea on
-the same hardware and ended up becoming the main passion project. RG34XX-SP works natively as well due to the same 720 wide display.
+the same hardware and ended up becoming the main passion project.
 
 ## Screenshots
 
@@ -227,5 +227,4 @@ me.
 
 - [DejaVu Fonts](https://dejavu-fonts.github.io/) — public domain
   changes over a Bitstream Vera base, permissively licensed
-- Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-Hly licensed
 - Built for [muOS](https://muos.dev) on the Anbernic RG CubeXX-H
